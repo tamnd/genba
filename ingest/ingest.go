@@ -1,0 +1,355 @@
+// Package ingest runs connectors and puts what they produce into a store.
+//
+// It is the only place a document crosses from a source system into something a
+// query can reach, which makes it the right place for the rules that must hold
+// for every source: a tenant on everything, permissions that resolved or a
+// quarantine, batching so the store is not asked one document at a time, and a
+// checkpoint written only after the documents it covers are durably stored.
+//
+// # Backpressure
+//
+// There is no queue between the connector and the store. A connector hands over
+// a change by calling into this package, and that call does the batching and
+// the storing, so a source that produces faster than the store can absorb is
+// slowed by the handover itself. That is worth more than a buffered channel and
+// a tuning knob: a queue that can grow is a queue that will, and the failure
+// shows up as memory rather than as latency, which is much harder to read.
+//
+// # Ordering
+//
+// A batch is stored, and only then is the checkpoint for its last change saved.
+// A crash in between replays the batch, which is safe because a put of the same
+// document twice is the same as once. The other order would skip documents, and
+// nothing downstream would ever notice they were missing.
+package ingest
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"time"
+
+	"github.com/tamnd/genba"
+	"github.com/tamnd/genba/connector"
+	"github.com/tamnd/genba/doc"
+	"github.com/tamnd/genba/store"
+)
+
+// DefaultBatchSize is how many documents are held before a store write.
+//
+// It is a compromise. Larger batches amortise the write and are worth real
+// throughput, and they also widen the window a crash replays and raise the
+// memory a run holds. A few hundred is where those stop trading against each
+// other usefully for the drivers here.
+const DefaultBatchSize = 500
+
+// Pipeline moves documents from a connector into a store.
+//
+// The zero value is not usable. Use [New].
+type Pipeline struct {
+	store       store.Store
+	checkpoints connector.Checkpoints
+	batchSize   int
+	clock       func() time.Time
+	log         *slog.Logger
+}
+
+// Option configures a pipeline.
+type Option func(*Pipeline)
+
+// WithBatchSize sets how many documents are buffered before a store write. A
+// value below one selects [DefaultBatchSize].
+func WithBatchSize(n int) Option {
+	return func(p *Pipeline) {
+		if n > 0 {
+			p.batchSize = n
+		}
+	}
+}
+
+// WithLogger sets where the pipeline reports progress and quarantines.
+func WithLogger(l *slog.Logger) Option {
+	return func(p *Pipeline) {
+		if l != nil {
+			p.log = l
+		}
+	}
+}
+
+// WithClock replaces the source of the indexing timestamp, for tests that need
+// a run to be reproducible.
+func WithClock(now func() time.Time) Option {
+	return func(p *Pipeline) {
+		if now != nil {
+			p.clock = now
+		}
+	}
+}
+
+// New returns a pipeline writing into s and checkpointing into cp.
+//
+// A nil checkpoint store is allowed and means every run is a full sync. That is
+// the right default for a one shot import and the wrong one for anything that
+// runs on a schedule.
+func New(s store.Store, cp connector.Checkpoints, opts ...Option) (*Pipeline, error) {
+	if s == nil {
+		return nil, errors.New("ingest: nil store")
+	}
+	p := &Pipeline{
+		store:       s,
+		checkpoints: cp,
+		batchSize:   DefaultBatchSize,
+		clock:       time.Now,
+		log:         slog.New(discardHandler{}),
+	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p, nil
+}
+
+// Stats is what one run did.
+type Stats struct {
+	// Indexed is the number of documents stored and reachable by a query.
+	Indexed int
+
+	// Quarantined is the number stored but held out of every query path
+	// because their permissions did not resolve. They are counted rather than
+	// dropped so that an operator can see a connector that is failing to
+	// resolve access control lists, which is otherwise silent.
+	Quarantined int
+
+	// Deleted is the number removed because the source no longer has them.
+	Deleted int
+
+	// Skipped is the number rejected before the store, because they carried no
+	// id and there is nothing to file them under.
+	Skipped int
+
+	// Batches is how many store writes the run made.
+	Batches int
+
+	// Bytes is the total size of the document bodies seen, which is the number
+	// a throughput figure should be quoted against. Document counts vary by
+	// three orders of magnitude between corpora and say much less.
+	Bytes int64
+
+	// Duration is the wall clock time of the run.
+	Duration time.Duration
+
+	// Cursor is where the run got to, and what a later run resumes from.
+	Cursor connector.Cursor
+}
+
+// Rate returns documents per second, or zero for a run too short to measure.
+func (s Stats) Rate() float64 {
+	if s.Duration <= 0 {
+		return 0
+	}
+	return float64(s.Indexed+s.Quarantined) / s.Duration.Seconds()
+}
+
+// Run syncs one connector into the store for one tenant.
+//
+// It resumes from the stored checkpoint unless there is none. The returned
+// stats describe the run whether or not it returned an error, so a caller that
+// was interrupted can still report how far it got.
+func (p *Pipeline) Run(ctx context.Context, tenant genba.TenantID, c connector.Connector) (Stats, error) {
+	if c == nil {
+		return Stats{}, errors.New("ingest: nil connector")
+	}
+	if tenant == "" {
+		// Every content path in this system is scoped by tenant. A document
+		// without one cannot be served, so accepting it here would only move
+		// the failure somewhere less obvious.
+		return Stats{}, errors.New("ingest: empty tenant")
+	}
+
+	source := c.Source()
+	start := p.clock()
+
+	from, err := p.loadCursor(ctx, string(tenant), source)
+	if err != nil {
+		return Stats{}, err
+	}
+
+	run := &run{pipeline: p, tenant: string(tenant), source: source}
+	run.stats.Cursor = from
+
+	final, syncErr := c.Sync(ctx, from, run.emit)
+
+	// Whatever happened, flush what is already in hand. A connector that failed
+	// halfway still produced real documents, and throwing them away only means
+	// fetching them again.
+	flushErr := run.flush(ctx)
+
+	run.stats.Duration = p.clock().Sub(start)
+
+	if syncErr != nil {
+		return run.stats, fmt.Errorf("ingest: sync %s: %w", source, syncErr)
+	}
+	if flushErr != nil {
+		return run.stats, flushErr
+	}
+
+	// The connector's own end of walk cursor wins over the last change's, since
+	// it can know the walk finished at a point no change happens to sit on.
+	if !final.IsZero() {
+		if err := p.saveCursor(ctx, string(tenant), source, final); err != nil {
+			return run.stats, err
+		}
+		run.stats.Cursor = final
+	}
+
+	p.log.Info("sync finished",
+		"source", source,
+		"tenant", string(tenant),
+		"indexed", run.stats.Indexed,
+		"quarantined", run.stats.Quarantined,
+		"deleted", run.stats.Deleted,
+		"duration", run.stats.Duration,
+	)
+	return run.stats, nil
+}
+
+func (p *Pipeline) loadCursor(ctx context.Context, tenant, source string) (connector.Cursor, error) {
+	if p.checkpoints == nil {
+		return connector.Cursor{}, nil
+	}
+	from, err := p.checkpoints.Load(ctx, tenant, source)
+	if err != nil {
+		return connector.Cursor{}, fmt.Errorf("ingest: load checkpoint for %s: %w", source, err)
+	}
+	return from, nil
+}
+
+func (p *Pipeline) saveCursor(ctx context.Context, tenant, source string, c connector.Cursor) error {
+	if p.checkpoints == nil || c.IsZero() {
+		return nil
+	}
+	if err := p.checkpoints.Save(ctx, tenant, source, c); err != nil {
+		return fmt.Errorf("ingest: save checkpoint for %s: %w", source, err)
+	}
+	return nil
+}
+
+// run is the mutable state of one sync. It is split out so that Run stays
+// readable and so that emit can be a method value rather than a closure over
+// half a dozen variables.
+type run struct {
+	pipeline *Pipeline
+	tenant   string
+	source   string
+
+	batch   []doc.Document
+	deletes []string
+	// pending is the resume point of the last change in the current batch. It
+	// is saved only once that batch is stored.
+	pending connector.Cursor
+	stats   Stats
+}
+
+// emit takes one change from a connector.
+func (r *run) emit(ctx context.Context, ch connector.Change) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	p := r.pipeline
+
+	d := ch.Document
+	// The tenant and the source are set here rather than trusted from the
+	// connector. A connector that gets either wrong writes into another
+	// tenant's corpus, and that is not a mistake worth leaving reachable.
+	d.Tenant = r.tenant
+	d.Source = r.source
+
+	if !ch.Cursor.IsZero() {
+		r.pending = ch.Cursor
+	}
+
+	if d.ID == "" {
+		r.stats.Skipped++
+		p.log.Warn("change has no id, skipped", "source", r.source)
+		return r.maybeFlush(ctx)
+	}
+
+	if ch.Deleted {
+		r.deletes = append(r.deletes, d.ID)
+		r.stats.Deleted++
+		return r.maybeFlush(ctx)
+	}
+
+	d.IndexedAt = p.clock()
+	r.stats.Bytes += int64(len(d.Body))
+
+	if d.Queryable() {
+		r.stats.Indexed++
+	} else {
+		// It is still stored. A quarantined document is one an operator has to
+		// be able to find and fix, and a document that was silently dropped is
+		// one nobody knows to look for. The store keeps it out of every query
+		// path because Queryable is false, which is the same gate every driver
+		// applies.
+		r.stats.Quarantined++
+		p.log.Warn("document quarantined, permissions did not resolve",
+			"source", r.source, "id", d.ID, "container", d.Container)
+	}
+
+	r.batch = append(r.batch, d)
+	return r.maybeFlush(ctx)
+}
+
+func (r *run) maybeFlush(ctx context.Context) error {
+	if len(r.batch)+len(r.deletes) < r.pipeline.batchSize {
+		return nil
+	}
+	return r.flush(ctx)
+}
+
+// flush writes the batch and then saves the checkpoint it covers.
+//
+// The order matters and is the reason this is one function rather than two
+// calls at the call site. Storing first and checkpointing second means a crash
+// between them replays documents, which is harmless. The other order loses
+// them, which is not.
+func (r *run) flush(ctx context.Context) error {
+	if len(r.batch) == 0 && len(r.deletes) == 0 {
+		return nil
+	}
+	p := r.pipeline
+
+	if len(r.batch) > 0 {
+		if err := p.store.Put(ctx, r.batch...); err != nil {
+			return fmt.Errorf("ingest: put %d documents from %s: %w", len(r.batch), r.source, err)
+		}
+	}
+	if len(r.deletes) > 0 {
+		if err := p.store.Delete(ctx, r.deletes...); err != nil {
+			return fmt.Errorf("ingest: delete %d documents from %s: %w", len(r.deletes), r.source, err)
+		}
+	}
+	r.stats.Batches++
+
+	// Reuse the backing arrays. A long sync flushes thousands of times and
+	// there is no reason for each one to allocate a new batch.
+	r.batch = r.batch[:0]
+	r.deletes = r.deletes[:0]
+
+	if err := p.saveCursor(ctx, r.tenant, r.source, r.pending); err != nil {
+		return err
+	}
+	if !r.pending.IsZero() {
+		r.stats.Cursor = r.pending
+	}
+	return nil
+}
+
+// discardHandler is a slog handler that drops everything, so that a pipeline
+// built without a logger costs nothing rather than writing to standard error.
+type discardHandler struct{}
+
+func (discardHandler) Enabled(context.Context, slog.Level) bool  { return false }
+func (discardHandler) Handle(context.Context, slog.Record) error { return nil }
+func (d discardHandler) WithAttrs([]slog.Attr) slog.Handler      { return d }
+func (d discardHandler) WithGroup(string) slog.Handler           { return d }

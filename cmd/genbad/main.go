@@ -65,6 +65,13 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	fs.StringVar(&cfg.DSN, "dsn", cfg.DSN, "storage data source")
 	fs.StringVar(&cfg.Tenant, "tenant", cfg.Tenant, "tenant served by a single tenant deployment")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "debug, info, warn or error")
+
+	var corpus corpusOptions
+	fs.StringVar(&corpus.Dir, "corpus", "", "directory to index at startup")
+	fs.StringVar(&corpus.Name, "corpus-name", "files", "source name the indexed directory carries")
+	fs.StringVar(&corpus.ACL, "corpus-acl", aclTenant, "who may read the corpus: tenant or owners")
+	fs.DurationVar(&corpus.Refresh, "corpus-refresh", 0, "how often to reindex the directory, zero for once")
+
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "genbad runs the genba server.\n\nUsage:\n  genbad [flags]\n\nFlags:\n")
@@ -81,6 +88,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	if err := corpus.validate(); err != nil {
+		return err
+	}
 
 	log := newLogger(stderr, cfg.LogLevel)
 
@@ -93,6 +103,14 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 			log.Error("closing the store", "error", err)
 		}
 	}()
+
+	// The first sync runs here, before the listener opens, so that the server is
+	// useful the moment it says it is up.
+	waitForCorpus, err := ingestCorpus(ctx, st, corpus, cfg.Tenant, log)
+	if err != nil {
+		return err
+	}
+	defer waitForCorpus()
 
 	opts := []api.Option{api.WithLogger(log)}
 	if h := web.Handler(); h != nil {

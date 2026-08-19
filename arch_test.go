@@ -33,8 +33,18 @@ var allowed = map[string][]string{
 	"config":          nil,
 	"web":             nil,
 	"api":             {"", "acl", "doc", "index", "store"},
-	"cmd/genba":       {""},
-	"cmd/genbad":      {"", "api", "config", "index", "store", "store/memstore", "web"},
+
+	// Ingestion sits beside the query path rather than under it. A connector
+	// describes documents and who may read them, the pipeline writes them, and
+	// neither knows anything about ranking. In particular connector does not
+	// import store: a source that could reach the store directly could write a
+	// document without going through the checks the pipeline applies.
+	"connector":          {"acl", "doc"},
+	"connector/fssource": {"acl", "connector", "doc"},
+	"ingest":             {"", "connector", "doc", "store"},
+
+	"cmd/genba":  {""},
+	"cmd/genbad": {"", "api", "config", "connector", "connector/fssource", "index", "ingest", "store", "store/memstore", "web"},
 }
 
 func TestDependencyDirection(t *testing.T) {
