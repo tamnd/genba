@@ -318,11 +318,11 @@ func (s *Source) read(ctx context.Context, full, rel string, info fs.FileInfo) (
 		return doc.Document{}, err
 	}
 
-	image := isImage(rel)
+	picture := isImage(rel)
 	// A file that is not valid UTF-8 and is not an image we recognise is a
 	// binary this connector has no business pretending to have read. Extraction
 	// of real binary formats is a separate job with separate failure modes.
-	if !image && !utf8.Valid(raw) {
+	if !picture && !utf8.Valid(raw) {
 		return doc.Document{}, errors.New("not text")
 	}
 
@@ -344,7 +344,7 @@ func (s *Source) read(ctx context.Context, full, rel string, info fs.FileInfo) (
 	// An image has no body. Its file name is what a query can match, which is
 	// how somebody finds architecture.png by typing architecture, and the bytes
 	// are what the preview shows.
-	if image {
+	if picture {
 		content = &doc.Content{Bytes: raw}
 		content.Width, content.Height = pixels(raw)
 	} else {
@@ -378,7 +378,7 @@ func (s *Source) read(ctx context.Context, full, rel string, info fs.FileInfo) (
 // The standard library answers for png, jpeg and gif. It does not answer for
 // webp or svg, and rather than pull in a decoder for each, those record a zero,
 // which the interface reads as no box to reserve.
-func pixels(raw []byte) (int, int) {
+func pixels(raw []byte) (width, height int) {
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(raw))
 	if err != nil {
 		return 0, 0

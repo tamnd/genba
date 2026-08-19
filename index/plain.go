@@ -212,7 +212,7 @@ func inlineText(line string) string {
 
 // linkAt reads a [text](target) starting at an open bracket, returning the text
 // and the offset just past the target.
-func linkAt(line string, i int) (string, int, bool) {
+func linkAt(line string, i int) (text string, past int, ok bool) {
 	bracket := strings.IndexByte(line[i:], ']')
 	if bracket < 0 || i+bracket+1 >= len(line) || line[i+bracket+1] != '(' {
 		return "", 0, false
