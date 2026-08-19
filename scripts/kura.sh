@@ -28,15 +28,40 @@ else
 	git clone --quiet --depth 1 --branch "$REF" "$REPO" "$SRC"
 fi
 
-echo "kura: building $(git -C "$SRC" rev-parse --short HEAD)"
-(cd "$SRC" && cargo build --release -p kura-ffi)
+# On Windows, cargo defaults to the MSVC toolchain and cgo uses the mingw gcc
+# that comes with Go. A library from one does not link into the other, and the
+# error when it does not is a page of undefined symbols that says nothing about
+# toolchains. So Windows builds the gnu target, which produces the libkura.a
+# that mingw expects.
+TARGET=""
+OUT="$SRC/target/release"
+case $(uname -s) in
+MINGW* | MSYS* | CYGWIN*)
+	TARGET=x86_64-pc-windows-gnu
+	OUT="$SRC/target/$TARGET/release"
+	rustup target add "$TARGET" >/dev/null 2>&1 || true
+	;;
+esac
+
+echo "kura: building $(git -C "$SRC" rev-parse --short HEAD) ${TARGET:-for this host}"
+if [ -n "$TARGET" ]; then
+	(cd "$SRC" && cargo build --release -p kura-ffi --target "$TARGET")
+else
+	(cd "$SRC" && cargo build --release -p kura-ffi)
+fi
 
 mkdir -p "$DEST/include" "$DEST/lib"
 cp "$SRC/include/kura.h" "$DEST/include/"
-# Windows names it kura.lib rather than libkura.a, and the loop takes whichever
-# one this platform produced rather than guessing from the OS.
-for lib in "$SRC"/target/release/libkura.a "$SRC"/target/release/kura.lib; do
-	[ -f "$lib" ] && cp "$lib" "$DEST/lib/"
+found=""
+for lib in "$OUT/libkura.a" "$OUT/kura.lib"; do
+	if [ -f "$lib" ]; then
+		cp "$lib" "$DEST/lib/"
+		found=$lib
+	fi
 done
+if [ -z "$found" ]; then
+	echo "kura: cargo produced no static library in $OUT" >&2
+	exit 1
+fi
 
 echo "kura: $DEST is ready, build with CGO_ENABLED=1 go build -tags kura ./..."

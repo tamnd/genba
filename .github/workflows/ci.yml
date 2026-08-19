@@ -148,8 +148,15 @@ jobs:
   # It runs the race detector because a cgo boundary is where a pointer rule is
   # broken, and the leak tests because a missing free is invisible to Go.
   kura:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
