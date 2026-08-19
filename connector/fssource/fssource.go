@@ -29,13 +29,19 @@
 package fssource
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"  // registers the GIF config decoder
+	_ "image/jpeg" // registers the JPEG config decoder
+	_ "image/png"  // registers the PNG config decoder
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -50,6 +56,13 @@ import (
 // Past this the file is almost never prose somebody wants to search, and it is
 // often a checked in binary that would cost far more to index than it is worth.
 const DefaultMaxFileSize = 1 << 20
+
+// DefaultMaxImageSize is the largest image read into a document's content.
+//
+// It is separate from the body limit and larger, because the two limits are
+// about different things. A one megabyte text file is almost certainly not
+// prose. A one megabyte screenshot is a screenshot.
+const DefaultMaxImageSize = 4 << 20
 
 // Policy decides who may read a file.
 //
@@ -89,6 +102,7 @@ type Source struct {
 	policy Policy
 
 	maxSize   int64
+	maxImage  int64
 	skipDir   func(name string) bool
 	includeIf func(name string) bool
 	skipped   func(path string, reason error)
@@ -123,6 +137,16 @@ func WithSkipped(f func(path string, reason error)) Option {
 	return func(s *Source) {
 		if f != nil {
 			s.skipped = f
+		}
+	}
+}
+
+// WithMaxImageSize sets the largest image that will be read into a document's
+// content. A value below one selects [DefaultMaxImageSize].
+func WithMaxImageSize(n int64) Option {
+	return func(s *Source) {
+		if n > 0 {
+			s.maxImage = n
 		}
 	}
 }
@@ -177,6 +201,7 @@ func New(root, name string, policy Policy, opts ...Option) (*Source, error) {
 		name:      name,
 		policy:    policy,
 		maxSize:   DefaultMaxFileSize,
+		maxImage:  DefaultMaxImageSize,
 		skipDir:   defaultSkipDir,
 		includeIf: defaultInclude,
 		skipped:   func(string, error) {},
@@ -236,8 +261,8 @@ func (s *Source) Sync(ctx context.Context, from connector.Cursor, emit func(cont
 			s.skipped(p, err)
 			return nil
 		}
-		if info.Size() > s.maxSize {
-			s.skipped(p, fmt.Errorf("%d bytes is over the limit of %d", info.Size(), s.maxSize))
+		if limit := s.limitFor(d.Name()); info.Size() > limit {
+			s.skipped(p, fmt.Errorf("%d bytes is over the limit of %d", info.Size(), limit))
 			return nil
 		}
 		mod := info.ModTime()
@@ -277,16 +302,27 @@ func (s *Source) Sync(ctx context.Context, from connector.Cursor, emit func(cont
 	return connector.Cursor{Value: highest.UTC().Format(time.RFC3339Nano), Time: highest}, nil
 }
 
+// limitFor is the size limit that applies to one file name. An image gets the
+// image limit and everything else gets the body limit.
+func (s *Source) limitFor(name string) int64 {
+	if isImage(name) {
+		return s.maxImage
+	}
+	return s.maxSize
+}
+
 // read turns one file into a document.
 func (s *Source) read(ctx context.Context, full, rel string, info fs.FileInfo) (doc.Document, error) {
-	body, err := os.ReadFile(full)
+	raw, err := os.ReadFile(full)
 	if err != nil {
 		return doc.Document{}, err
 	}
-	// A file that is not valid UTF-8 is a binary this connector has no business
-	// pretending to have read. Extraction of real binary formats is a separate
-	// job with separate failure modes.
-	if !utf8.Valid(body) {
+
+	picture := isImage(rel)
+	// A file that is not valid UTF-8 and is not an image we recognise is a
+	// binary this connector has no business pretending to have read. Extraction
+	// of real binary formats is a separate job with separate failure modes.
+	if !picture && !utf8.Valid(raw) {
 		return doc.Document{}, errors.New("not text")
 	}
 
@@ -301,7 +337,20 @@ func (s *Source) read(ctx context.Context, full, rel string, info fs.FileInfo) (
 		// publish.
 	}
 
-	text := string(body)
+	var (
+		text    string
+		content *doc.Content
+	)
+	// An image has no body. Its file name is what a query can match, which is
+	// how somebody finds architecture.png by typing architecture, and the bytes
+	// are what the preview shows.
+	if picture {
+		content = &doc.Content{Bytes: raw}
+		content.Width, content.Height = pixels(raw)
+	} else {
+		text = string(raw)
+	}
+
 	kind := kindOf(rel)
 	return doc.Document{
 		ID:           s.name + ":" + rel,
@@ -315,10 +364,26 @@ func (s *Source) read(ctx context.Context, full, rel string, info fs.FileInfo) (
 		SourceUpdate: info.ModTime().UTC().Format(time.RFC3339Nano),
 		Permissions:  perms,
 		Properties: map[string]string{
-			"path":      rel,
-			"extension": strings.TrimPrefix(path.Ext(rel), "."),
+			"path":        rel,
+			"extension":   strings.TrimPrefix(path.Ext(rel), "."),
+			doc.MediaType: mediaTypeOf(rel),
+			"size_bytes":  strconv.FormatInt(info.Size(), 10),
 		},
+		Content: content,
 	}, nil
+}
+
+// pixels reads the dimensions out of an encoded image without decoding it.
+//
+// The standard library answers for png, jpeg and gif. It does not answer for
+// webp or svg, and rather than pull in a decoder for each, those record a zero,
+// which the interface reads as no box to reserve.
+func pixels(raw []byte) (width, height int) {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(raw))
+	if err != nil {
+		return 0, 0
+	}
+	return cfg.Width, cfg.Height
 }
 
 // parseCursor reads the modification time out of a cursor.
@@ -388,6 +453,9 @@ func containerOf(rel string) string {
 // kindOf maps an extension onto a document kind. Anything unrecognised is a
 // file, which is the kind that promises the least.
 func kindOf(rel string) doc.Kind {
+	if isImage(rel) {
+		return doc.KindImage
+	}
 	switch strings.ToLower(path.Ext(rel)) {
 	case ".md", ".markdown", ".rst", ".adoc", ".txt", ".html":
 		return doc.KindPage
@@ -397,6 +465,64 @@ func kindOf(rel string) doc.Kind {
 	default:
 		return doc.KindFile
 	}
+}
+
+// mediaTypes is the extension to media type table.
+//
+// It is a table rather than a call to mime.TypeByExtension because that
+// function reads the operating system's mime database, which means the same
+// corpus crawled on two machines can produce two different answers, and because
+// the code types below are ours rather than registered ones.
+var mediaTypes = map[string]string{
+	".md":       "text/markdown",
+	".markdown": "text/markdown",
+	".txt":      "text/plain",
+	".rst":      "text/plain",
+	".adoc":     "text/plain",
+	".html":     "text/html",
+	".css":      "text/css",
+	".go":       "text/x-go",
+	".rs":       "text/x-rust",
+	".py":       "text/x-python",
+	".js":       "text/javascript",
+	".jsx":      "text/javascript",
+	".ts":       "text/x-typescript",
+	".tsx":      "text/x-typescript",
+	".c":        "text/x-c",
+	".h":        "text/x-c",
+	".cc":       "text/x-c++",
+	".cpp":      "text/x-c++",
+	".java":     "text/x-java",
+	".rb":       "text/x-ruby",
+	".sh":       "text/x-shellscript",
+	".sql":      "text/x-sql",
+	".yaml":     "text/x-yaml",
+	".yml":      "text/x-yaml",
+	".toml":     "text/x-toml",
+	".json":     "application/json",
+	".proto":    "text/x-protobuf",
+	".png":      "image/png",
+	".jpg":      "image/jpeg",
+	".jpeg":     "image/jpeg",
+	".gif":      "image/gif",
+	".webp":     "image/webp",
+	".svg":      "image/svg+xml",
+}
+
+// mediaTypeOf is what a document says it is. An extension nobody recognises is
+// text/plain, because that is what the connector actually read and it is the
+// type a preview can render without guessing.
+func mediaTypeOf(rel string) string {
+	if t, ok := mediaTypes[strings.ToLower(path.Ext(rel))]; ok {
+		return t
+	}
+	return "text/plain"
+}
+
+// isImage reports whether a file name is one of the image types this connector
+// stores bytes for.
+func isImage(name string) bool {
+	return strings.HasPrefix(mediaTypeOf(name), "image/")
 }
 
 // defaultSkipDir skips version control, dependency and build directories, which
@@ -410,7 +536,7 @@ func defaultSkipDir(name string) bool {
 	return strings.HasPrefix(name, ".")
 }
 
-// defaultInclude reads text formats and nothing else.
+// defaultInclude reads text formats and the image formats a preview can show.
 func defaultInclude(name string) bool {
 	if strings.HasPrefix(name, ".") {
 		return false
@@ -419,9 +545,10 @@ func defaultInclude(name string) bool {
 		return true
 	}
 	switch strings.ToLower(path.Ext(name)) {
-	case ".md", ".markdown", ".rst", ".adoc", ".txt", ".html",
+	case ".md", ".markdown", ".rst", ".adoc", ".txt", ".html", ".css",
 		".go", ".rs", ".py", ".js", ".ts", ".tsx", ".jsx", ".c", ".h", ".cc", ".cpp",
-		".java", ".rb", ".sh", ".sql", ".yaml", ".yml", ".toml", ".json", ".proto":
+		".java", ".rb", ".sh", ".sql", ".yaml", ".yml", ".toml", ".json", ".proto",
+		".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg":
 		return true
 	}
 	return false

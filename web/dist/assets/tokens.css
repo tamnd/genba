@@ -92,6 +92,17 @@
      calm. */
   --mark: #fae041;
 
+  /* Code. Five colours, because the highlighter finds five things: a comment,
+     a string, a number, a keyword and the name of a function or a type. A
+     twenty colour theme is a theme for somebody editing the file, and nobody
+     edits a file in a search preview. Violet is not in this set, because violet
+     means a model wrote it and a keyword is not written by a model. */
+  --code-keyword: #cf222e;
+  --code-string: #0a3069;
+  --code-number: #0550ae;
+  --code-func: #953800;
+  --code-comment: var(--text-muted);
+
   /* Semantic layer. This is what components use. */
   --bg: var(--gray-0);
   --bg-subtle: var(--gray-50);
@@ -299,6 +310,14 @@
 
   --source-github: #c9d1d9;
   --source-notion: #d4d0c8;
+
+  /* The same five roles, lifted until they hold against a near black ground.
+     The light set would read as mud here, which is the whole reason the theme
+     remaps the semantic layer instead of dimming it. */
+  --code-keyword: #ff7b72;
+  --code-string: #a5d6ff;
+  --code-number: #79c0ff;
+  --code-func: #ffa657;
 
   /* A shadow on a dark ground carries almost no information, so the drawer
      additionally takes a hairline to define its edge. */

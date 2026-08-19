@@ -56,6 +56,31 @@ var cases = []testCase{
 	{"put replaces an existing document", testReplace},
 	{"a revoked document disappears", testRevocation},
 	{"stats count served and quarantined documents", testStats},
+	{"content is served only to a reader who may see the document", testContent},
+	{"content never rides along on a query path", testContentIsNotInTheDocument},
+	{"deleting a document deletes its content", testContentDelete},
+}
+
+// contentStore skips a case for a driver that does not hold bytes.
+//
+// The capability is optional, so a driver without it is not failing the suite,
+// and a driver with it does not get to opt out of the permission rule.
+func contentStore(t *testing.T, s store.Store) store.ContentStore {
+	t.Helper()
+	cs, ok := s.(store.ContentStore)
+	if !ok {
+		t.Skip("driver does not implement store.ContentStore")
+	}
+	return cs
+}
+
+func withContent(id string, perm acl.Permissions) doc.Document {
+	d := document(id, perm)
+	d.Kind = doc.KindImage
+	d.Body = ""
+	d.Properties = map[string]string{doc.MediaType: "image/png"}
+	d.Content = &doc.Content{Bytes: []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a}, Width: 12, Height: 8}
+	return d
 }
 
 func reader() *acl.Principal {
@@ -290,5 +315,74 @@ func testStats(t *testing.T, s store.Store) {
 	}
 	if st.Documents != 2 || st.Quarantined != 1 {
 		t.Fatalf("Stats = %+v, want 2 served and 1 quarantined", st)
+	}
+}
+
+func testContent(t *testing.T, s store.Store) {
+	cs := contentStore(t, s)
+	mustPut(t, s, withContent("d1", readable()))
+
+	got, err := cs.Content(t.Context(), reader(), "d1")
+	if err != nil {
+		t.Fatalf("Content: %v", err)
+	}
+	if len(got.Bytes) != 6 || got.Width != 12 || got.Height != 8 {
+		t.Fatalf("Content returned %d bytes at %dx%d, want 6 bytes at 12x8", len(got.Bytes), got.Width, got.Height)
+	}
+
+	if _, err := cs.Content(t.Context(), stranger(), "d1"); !errors.Is(err, genba.ErrNotFound) {
+		t.Fatalf("Content for a reader without access returned %v, want ErrNotFound", err)
+	}
+	// A document that exists and holds no bytes answers the same way a missing
+	// one does, so the response cannot be used to ask whether a document is
+	// there.
+	mustPut(t, s, document("d2", readable()))
+	if _, err := cs.Content(t.Context(), reader(), "d2"); !errors.Is(err, genba.ErrNotFound) {
+		t.Fatalf("Content for a document with no bytes returned %v, want ErrNotFound", err)
+	}
+	if _, err := cs.Content(t.Context(), reader(), "missing"); !errors.Is(err, genba.ErrNotFound) {
+		t.Fatalf("Content for a missing document returned %v, want ErrNotFound", err)
+	}
+	if _, err := cs.Content(t.Context(), nil, "d1"); err == nil {
+		t.Fatal("Content with a nil principal returned bytes")
+	}
+}
+
+func testContentIsNotInTheDocument(t *testing.T, s store.Store) {
+	contentStore(t, s)
+	mustPut(t, s, withContent("d1", readable()))
+
+	got, err := s.Get(t.Context(), reader(), "d1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Content != nil {
+		t.Fatal("Get returned a document carrying content bytes")
+	}
+	if err := s.Scan(t.Context(), reader(), func(d doc.Document) bool {
+		if d.Content != nil {
+			t.Error("Scan yielded a document carrying content bytes")
+		}
+		return true
+	}); err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+}
+
+func testContentDelete(t *testing.T, s store.Store) {
+	cs := contentStore(t, s)
+	mustPut(t, s, withContent("d1", readable()))
+	if err := s.Delete(t.Context(), "d1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := cs.Content(t.Context(), reader(), "d1"); !errors.Is(err, genba.ErrNotFound) {
+		t.Fatalf("Content after Delete returned %v, want ErrNotFound", err)
+	}
+
+	// Replacing an image with a text document has to leave nothing behind.
+	mustPut(t, s, withContent("d2", readable()))
+	mustPut(t, s, document("d2", readable()))
+	if _, err := cs.Content(t.Context(), reader(), "d2"); !errors.Is(err, genba.ErrNotFound) {
+		t.Fatalf("Content after a put with no bytes returned %v, want ErrNotFound", err)
 	}
 }

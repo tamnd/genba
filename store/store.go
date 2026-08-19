@@ -51,6 +51,33 @@ type Store interface {
 	Close() error
 }
 
+// ContentStore is a store that can also hold the bytes of a document.
+//
+// It is an optional capability rather than part of [Store], because a driver
+// over a search service that only keeps an inverted index has nowhere to put a
+// megabyte of PNG, and refusing to implement it is a better answer than
+// implementing it badly. A caller checks for it with a type assertion and
+// serves nothing where it is absent.
+//
+// The rule the rest of the interface follows is not relaxed here. The principal
+// is applied while the driver walks its own data, and a caller who may not read
+// the document gets the same not found the document itself would produce.
+//
+// A driver that implements this takes [doc.Content] on Put and stores it beside
+// the document. Get and Scan must not return it: a scan that carried image
+// bytes would make every query pay for them.
+type ContentStore interface {
+	Store
+
+	// Content returns the bytes of one document if the principal may read it.
+	//
+	// It returns an error matching genba.ErrNotFound when the document does not
+	// exist, when the principal may not see it, and when it exists but holds no
+	// content. All three are the same answer for the same reason: a caller who
+	// can tell them apart can use the difference to prove a document exists.
+	Content(ctx context.Context, p *acl.Principal, id string) (doc.Content, error)
+}
+
 // Stats is a snapshot of a store's contents.
 type Stats struct {
 	// Documents is the number of documents that can be served to a query.

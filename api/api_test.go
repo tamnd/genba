@@ -317,3 +317,136 @@ func engineerWithBothGroups() map[string]string {
 		api.HeaderGroups:  "gdrive:eng@acme.com,gdrive:sales@acme.com",
 	}
 }
+
+// contentServer holds an image, a page with no bytes, and an image of a type
+// the interface will not render inline.
+func contentServer(t *testing.T) http.Handler {
+	t.Helper()
+	st := memstore.New()
+	t.Cleanup(func() { _ = st.Close() })
+
+	perm := acl.Permissions{
+		Mode:        acl.ModeACL,
+		Source:      "gdrive",
+		AllowGroups: []acl.Ref{{Source: "gdrive", Value: "eng@acme.com"}},
+		Version:     1,
+	}
+	docs := []doc.Document{
+		{
+			ID: "img", Tenant: "acme", Source: "gdrive", Kind: doc.KindImage,
+			Title: "architecture.png", Permissions: perm,
+			Properties: map[string]string{doc.MediaType: "image/png"},
+			Content:    &doc.Content{Bytes: []byte("\x89PNG\r\n\x1a\nbytes"), Width: 24, Height: 16},
+		},
+		{
+			ID: "page", Tenant: "acme", Source: "gdrive", Kind: doc.KindPage,
+			Title: "A page", Body: "text", Permissions: perm,
+			Properties: map[string]string{doc.MediaType: "text/markdown"},
+		},
+		{
+			ID: "odd", Tenant: "acme", Source: "gdrive", Kind: doc.KindFile,
+			Title: "report.pdf", Permissions: perm,
+			Properties: map[string]string{doc.MediaType: "application/pdf"},
+			Content:    &doc.Content{Bytes: []byte("%PDF-1.7")},
+		},
+	}
+	if err := st.Put(t.Context(), docs...); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	s := api.New(st, index.New(st), api.HeaderAuth{Tenant: "acme"})
+	return s.Handler()
+}
+
+func TestContentServesTheBytesToAReaderWhoMaySeeTheDocument(t *testing.T) {
+	h := contentServer(t)
+	w := request(t, h, http.MethodGet, "/api/v1/documents/img/content", engineer())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", w.Code)
+	}
+	if got := w.Body.String(); got != "\x89PNG\r\n\x1a\nbytes" {
+		t.Errorf("body is %q", got)
+	}
+	for header, want := range map[string]string{
+		"Content-Type":           "image/png",
+		"Content-Disposition":    "inline",
+		"X-Content-Type-Options": "nosniff",
+		"Cache-Control":          "private, max-age=600",
+		"X-Content-Dimensions":   "24x16",
+	} {
+		if got := w.Header().Get(header); got != want {
+			t.Errorf("%s is %q, want %q", header, got, want)
+		}
+	}
+	if w.Header().Get("ETag") == "" {
+		t.Error("no ETag, so every open pays for the bytes again")
+	}
+}
+
+func TestContentAnswersAConditionalRequestWithoutTheBytes(t *testing.T) {
+	h := contentServer(t)
+	first := request(t, h, http.MethodGet, "/api/v1/documents/img/content", engineer())
+	headers := engineer()
+	headers["If-None-Match"] = first.Header().Get("ETag")
+
+	w := request(t, h, http.MethodGet, "/api/v1/documents/img/content", headers)
+	if w.Code != http.StatusNotModified {
+		t.Fatalf("status %d, want 304", w.Code)
+	}
+	if w.Body.Len() != 0 {
+		t.Errorf("a 304 carried %d bytes", w.Body.Len())
+	}
+}
+
+// The endpoint may not become a way to ask whether a document exists, so a
+// document somebody may not read, one that is not there and one that holds no
+// bytes all answer the same way the document endpoint does.
+func TestContentIsNotFoundForEverythingTheCallerMayNotSee(t *testing.T) {
+	h := contentServer(t)
+	stranger := map[string]string{
+		api.HeaderSubject: "u_kenji",
+		api.HeaderGroups:  "gdrive:sales@acme.com",
+	}
+	cases := []struct {
+		name    string
+		target  string
+		headers map[string]string
+	}{
+		{"a document the caller may not read", "/api/v1/documents/img/content", stranger},
+		{"a document that is not there", "/api/v1/documents/nope/content", engineer()},
+		{"a document that holds no bytes", "/api/v1/documents/page/content", engineer()},
+	}
+	var bodies []string
+	for _, c := range cases {
+		w := request(t, h, http.MethodGet, c.target, c.headers)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("%s: status %d, want 404", c.name, w.Code)
+		}
+		bodies = append(bodies, w.Body.String())
+	}
+	for _, b := range bodies[1:] {
+		if b != bodies[0] {
+			t.Errorf("the responses differ, which tells a caller which case they hit:\n%s\n%s", bodies[0], b)
+		}
+	}
+}
+
+func TestContentOffTheAllowListIsADownloadRatherThanAPage(t *testing.T) {
+	w := request(t, contentServer(t), http.MethodGet, "/api/v1/documents/odd/content", engineer())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", w.Code)
+	}
+	if got := w.Header().Get("Content-Type"); got != "application/octet-stream" {
+		t.Errorf("Content-Type is %q, want application/octet-stream", got)
+	}
+	if got := w.Header().Get("Content-Disposition"); got != "attachment" {
+		t.Errorf("Content-Disposition is %q, want attachment", got)
+	}
+}
+
+func TestDocumentReportsItsMediaType(t *testing.T) {
+	w := request(t, contentServer(t), http.MethodGet, "/api/v1/documents/page", engineer())
+	got := decode[map[string]any](t, w)
+	if got["media_type"] != "text/markdown" {
+		t.Errorf("media_type is %v, want text/markdown", got["media_type"])
+	}
+}

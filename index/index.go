@@ -265,7 +265,7 @@ func (s *Searcher) Search(ctx context.Context, p *acl.Principal, q Query) (Resul
 			continue
 		}
 		res.Hits[i].Document = full
-		res.Hits[i].Snippet, res.Hits[i].Passages = snippet(full.Body, req.Terms)
+		res.Hits[i].Snippet, res.Hits[i].Passages = snippet(readable(full), req.Terms)
 	}
 	res.Took = s.now().Sub(start)
 	return res, nil

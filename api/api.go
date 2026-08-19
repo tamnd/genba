@@ -13,6 +13,9 @@
 package api
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -113,6 +116,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/search", s.authenticated(s.handleSearch))
 	mux.Handle("GET /api/v1/suggest", s.authenticated(s.handleSuggest))
 	mux.Handle("GET /api/v1/documents/{id}", s.authenticated(s.handleDocument))
+	mux.Handle("GET /api/v1/documents/{id}/content", s.authenticated(s.handleContent))
 	mux.Handle("GET /api/v1/stats", s.authenticated(s.handleStats))
 	if s.assets != nil {
 		mux.Handle("GET /", s.assets)
@@ -219,6 +223,7 @@ type searchHit struct {
 	Kind       string    `json:"kind"`
 	Container  string    `json:"container,omitempty"`
 	Author     string    `json:"author,omitempty"`
+	MediaType  string    `json:"media_type,omitempty"`
 	ModifiedAt time.Time `json:"modified_at,omitzero"`
 	Snippet    string    `json:"snippet,omitempty"`
 
@@ -267,6 +272,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Pri
 			Kind:       string(h.Document.Kind),
 			Container:  h.Document.Container,
 			Author:     personName(h.Document.Author),
+			MediaType:  h.Document.Properties[doc.MediaType],
 			ModifiedAt: h.Document.ModifiedAt,
 			Snippet:    h.Snippet,
 			Passages:   passages(h.Passages),
@@ -507,9 +513,15 @@ func (s *Server) handleDocument(w http.ResponseWriter, r *http.Request, p *acl.P
 }
 
 type documentBody struct {
-	ID         string            `json:"id"`
-	Title      string            `json:"title"`
-	Body       string            `json:"body"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	Body  string `json:"body"`
+
+	// MediaType is what the body is, so the interface can decide how to render
+	// it instead of guessing from the file name a second time. It is lifted out
+	// of the properties because every document has one and a client should not
+	// have to reach into a bag of source specific strings for it.
+	MediaType  string            `json:"media_type,omitempty"`
 	URL        string            `json:"url,omitempty"`
 	Source     string            `json:"source"`
 	Kind       string            `json:"kind"`
@@ -527,6 +539,7 @@ func documentResponse(d doc.Document) documentBody {
 		ID:         d.ID,
 		Title:      d.Title,
 		Body:       d.Body,
+		MediaType:  d.Properties[doc.MediaType],
 		URL:        d.URL,
 		Source:     d.Source,
 		Kind:       string(d.Kind),
@@ -534,6 +547,79 @@ func documentResponse(d doc.Document) documentBody {
 		ModifiedAt: d.ModifiedAt,
 		Properties: d.Properties,
 	}
+}
+
+// inlineTypes are the media types served with Content-Disposition: inline.
+//
+// The list is short and it is an allow list rather than a deny list. Everything
+// on it is something a browser renders in an img element, where it cannot run
+// script, and everything else is a download. An SVG is on the list for exactly
+// that reason: as an image it is inert, and it is only dangerous when a
+// document embeds it as markup, which this interface never does.
+var inlineTypes = map[string]bool{
+	"image/png":     true,
+	"image/jpeg":    true,
+	"image/gif":     true,
+	"image/webp":    true,
+	"image/svg+xml": true,
+}
+
+func (s *Server) handleContent(w http.ResponseWriter, r *http.Request, p *acl.Principal) {
+	cs, ok := s.store.(store.ContentStore)
+	if !ok {
+		// A deployment on a driver that holds no bytes has no content to serve,
+		// and says so the same way it would for a document that is not there.
+		writeError(w, http.StatusNotFound, "not_found", "no such document")
+		return
+	}
+
+	id := r.PathValue("id")
+	// The document is read first because it is where the permission decision and
+	// the media type both come from. The driver applies the principal again on
+	// the content read, so this is a lookup rather than the check itself.
+	d, err := s.store.Get(r.Context(), p, id)
+	if err == nil {
+		var c doc.Content
+		c, err = cs.Content(r.Context(), p, id)
+		if err == nil {
+			s.writeContent(w, r, d, c)
+			return
+		}
+	}
+	switch {
+	case errors.Is(err, genba.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", "no such document")
+	default:
+		s.log.Error("content lookup failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal", "the document could not be read")
+	}
+}
+
+// writeContent sends the bytes with the caching and the sniffing rules that
+// make an image safe to put in a page.
+func (s *Server) writeContent(w http.ResponseWriter, r *http.Request, d doc.Document, c doc.Content) {
+	media := d.Properties[doc.MediaType]
+	disposition := "inline"
+	if !inlineTypes[media] {
+		// A type nobody vetted is not rendered in the page and is not described
+		// to the browser as anything it might act on.
+		media, disposition = "application/octet-stream", "attachment"
+	}
+
+	sum := sha256.Sum256(c.Bytes)
+	w.Header().Set("Content-Type", media)
+	w.Header().Set("Content-Disposition", disposition)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("ETag", `"`+hex.EncodeToString(sum[:8])+`"`)
+	// Private, because the response depends on who asked. A shared cache that
+	// kept this would be handing one tenant's screenshot to another.
+	w.Header().Set("Cache-Control", "private, max-age=600")
+	if c.Width > 0 && c.Height > 0 {
+		w.Header().Set("X-Content-Dimensions", strconv.Itoa(c.Width)+"x"+strconv.Itoa(c.Height))
+	}
+	// ServeContent handles the conditional request, the range request and the
+	// length, which are three things worth not writing again.
+	http.ServeContent(w, r, "", d.ModifiedAt, bytes.NewReader(c.Bytes))
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request, _ *acl.Principal) {
