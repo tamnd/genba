@@ -185,6 +185,19 @@ func TestSearchLatencyGate(t *testing.T) {
 	if os.Getenv("GENBA_GATE") == "" {
 		t.Skip("the latency gate builds the benchmark corpus and measures it, so it is opt in: make bench-gate")
 	}
+	// A recording run has to use the sample count the code derives, because the
+	// figure being written down is the one every pull request will be compared
+	// against and the two have to be the same shape. A round of two hundred and
+	// fifty has a steadier median than a round of forty.
+	//
+	// This is a refusal rather than a note in a comment because it has already
+	// gone wrong once quietly, in a workflow expression that looked like it
+	// cleared the override and did not, and the only sign was a number in a
+	// JSON file that nobody had a reason to read.
+	if os.Getenv("GENBA_GATE_RECORD") != "" && gateEnvInt("GENBA_GATE_SAMPLES") > 0 {
+		t.Fatalf("GENBA_GATE_SAMPLES is %s and this is a recording run, so the baseline would be drawn with a ruler no pull request uses",
+			os.Getenv("GENBA_GATE_SAMPLES"))
+	}
 
 	st, spec := benchcorpus.Fixture(t)
 	// A fixed clock, because the recency prior is part of the score, and a

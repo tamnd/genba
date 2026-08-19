@@ -55,8 +55,14 @@ jobs:
           # shape. A round of two hundred and fifty has a steadier median than a
           # round of forty, so a baseline recorded that way is a baseline every
           # pull request is measured against with a ruler it was not drawn with.
-          GENBA_GATE_SAMPLES: ${{ inputs.record && '' || '2000' }}
-          GENBA_GATE_TOLERANCE: ${{ inputs.record && '' || '1.10' }}
+          #
+          # Zero rather than empty, because an expression whose true branch is
+          # an empty string falls through to the false branch: an empty string
+          # is falsy, so ${{ inputs.record && '' || '2000' }} is 2000 either
+          # way. The gate reads a zero as unset and there is a test that refuses
+          # to record with an override in place.
+          GENBA_GATE_SAMPLES: ${{ inputs.record && '0' || '2000' }}
+          GENBA_GATE_TOLERANCE: ${{ inputs.record && '0' || '1.10' }}
           GENBA_GATE_RECORD: ${{ inputs.record && '1' || '' }}
         run: |
           set -o pipefail
