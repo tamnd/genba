@@ -91,6 +91,7 @@ type Source struct {
 	maxSize   int64
 	skipDir   func(name string) bool
 	includeIf func(name string) bool
+	skipped   func(path string, reason error)
 }
 
 // Option configures a source.
@@ -102,6 +103,26 @@ func WithMaxFileSize(n int64) Option {
 	return func(s *Source) {
 		if n > 0 {
 			s.maxSize = n
+		}
+	}
+}
+
+// WithSkipped installs a callback for files the walk passed over.
+//
+// A sync does not abandon a tree because one file in it could not be read. A
+// file whose owner revoked the permission, or that was deleted between the
+// listing and the stat, is a fact about the tree and not a reason to lose the
+// hundred thousand files after it.
+//
+// What it must not be is silent. An index quietly missing the files nobody
+// could read looks exactly like an index that is complete, and the difference
+// only shows up when somebody cannot find a document they know exists. This is
+// how a caller finds out: it is called once per skipped file with the path and
+// the reason, and the default does nothing.
+func WithSkipped(f func(path string, reason error)) Option {
+	return func(s *Source) {
+		if f != nil {
+			s.skipped = f
 		}
 	}
 }
@@ -158,6 +179,7 @@ func New(root, name string, policy Policy, opts ...Option) (*Source, error) {
 		maxSize:   DefaultMaxFileSize,
 		skipDir:   defaultSkipDir,
 		includeIf: defaultInclude,
+		skipped:   func(string, error) {},
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -211,9 +233,11 @@ func (s *Source) Sync(ctx context.Context, from connector.Cursor, emit func(cont
 
 		info, err := d.Info()
 		if err != nil {
+			s.skipped(p, err)
 			return nil
 		}
 		if info.Size() > s.maxSize {
+			s.skipped(p, fmt.Errorf("%d bytes is over the limit of %d", info.Size(), s.maxSize))
 			return nil
 		}
 		mod := info.ModTime()
@@ -228,12 +252,14 @@ func (s *Source) Sync(ctx context.Context, from connector.Cursor, emit func(cont
 
 		rel, err := filepath.Rel(s.root, p)
 		if err != nil {
+			s.skipped(p, err)
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
 
 		document, err := s.read(ctx, p, rel, info)
 		if err != nil {
+			s.skipped(p, err)
 			return nil
 		}
 		return emit(ctx, connector.Change{

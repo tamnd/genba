@@ -133,6 +133,44 @@ func TestBinaryAndOversizeFilesAreLeftAlone(t *testing.T) {
 	}
 }
 
+func TestASkippedFileSaysSoRatherThanVanishing(t *testing.T) {
+	root := tree(t, map[string]string{
+		"good.md":   "# fine\n",
+		"binary.md": "\xff\xfe\x00\x01 not utf8",
+		"huge.md":   string(make([]byte, 4096)),
+	})
+
+	skipped := map[string]string{}
+	s, err := fssource.New(root, "repo", fssource.PublicToTenant("repo"),
+		fssource.WithMaxFileSize(1024),
+		fssource.WithSkipped(func(path string, reason error) {
+			skipped[filepath.Base(path)] = reason.Error()
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := collect(t, s, connector.Cursor{})
+	if !slices.Equal(ids(got), []string{"repo:good.md"}) {
+		t.Fatalf("read %v, want only the good file", ids(got))
+	}
+
+	// The point of the callback is that the two files nobody indexed are
+	// nameable afterwards. An index missing them silently looks exactly like an
+	// index that is complete.
+	for _, name := range []string{"binary.md", "huge.md"} {
+		if _, ok := skipped[name]; !ok {
+			t.Errorf("%s was dropped without saying so, got %v", name, skipped)
+		}
+	}
+	if len(skipped) != 2 {
+		t.Errorf("skipped %v, want exactly the two that were dropped", skipped)
+	}
+	if want := "4096 bytes is over the limit of 1024"; skipped["huge.md"] != want {
+		t.Errorf("huge.md reason is %q, want %q", skipped["huge.md"], want)
+	}
+}
+
 func TestASecondSyncReadsOnlyWhatChanged(t *testing.T) {
 	root := tree(t, map[string]string{
 		"a.md": "# a\n",

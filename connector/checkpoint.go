@@ -3,6 +3,7 @@ package connector
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -64,7 +65,7 @@ type FileCheckpoints struct {
 // does not exist.
 func NewFileCheckpoints(dir string) (*FileCheckpoints, error) {
 	if dir == "" {
-		return nil, fmt.Errorf("connector: checkpoint directory is empty")
+		return nil, errors.New("connector: checkpoint directory is empty")
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("connector: checkpoint directory: %w", err)
