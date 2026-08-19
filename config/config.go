@@ -38,6 +38,14 @@ type Config struct {
 	// Addr is the listen address of the HTTP server.
 	Addr string
 
+	// MetricsAddr is the listen address of the metrics server, and is empty by
+	// default because a metrics endpoint is not something to turn on by
+	// accident. Metrics say how much traffic there is and how hard the caches
+	// are working, which is not secret and is not public either, so they get a
+	// second listener on an address the outside cannot reach rather than a route
+	// on the API that somebody has to remember to block.
+	MetricsAddr string
+
 	// Store selects the storage driver.
 	Store Store
 
@@ -106,6 +114,7 @@ func Load(getenv func(string) string) (Config, error) {
 	c := Default()
 
 	str(getenv, "GENBA_ADDR", &c.Addr)
+	str(getenv, "GENBA_METRICS_ADDR", &c.MetricsAddr)
 	str(getenv, "GENBA_DSN", &c.DSN)
 	str(getenv, "GENBA_TENANT", &c.Tenant)
 	str(getenv, "GENBA_LOG_LEVEL", &c.LogLevel)
@@ -135,6 +144,13 @@ func (c Config) Validate() error {
 	errs := make([]error, 0, 4)
 	if c.Addr == "" {
 		errs = append(errs, errors.New("config: addr is empty"))
+	}
+	// Serving metrics on the API address would put them behind whatever the API
+	// address is exposed to, which is the one thing the second listener exists
+	// to avoid. A config that asks for it is a mistake worth catching at
+	// startup rather than a listener that fails to bind.
+	if c.MetricsAddr != "" && c.MetricsAddr == c.Addr {
+		errs = append(errs, errors.New("config: metrics addr is the same as addr"))
 	}
 	switch c.Store {
 	case StoreMemory, StoreSQLite, StorePostgres, StoreKura:

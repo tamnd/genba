@@ -21,6 +21,7 @@ func TestDefaultIsValid(t *testing.T) {
 func TestLoadAppliesTheEnvironment(t *testing.T) {
 	c, err := config.Load(env(map[string]string{
 		"GENBA_ADDR":           ":9000",
+		"GENBA_METRICS_ADDR":   "127.0.0.1:9100",
 		"GENBA_STORE":          "SQLite",
 		"GENBA_DSN":            "/var/lib/genba/genba.db",
 		"GENBA_READ_TIMEOUT":   "5s",
@@ -31,6 +32,12 @@ func TestLoadAppliesTheEnvironment(t *testing.T) {
 	}
 	if c.Addr != ":9000" {
 		t.Errorf("Addr = %q", c.Addr)
+	}
+	if c.MetricsAddr != "127.0.0.1:9100" {
+		t.Errorf("MetricsAddr = %q", c.MetricsAddr)
+	}
+	if config.Default().MetricsAddr != "" {
+		t.Error("the default opens a metrics port that nobody asked for")
 	}
 	if c.Store != config.StoreSQLite {
 		t.Errorf("Store = %q, the name should be case insensitive", c.Store)
@@ -50,6 +57,7 @@ func TestLoadRejectsBadValues(t *testing.T) {
 		want string
 	}{
 		{"unknown store", map[string]string{"GENBA_STORE": "cassandra"}, "unknown store"},
+		{"metrics on the api address", map[string]string{"GENBA_METRICS_ADDR": config.Default().Addr}, "same as addr"},
 		{"store without a dsn", map[string]string{"GENBA_STORE": "postgres"}, "needs a dsn"},
 		{"unknown log level", map[string]string{"GENBA_LOG_LEVEL": "trace"}, "unknown log level"},
 		{"duration without a unit", map[string]string{"GENBA_READ_TIMEOUT": "30"}, "needs a unit"},

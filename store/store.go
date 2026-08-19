@@ -89,3 +89,54 @@ type Stats struct {
 	// is a bug when it grows.
 	Quarantined int
 }
+
+// Counters is the work one query cost, counted exactly.
+//
+// A driver that keeps these is a driver whose performance can be asserted on,
+// because a latency assertion on a shared CI runner is a coin flip and these
+// are not. Rows read, statements issued, documents decoded and candidates
+// scored do not vary with how busy the machine is, they are where a regression
+// shows up first, and an assertion on them names the mistake precisely: a per
+// hit refetch reappearing in a year moves Decodes from twenty to twenty plus
+// the match set, on any runner, at any speed.
+//
+// They are cumulative for the life of the store rather than per query, so a
+// caller measuring one query resets them first and a caller publishing them as
+// metrics does not reset them at all.
+type Counters struct {
+	// Rows is the rows the database handed back. It is what the test that
+	// proves the permission filter is in the query itself asserts on: a reader
+	// who may see nothing has to cost zero rows, not a full walk that the
+	// driver then discards.
+	Rows int64
+
+	// Statements is the statements executed, read paths only. A search that
+	// issues one per result rather than one per page is the regression this
+	// counts.
+	Statements int64
+
+	// Decodes is stored documents decoded into a [doc.Document]. A search
+	// should decode the page and nothing else.
+	Decodes int64
+
+	// Candidates is the documents handed to the ranker. It is bounded by the
+	// candidate pool rather than by the match set, which is the whole point of
+	// two phase retrieval.
+	Candidates int64
+}
+
+// Counted is a store that reports the work it has done.
+//
+// It is optional because a driver is not obliged to be measurable, and the
+// layers above check for it rather than requiring it. The interface is here
+// rather than in the driver so that anything above the storage layer can read
+// the numbers without importing a driver, which the layering forbids for good
+// reasons.
+type Counted interface {
+	// Counters returns the totals since the store was opened or last reset.
+	Counters() Counters
+
+	// ResetCounters zeroes them, so that a measurement can be scoped to one
+	// query.
+	ResetCounters()
+}

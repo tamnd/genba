@@ -62,6 +62,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	fs := flag.NewFlagSet("genbad", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&cfg.Addr, "addr", cfg.Addr, "listen address")
+	fs.StringVar(&cfg.MetricsAddr, "metrics-addr", cfg.MetricsAddr, "listen address for the metrics endpoint, empty to serve no metrics")
 	fs.StringVar((*string)(&cfg.Store), "store", string(cfg.Store), "storage driver: memory, sqlite, postgres or kura")
 	fs.StringVar(&cfg.DSN, "dsn", cfg.DSN, "storage data source")
 	fs.StringVar(&cfg.Tenant, "tenant", cfg.Tenant, "tenant served by a single tenant deployment")
@@ -133,39 +134,73 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		WriteTimeout:      cfg.WriteTimeout,
 	}
 
+	// The metrics endpoint gets its own listener, on its own address, and is off
+	// unless one is configured. What it publishes is not secret and is not
+	// public either, and the deployment that gets this right binds it somewhere
+	// the outside cannot reach rather than mounting it on the API and relying on
+	// a proxy rule to hide it again.
+	servers := []*http.Server{httpSrv}
+	if cfg.MetricsAddr != "" {
+		servers = append(servers, &http.Server{
+			Addr:              cfg.MetricsAddr,
+			Handler:           srv.Metrics(),
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       cfg.ReadTimeout,
+			WriteTimeout:      cfg.WriteTimeout,
+		})
+	}
+
 	log.Info("starting",
 		"version", genba.Version,
 		"addr", cfg.Addr,
+		"metrics", cfg.MetricsAddr,
 		"store", cfg.Store,
 		"interface", web.Enabled(),
 		"cache", cfg.Cache,
 	)
 
-	errc := make(chan error, 1)
-	go func() {
-		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errc <- err
-			return
-		}
-		errc <- nil
-	}()
+	errc := make(chan error, len(servers))
+	for _, s := range servers {
+		go func() {
+			if err := s.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errc <- err
+				return
+			}
+			errc <- nil
+		}()
+	}
 
+	// One listener falling over takes the other down with it. A process that
+	// went on serving the API after the metrics address failed to bind is half
+	// of what was asked for and looks entirely healthy from the outside.
+	var first error
+	running := len(servers)
 	select {
-	case err := <-errc:
-		return err
+	case first = <-errc:
+		running--
 	case <-ctx.Done():
 	}
 
 	log.Info("shutting down", "grace", cfg.ShutdownGrace)
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.ShutdownGrace)
 	defer cancel()
-	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-		// A shutdown that runs out of grace is worth reporting but is not a
-		// failure of the process: the requests it was waiting on were already
-		// over budget.
-		log.Warn("shutdown did not finish in time", "error", err)
+	for _, s := range servers {
+		if err := s.Shutdown(shutdownCtx); err != nil {
+			// A shutdown that runs out of grace is worth reporting but is not a
+			// failure of the process: the requests it was waiting on were
+			// already over budget.
+			log.Warn("shutdown did not finish in time", "addr", s.Addr, "error", err)
+		}
 	}
-	return <-errc
+
+	// Every listener reports before this returns, so nothing is still serving a
+	// request out of the store when the deferred close runs.
+	for range running {
+		if err := <-errc; err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 // openStore builds the storage driver named in the configuration.

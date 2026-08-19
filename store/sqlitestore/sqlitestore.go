@@ -57,7 +57,7 @@ type Store struct {
 	// behaviour under load predictable rather than dependent on a timeout.
 	write sync.Mutex
 
-	// counters are what the performance gate asserts on. See [Counters].
+	// counters are what the performance gate asserts on. See [store.Counters].
 	counters counters
 
 	closed atomic.Bool
@@ -71,36 +71,8 @@ var (
 	_ store.Statistician = (*Store)(nil)
 	_ store.Fetcher      = (*Store)(nil)
 	_ store.Notifier     = (*Store)(nil)
+	_ store.Counted      = (*Store)(nil)
 )
-
-// Counters is the work one query cost, counted exactly.
-//
-// It is here because a latency assertion on a shared CI runner is a coin flip
-// and these are not. Rows read, statements issued, documents decoded and
-// candidates scored do not vary with how busy the machine is, they are where a
-// performance regression shows up first, and an assertion on them names the
-// mistake precisely: a per hit refetch reappearing in a year moves Decodes from
-// twenty to twenty plus the match set, on any runner, at any speed.
-type Counters struct {
-	// Rows is the rows the database handed back. It is what the test that
-	// proves the permission filter is in the SQL asserts on: a reader who may
-	// see nothing has to cost zero rows, not a full walk that Go then discards.
-	Rows int64
-
-	// Statements is the statements executed against the database, read paths
-	// only. A search that issues one per result rather than one per page is the
-	// regression this counts.
-	Statements int64
-
-	// Decodes is document JSON decoded into a [doc.Document]. A search should
-	// decode the page and nothing else.
-	Decodes int64
-
-	// Candidates is the documents handed to the ranker. It is bounded by the
-	// candidate pool rather than by the match set, which is the whole point of
-	// two phase retrieval.
-	Candidates int64
-}
 
 type counters struct {
 	rows       atomic.Int64
@@ -111,8 +83,8 @@ type counters struct {
 
 // Counters reports the work this store has done since it was opened or last
 // reset.
-func (s *Store) Counters() Counters {
-	return Counters{
+func (s *Store) Counters() store.Counters {
+	return store.Counters{
 		Rows:       s.counters.rows.Load(),
 		Statements: s.counters.statements.Load(),
 		Decodes:    s.counters.decodes.Load(),

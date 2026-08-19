@@ -1,0 +1,46 @@
+# Prometheus alerting rules for genba.
+#
+# There is one alert in here, and that is on purpose.
+# An alert that nobody acts on trains everybody to ignore the ones that matter, so a rule earns its place by naming something a person would get out of bed for.
+# Everything else worth watching is on a dashboard, where a number that is drifting can be looked at during working hours.
+#
+# The metric names come from api/metrics.go, where they are constants for exactly this reason.
+# A rename that only edits the code leaves a rule here that will never fire again and will never say so.
+#
+# The metrics are served by the address in GENBA_METRICS_ADDR, which is off unless it is set and is meant to be somewhere the outside cannot reach.
+# The API address does not serve them.
+groups:
+  - name: genba
+    rules:
+      # Search latency is the product.
+      # Everything else genba does is in service of a query returning quickly, and when this fires the interface feels broken to everybody using it at once.
+      #
+      # The threshold is the pathological budget rather than the ordinary one.
+      # The p95 of a healthy mix sits well under ten milliseconds, so twenty five means either the expensive query class has become the common one or something underneath has stopped using an index.
+      # It is a bucket boundary too, which is what makes the quantile estimate here worth reading at all.
+      #
+      # Five minutes of it, because a single slow scrape is a garbage collection pause or a noisy neighbour and neither is a page.
+      - alert: SearchIsSlow
+        expr: histogram_quantile(0.95, sum by (le) (rate(genba_search_duration_milliseconds_bucket[5m]))) > 25
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Search p95 is over 25ms
+          description: >-
+            The 95th percentile of search latency has been above 25ms for five minutes.
+            Check genba_search_candidates first: a candidate count that has moved with the match count means the first phase of retrieval has stopped cutting.
+            Check genba_cache_hits_total against genba_cache_misses_total next: a hit rate that has collapsed usually means something is writing to the corpus continuously and dropping the cached orderings as fast as they are built.
+
+# What is deliberately not alerted on, and why.
+#
+# Cache hit rate.
+# It is a number to look at when something else is wrong rather than a reason to wake somebody, because a cold process and a busy crawl both push it down and neither is an incident.
+#
+# Quarantined documents.
+# A document whose permissions did not resolve is held back rather than served, which is the safe outcome, so a growing count is a bug report and not a page.
+# It belongs on the dashboard next to the document count.
+#
+# Request duration per endpoint.
+# It is the first thing to look at during an incident and it is too easy to page on: one slow endpoint that nobody uses would fire this every deploy.
+# Search has its own alert above because search is the one endpoint that being slow means the product is down.

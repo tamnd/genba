@@ -33,6 +33,12 @@ var allowed = map[string][]string{
 	// model in the package least equipped to hold one.
 	"cache": nil,
 
+	// metric is the same shape as cache: a lock over some numbers, importing
+	// nothing of ours. A metrics package that knew about principals or
+	// documents would be a place for either to leak into an endpoint that is
+	// deliberately not behind the permission check.
+	"metric": nil,
+
 	"store":             {"acl", "doc"},
 	"store/memstore":    {"", "acl", "doc", "store"},
 	"store/sqlitestore": {"", "acl", "doc", "store"},
@@ -40,7 +46,7 @@ var allowed = map[string][]string{
 	"index":             {"acl", "cache", "doc", "store"},
 	"config":            nil,
 	"web":               nil,
-	"api":               {"", "acl", "cache", "doc", "index", "store"},
+	"api":               {"", "acl", "cache", "doc", "index", "metric", "store"},
 
 	// Ingestion sits beside the query path rather than under it. A connector
 	// describes documents and who may read them, the pipeline writes them, and

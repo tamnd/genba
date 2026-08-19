@@ -69,6 +69,11 @@ type Server struct {
 
 	// heartbeat is how often an idle event stream sends a comment.
 	heartbeat time.Duration
+
+	// metrics is what the process publishes about itself. It is always
+	// recorded, because a histogram nobody scrapes costs a lock and nine
+	// comparisons, and it is only served where a caller mounts [Server.Metrics].
+	metrics *metrics
 }
 
 // Option configures a [Server].
@@ -126,6 +131,10 @@ func New(st store.Store, searcher *index.Searcher, auth Authenticator, opts ...O
 	for _, opt := range opts {
 		opt(s)
 	}
+	// After the options, because the cache layers and the storage driver are
+	// what the counters read and both arrive with the server rather than with
+	// the registry.
+	s.metrics = newMetrics(s)
 	return s
 }
 
@@ -144,7 +153,7 @@ func (s *Server) Handler() http.Handler {
 	if s.assets != nil {
 		mux.Handle("GET /", s.assets)
 	}
-	return s.recoverPanic(mux)
+	return s.recoverPanic(s.measure(mux))
 }
 
 // authenticated wraps a handler that needs a principal.
@@ -275,6 +284,8 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Pri
 		writeError(w, http.StatusInternalServerError, "internal", "the search could not be run")
 		return
 	}
+
+	s.metrics.observeSearch(res.Took, res.Candidates, res.Total)
 
 	out := searchResponse{
 		Query:   r.URL.Query().Get("q"),
