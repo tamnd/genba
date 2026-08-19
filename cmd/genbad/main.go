@@ -25,6 +25,7 @@ import (
 	"github.com/tamnd/genba/index"
 	"github.com/tamnd/genba/store"
 	"github.com/tamnd/genba/store/memstore"
+	"github.com/tamnd/genba/store/pgstore"
 	"github.com/tamnd/genba/store/sqlitestore"
 	"github.com/tamnd/genba/web"
 )
@@ -206,15 +207,18 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 // openStore builds the storage driver named in the configuration.
 //
 // The memory driver keeps nothing across a restart and the sqlite driver is one
-// file, which covers a laptop and a single node. The drivers that need a server
-// to talk to are not in this build yet, and this is where that is reported
-// rather than at the first query.
+// file, which covers a laptop and a single node. Postgres is the option for a
+// shop that already runs one and would rather operate a database it knows than
+// a new one. The drivers that need an engine this build was not compiled with
+// are reported here rather than at the first query.
 func openStore(ctx context.Context, cfg config.Config) (store.Store, error) {
 	switch cfg.Store {
 	case config.StoreMemory:
 		return memstore.New(), nil
 	case config.StoreSQLite:
 		return sqlitestore.Open(ctx, cfg.DSN)
+	case config.StorePostgres:
+		return pgstore.Open(ctx, cfg.DSN)
 	default:
 		return nil, fmt.Errorf("store %q is not available in this build", cfg.Store)
 	}
