@@ -58,6 +58,13 @@ With no configuration it keeps everything in memory and listens on localhost, wh
 genbad
 ```
 
+That server is empty, which makes it hard to judge.
+Point it at a directory you already have and it indexes it before it starts listening:
+
+```
+genbad -tenant acme -corpus ~/src/some-repo -corpus-name repo
+```
+
 Then query it:
 
 ```
@@ -68,6 +75,10 @@ genba search payments failover runbook
 ```
 
 The browser interface is at http://127.0.0.1:8080 and is compiled into the binary, so there is no static directory to deploy alongside it.
+
+By default every file in the corpus is readable by everybody in the tenant, which is the right rule for a public checkout and the wrong one for almost anything else.
+If the tree has OWNERS files in it, `-corpus-acl owners` reads them instead, and a query then returns different results depending on who is asking.
+Paths that no OWNERS file governs are quarantined rather than published, and the count of them is on the sync log line.
 
 ## Configuration
 
@@ -84,6 +95,15 @@ The environment variable is the flag in upper case with a `GENBA_` prefix, and a
 | `GENBA_READ_TIMEOUT` | `30s` | request read timeout |
 | `GENBA_WRITE_TIMEOUT` | `60s` | request write timeout |
 | `GENBA_SHUTDOWN_GRACE` | `15s` | how long a shutdown waits for in flight requests |
+
+The corpus flags have no environment variables, because a directory to index is a thing you type once while trying the binary out rather than a property of a deployment.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `-corpus` | empty | directory to index at startup |
+| `-corpus-name` | `files` | source name the documents carry, and what `-source` filters on |
+| `-corpus-acl` | `tenant` | who may read it: `tenant` for everybody in the tenant, `owners` to read OWNERS files |
+| `-corpus-refresh` | `0` | how often to sync again, zero for once at startup |
 
 ## Use it as a library
 
@@ -139,6 +159,9 @@ func main() {
 | `store` | the storage interface, plus `storetest`, the conformance suite |
 | `store/memstore` | the reference in memory driver |
 | `index` | query parsing, retrieval and ranking |
+| `connector` | the ingestion contract, cursors and checkpoints |
+| `connector/fssource` | the reference connector, a directory tree with OWNERS files |
+| `ingest` | the pipeline that runs a connector into a store |
 | `config` | runtime configuration and the rules for loading it |
 | `api` | the HTTP surface |
 | `web` | the browser interface, compiled into the binary |
@@ -146,6 +169,58 @@ func main() {
 | `cmd/genba` | the command line client |
 
 `arch_test.go` asserts the dependency direction between these, so an import that skips a layer fails the build rather than being noticed in review a month later.
+
+## Connectors
+
+A connector describes documents in some source system and who may read them.
+It does not decide how they are stored, ranked or filtered, and it never touches the store itself.
+The whole interface is three methods:
+
+```go
+type Connector interface {
+	Source() string
+	Sync(ctx context.Context, from Cursor, emit func(context.Context, Change) error) (Cursor, error)
+	Close() error
+}
+```
+
+`Sync` walks the source from a cursor and calls `emit` once per change.
+`emit` does the batching and the storing on the calling goroutine, so there is no queue between a connector and the store.
+That is deliberate.
+A source that produces faster than the store can absorb is slowed down by the handover itself, which shows up as a slower sync rather than as memory that keeps growing until something is killed.
+
+The pipeline stores a batch and then saves the cursor for it, never the other way round.
+A crash between the two replays documents, which is harmless because storing the same document twice is the same as storing it once.
+The other order loses documents and nothing downstream ever notices they are missing.
+`ingest` has a test that kills the store after every possible number of writes and checks that a resume finds all of them.
+
+A connector that cannot work out who may read a document says so, by leaving the permissions unresolved, and the pipeline stores that document out of every query path and counts it.
+Failing to answer is not permission to publish.
+
+`connector/fssource` is the reference implementation, and it is the one to read before writing another.
+It walks a directory tree, skips version control and dependency directories, reads text files up to a size limit, and asks a `Policy` who may read each one:
+
+```go
+policy, err := fssource.NewOwnersPolicy(root, "repo", "github")
+if err != nil {
+	log.Fatal(err)
+}
+src, err := fssource.New(root, "repo", policy)
+if err != nil {
+	log.Fatal(err)
+}
+
+pipeline, err := ingest.New(st, connector.NewMemoryCheckpoints())
+if err != nil {
+	log.Fatal(err)
+}
+stats, err := pipeline.Run(ctx, "acme", src)
+```
+
+Permissions come from the policy rather than from the walk, because a directory tree says almost nothing about access on its own.
+The mode bits describe the account the crawler runs as, not the people in the company.
+`OwnersPolicy` reads the OWNERS files that Kubernetes and a number of other large repositories keep, taking the nearest one going up the tree, which is a real access control list maintained by real people over a corpus anybody can check out.
+A source built with no policy at all quarantines everything, so having not thought about permissions yet is a visible state in the stats rather than an invisible one in the index.
 
 ## Storage
 
