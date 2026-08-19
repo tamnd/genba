@@ -48,6 +48,14 @@ var allowed = map[string][]string{
 	// document does, which is the opposite of what a file format is for.
 	"store/segment": nil,
 
+	// column is one of those encodings, and it imports nothing of ours either,
+	// not even segment. It deals in rows and codes and has never heard of a
+	// document or a principal. That is what lets the permission filter be an
+	// intersection between two bitmaps: a column package that knew what an ACL
+	// was would be a second place for the permission model to live, in the
+	// package least equipped to hold one.
+	"store/column": nil,
+
 	"store/memstore":    {"", "acl", "doc", "store"},
 	"store/sqlitestore": {"", "acl", "doc", "store"},
 	"store/storetest":   {"", "acl", "doc", "store"},
