@@ -39,7 +39,15 @@ var allowed = map[string][]string{
 	// deliberately not behind the permission check.
 	"metric": nil,
 
-	"store":             {"acl", "doc"},
+	"store": {"acl", "doc"},
+
+	// segment is the on disk format and imports nothing of ours, not even doc.
+	// A section is a run of bytes with a kind on it, and the encodings inside
+	// the sections belong to the packages that own them. A container that knew
+	// what a document was would be a format that has to change every time a
+	// document does, which is the opposite of what a file format is for.
+	"store/segment": nil,
+
 	"store/memstore":    {"", "acl", "doc", "store"},
 	"store/sqlitestore": {"", "acl", "doc", "store"},
 	"store/storetest":   {"", "acl", "doc", "store"},
