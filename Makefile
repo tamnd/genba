@@ -10,7 +10,7 @@ LDFLAGS := -s -w \
 
 export CGO_ENABLED := 0
 
-.PHONY: build cli install test race cover bench bench-corpus bench-search bench-counters bench-gate bench-gate-record ui-gate vet fmt lint tidy vuln headless clean run
+.PHONY: build cli install test race cover bench bench-corpus bench-search bench-counters bench-gate bench-gate-record ui-gate vet fmt lint tidy vuln headless kura kura-test kura-build clean run
 
 # How large the benchmark corpus is. The budgets are stated against a hundred
 # thousand documents, which takes a couple of minutes to generate, so the
@@ -111,6 +111,21 @@ vuln:
 # Build the API only server, without the browser interface compiled in.
 headless:
 	go build -trimpath -tags noassets -ldflags "$(LDFLAGS)" -o bin/$(BIN) $(PKG)
+
+# The Rust engine, which is off by default and stays that way.
+#
+# Nothing above this line links it, and none of the targets above have CGO on.
+# These three are the whole of the opt in: fetch and build the engine, build
+# against it, run its tests. Anybody who never runs them gets the pure Go
+# binary, which is the point.
+kura:
+	./scripts/kura.sh
+
+kura-build:
+	CGO_ENABLED=1 go build -trimpath -tags kura -ldflags "$(LDFLAGS)" -o bin/$(BIN) $(PKG)
+
+kura-test:
+	CGO_ENABLED=1 go test -count=1 -tags kura ./store/kura/
 
 clean:
 	rm -rf bin coverage.out

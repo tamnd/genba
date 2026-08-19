@@ -311,8 +311,10 @@ Four drivers are planned:
 - `sqlitestore`, pure Go, for a single node install that wants to keep its data.
 - `pgstore`, PostgreSQL 18, for a deployment that already runs one.
   Not written yet.
-- `kurastore`, which links [tamnd/kura](https://github.com/tamnd/kura), a storage engine written in Rust that holds columnar, vector and graph data in one file.
+- `kurastore`, which will link [tamnd/kura](https://github.com/tamnd/kura), a storage engine written in Rust.
+  `store/kura` binds what its C ABI offers today, which is bitmaps, posting lists and vectors rather than a document store, so there is a binding and not yet a driver.
   It is compiled in with `-tags kura` and `CGO_ENABLED=1`, and everything else keeps working without it.
+  [docs/kura.md](docs/kura.md) has the details.
 
 A driver that can do better than a scan says so by implementing `store.Retriever`, and the searcher asks it for the match set instead of walking everything.
 `sqlitestore` does, so the permission check, the filters and the terms are all one SQL statement over an FTS5 index, and the rows the database returns are already the rows the caller may read.
@@ -329,6 +331,14 @@ make cli        # the command line client
 make test       # go test ./...
 make race       # the same with the race detector
 make lint       # golangci-lint
+```
+
+The Rust engine is off by default and none of the above touches it.
+
+```
+make kura       # fetch and build the engine into third_party
+make kura-build # the server linked against it
+make kura-test  # the binding's tests, against it
 ```
 
 ## Contributing
