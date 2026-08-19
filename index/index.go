@@ -156,6 +156,14 @@ type Results struct {
 	// what makes them usable as filters.
 	Facets map[string][]Facet
 
+	// Candidates is how many documents were ranked to produce this page.
+	//
+	// It is the work the search actually did, as opposed to Total, which is
+	// what it found. A healthy two phase search has a candidate count bounded
+	// by the pool and a total bounded by nothing, and the day those two numbers
+	// start moving together is the day the first phase stopped cutting.
+	Candidates int
+
 	// Took is how long the search ran for. It is reported rather than logged
 	// because the interface shows it, and a number a user can see is a number
 	// somebody will keep honest.
@@ -289,9 +297,10 @@ func (s *Searcher) Search(ctx context.Context, p *acl.Principal, q Query) (Resul
 	}
 
 	res := Results{
-		Total:     found.total,
-		Truncated: found.truncated,
-		Facets:    found.facets,
+		Total:      found.total,
+		Truncated:  found.truncated,
+		Facets:     found.facets,
+		Candidates: len(found.cands),
 	}
 	if len(found.cands) == 0 {
 		res.Took = s.now().Sub(start)

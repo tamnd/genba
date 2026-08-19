@@ -69,6 +69,7 @@ export class Results {
     this.chips = h("div", { class: "chips" });
     this.head = h("div", { class: "results__head" });
     this.list = h("div", { class: "results__list", role: "list" });
+    this.aside = h("div", { class: "results__aside" });
 
     this.el = h(
       "div",
@@ -80,7 +81,7 @@ export class Results {
         "div",
         { class: "results" },
         this.facets,
-        h("div", { class: "results__main" }, this.head, this.list),
+        h("div", { class: "results__main" }, this.head, this.list, this.aside),
       ),
     );
   }
@@ -101,7 +102,10 @@ export class Results {
       Array.from({ length: 6 }, () =>
         h(
           "div",
-          { class: "skeleton-result" },
+          // The skeleton rows sit inside the list, so they carry the role its
+          // children are supposed to carry. A placeholder that is not an item
+          // makes the list itself invalid while it is loading.
+          { class: "skeleton-result", role: "listitem" },
           h("div", { class: "skeleton skeleton-result__tile" }),
           h("div", { class: "skeleton", style: { width: "60%", height: "20px" } }),
           h("div", { class: "skeleton", style: { width: "40%", height: "14px" } }),
@@ -110,6 +114,7 @@ export class Results {
         ),
       ),
     );
+    replace(this.aside);
     replace(this.facets);
   }
 
@@ -221,17 +226,22 @@ export class Results {
     );
   }
 
+  // The list holds results and nothing else. A list that also holds its own
+  // pager or its empty state is a list whose every child is announced as an
+  // item, so a reader on a screen reader is told there are twenty one results
+  // and the last one is a pair of buttons.
   renderList(query, res) {
     if (!this.hits.length) {
-      replace(this.list, emptyState(query, res, this.onQuery));
+      replace(this.list);
+      replace(this.aside, emptyState(query, res, this.onQuery));
       return;
     }
 
     replace(
       this.list,
       this.hits.map((hit, i) => this.row(hit, i)),
-      pager(query, res, this.onQuery),
     );
+    replace(this.aside, pager(query, res, this.onQuery));
   }
 
   /**

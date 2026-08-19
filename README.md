@@ -137,6 +137,7 @@ The environment variable is the flag in upper case with a `GENBA_` prefix, and a
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `GENBA_ADDR` | `127.0.0.1:8080` | listen address |
+| `GENBA_METRICS_ADDR` | empty | listen address for the metrics endpoint, empty to serve none |
 | `GENBA_STORE` | `memory` | storage driver: `memory`, `sqlite`, `postgres` or `kura` |
 | `GENBA_DSN` | empty | path or connection string for the driver |
 | `GENBA_TENANT` | empty | tenant served by a single tenant deployment |
@@ -153,6 +154,35 @@ The corpus flags have no environment variables, because a directory to index is 
 | `-corpus-name` | `files` | source name the documents carry, and what `-source` filters on |
 | `-corpus-acl` | `tenant` | who may read it: `tenant` for everybody in the tenant, `owners` to read OWNERS files |
 | `-corpus-refresh` | `0` | how often to sync again, zero for once at startup |
+
+## Metrics
+
+Set `GENBA_METRICS_ADDR` and the process opens a second listener that serves the Prometheus text format at any path on it.
+
+```
+GENBA_METRICS_ADDR=127.0.0.1:9100 genbad
+curl -s http://127.0.0.1:9100/metrics | head
+```
+
+It is a second listener rather than a route on the API on purpose.
+What it publishes is not secret and is not public either: it says how much traffic there is, how large the match sets are and how hard the caches are working.
+The deployment that gets this right binds it somewhere the outside cannot reach, and the API address never serves it.
+
+| Metric | What it is |
+| --- | --- |
+| `genba_request_duration_milliseconds` | histogram per endpoint, labelled with the route rather than the path |
+| `genba_search_duration_milliseconds` | histogram of the search itself, without request parsing or encoding |
+| `genba_search_candidates` | how many documents were ranked to produce one page |
+| `genba_search_matches` | how many matched, before paging |
+| `genba_cache_hits_total` | per layer, alongside misses, evictions and the entry count |
+| `genba_store_rows_total` | rows the driver returned, alongside statements and decodes |
+
+The buckets are 1, 2, 5, 10, 25, 50, 100, 250 and 500 milliseconds, which are tighter at the bottom than a default histogram because the question here is what fraction of requests came back in under ten milliseconds.
+
+Candidates against matches is the pair worth putting on a dashboard.
+A healthy two phase search has a candidate count bounded by the pool and a match count bounded by nothing, and the day the two start moving together is the day the first phase stopped cutting.
+
+[docs/alerts.yml](docs/alerts.yml) has the one alert to start with, and says what is deliberately not alerted on.
 
 ## Use it as a library
 

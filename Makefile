@@ -10,7 +10,7 @@ LDFLAGS := -s -w \
 
 export CGO_ENABLED := 0
 
-.PHONY: build cli install test race cover bench bench-corpus bench-search bench-counters vet fmt lint tidy vuln headless clean run
+.PHONY: build cli install test race cover bench bench-corpus bench-search bench-counters bench-gate bench-gate-record ui-gate vet fmt lint tidy vuln headless clean run
 
 # How large the benchmark corpus is. The budgets are stated against a hundred
 # thousand documents, which takes a couple of minutes to generate, so the
@@ -62,6 +62,36 @@ bench-search:
 # that makes a query read the corpus and stays quiet when the runner is busy.
 bench-counters:
 	go test -count=1 -run 'Counters' ./index/
+
+# The other half of the gate, which is the wall clock.
+#
+# The counters cannot see a change that does the same work more slowly, and this
+# can. It measures the search endpoint per query class in interleaved rounds,
+# compares the median of the quietest round against benchcorpus/baseline.json,
+# and normalises by a calibration workload so a slow runner is not read as a
+# slow query. It writes its numbers to bench-report.json, which CI keeps as an
+# artifact.
+bench-gate:
+	GENBA_GATE=1 GENBA_BENCH_DOCS=$(BENCH_DOCS) GENBA_GATE_REPORT=$(CURDIR)/bench-report.json go test -v -count=1 -timeout 30m -run 'LatencyGate' ./api/
+
+# Record a new baseline for the machine this runs on.
+#
+# It belongs in a commit of its own that changes nothing else, with a message
+# saying why the number moved. A baseline that arrives alongside the change it
+# is measuring is a baseline nobody can review, and one that updates itself is a
+# ratchet that only turns one way.
+bench-gate-record:
+	GENBA_GATE=1 GENBA_BENCH_DOCS=$(BENCH_DOCS) GENBA_GATE_RECORD=1 GENBA_GATE_RUNNER="$(shell uname -sm)" GENBA_GATE_DATE="$(shell date -u +%Y-%m-%d)" \
+		go test -v -count=1 -timeout 30m -run 'LatencyGate' ./api/
+
+# The browser gate: asset budgets, markup safety, axe, and Lighthouse.
+#
+# The Go tests are the part that never flakes and they run first. The browser
+# half needs npx and a Chrome, and says so and stops rather than failing when
+# there is not one.
+ui-gate: build
+	go test -count=1 -run 'Interface|Assets|Cache' ./web/
+	./scripts/ui-gate.sh
 
 vet:
 	go vet ./...

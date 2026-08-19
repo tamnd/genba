@@ -5,6 +5,10 @@
 coverage.out
 .DS_Store
 
+# What the latency gate writes out on every run. The baseline it compares
+# against is checked in, this is the run that was compared against it.
+/bench-report.json
+
 # Local data directories a development server writes to.
 /data/
 *.db

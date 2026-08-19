@@ -1,0 +1,63 @@
+{
+  "seed": 2121,
+  "documents": 20000,
+  "recorded": "2026-08-19",
+  "runner": "Darwin arm64",
+  "calibration_ms": 7.969,
+  "classes": {
+    "common": {
+      "samples": 744,
+      "rounds": 8,
+      "best_ms": 59.455,
+      "p50_ms": 68.591,
+      "p95_ms": 172.374,
+      "p99_ms": 377.999,
+      "budget_ms": 10
+    },
+    "filter": {
+      "samples": 936,
+      "rounds": 8,
+      "best_ms": 17.334,
+      "p50_ms": 21.341,
+      "p95_ms": 65.835,
+      "p99_ms": 128.538,
+      "budget_ms": 8
+    },
+    "multi": {
+      "samples": 744,
+      "rounds": 8,
+      "best_ms": 44.135,
+      "p50_ms": 54.043,
+      "p95_ms": 94.968,
+      "p99_ms": 132.099,
+      "budget_ms": 10
+    },
+    "pathological": {
+      "samples": 296,
+      "rounds": 8,
+      "best_ms": 126.482,
+      "p50_ms": 152.756,
+      "p95_ms": 251.166,
+      "p99_ms": 297.9,
+      "budget_ms": 25
+    },
+    "rare": {
+      "samples": 1000,
+      "rounds": 8,
+      "best_ms": 3.702,
+      "p50_ms": 4.768,
+      "p95_ms": 21.935,
+      "p99_ms": 29.398,
+      "budget_ms": 3
+    },
+    "term-filter": {
+      "samples": 744,
+      "rounds": 8,
+      "best_ms": 20.848,
+      "p50_ms": 25.941,
+      "p95_ms": 61.005,
+      "p99_ms": 83.519,
+      "budget_ms": 10
+    }
+  }
+}

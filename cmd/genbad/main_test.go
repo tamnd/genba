@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -56,6 +57,83 @@ func TestServerServesAndShutsDown(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the server did not shut down after its context was cancelled")
 	}
+}
+
+// TestMetricsAreOnTheirOwnAddress is the deployment shape the whole second
+// listener exists for. The numbers are published where an operator can scrape
+// them and nowhere the API is reachable from.
+func TestMetricsAreOnTheirOwnAddress(t *testing.T) {
+	addr, metricsAddr := freeAddr(t), freeAddr(t)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		var out, errOut bytes.Buffer
+		done <- run(ctx, []string{"-addr", addr, "-metrics-addr", metricsAddr, "-log-level", "error"}, env(nil), &out, &errOut)
+	}()
+
+	waitForHealth(t, "http://"+addr+"/healthz")
+
+	if body := get(t, "http://"+metricsAddr+"/metrics"); !strings.Contains(body, "genba_request_duration_milliseconds") {
+		t.Errorf("the metrics listener served:\n%s", body)
+	}
+	if body := get(t, "http://"+addr+"/metrics"); strings.Contains(body, "genba_request_duration_milliseconds") {
+		t.Error("the API address is serving metrics")
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run returned %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the server did not shut down after its context was cancelled")
+	}
+}
+
+// TestMetricsAreOffByDefault, because a port that opens itself is a port
+// somebody has to find out about from a scan.
+func TestMetricsAreOffByDefault(t *testing.T) {
+	addr, metricsAddr := freeAddr(t), freeAddr(t)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() {
+		var out, errOut bytes.Buffer
+		_ = run(ctx, []string{"-addr", addr, "-log-level", "error"}, env(nil), &out, &errOut)
+	}()
+
+	waitForHealth(t, "http://"+addr+"/healthz")
+
+	conn, err := net.DialTimeout("tcp", metricsAddr, time.Second)
+	if err == nil {
+		_ = conn.Close()
+		t.Errorf("something is listening on %s with no metrics address configured", metricsAddr)
+	}
+}
+
+// get reads a URL, returning an empty body for a connection that is refused or
+// a response that is not a 200, because both mean the same thing here.
+func get(t *testing.T, url string) string {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)
+	if err != nil {
+		t.Fatalf("building the request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading %s: %v", url, err)
+	}
+	return string(body)
 }
 
 func freeAddr(t *testing.T) string {

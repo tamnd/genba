@@ -15,6 +15,26 @@ make lint
 CI runs the same commands on Linux and macOS, plus a cross compile for Windows and FreeBSD, a build without the browser interface, `govulncheck`, a `go mod tidy` check and a license check.
 Running them locally is faster than finding out from a red badge.
 
+## If you touched the query path or the interface
+
+```
+make bench-counters
+make bench-gate
+make ui-gate
+```
+
+`bench-counters` is exact and fast.
+It counts rows read, statements run and documents decoded, and those numbers are the same on a laptop and on a busy runner, so it is the check that catches a query which started walking the corpus.
+
+`bench-gate` is the wall clock.
+It measures the search endpoint per query class in interleaved rounds, compares the median of the quietest round against `benchcorpus/baseline.json`, and normalises by a calibration workload so a busy machine is not read as a slow query.
+The first run generates the corpus and takes a few minutes.
+If the baseline itself needs to move, `make bench-gate-record` writes a new one and it belongs in a commit of its own that says why the number moved.
+
+`ui-gate` checks the asset budgets, then starts the binary over this repository as a corpus and runs axe and Lighthouse against the home page, a results page and a results page with the drawer open.
+It needs `npx` and a Chrome, and it says so and stops rather than failing when there is not one.
+A chromedriver that does not match the Chrome next to it is the usual reason it will not start, and `CHROMEDRIVER` points it at a matching one.
+
 ## The rule that is not negotiable
 
 Anything that can return document content takes a principal, and the permission filter runs inside the storage driver while it walks its own data.

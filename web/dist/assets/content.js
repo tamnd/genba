@@ -106,7 +106,10 @@ export function body(d) {
   if (shape === "code") {
     return h("div", { class: "preview preview--code" }, codeBlock(d.body, languageOf(d)));
   }
-  return h("div", { class: "preview" }, h("pre", { class: "plain" }, d.body));
+  // Reachable by keyboard for the same reason a code block is: the preview
+  // scrolls, and a scrolling region a keyboard cannot reach is a document a
+  // keyboard cannot read.
+  return h("div", { class: "preview" }, h("pre", { class: "plain", tabindex: "0" }, d.body));
 }
 
 /** same compares two headings the way a reader would, ignoring spacing and case. */
