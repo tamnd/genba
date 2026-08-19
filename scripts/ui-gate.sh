@@ -76,9 +76,17 @@ fi
 ID=$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$ID")
 
 # A chromedriver that does not match the Chrome next to it is the most common
-# way this fails on a laptop. CHROMEDRIVER points at a matching one.
+# way this fails, on a laptop and on a runner alike. axe downloads whichever
+# chromedriver is current, and a runner image whose Chrome is one release behind
+# then refuses every session. CHROMEDRIVER points at a matching one, and
+# CHROMEWEBDRIVER is where a GitHub runner keeps the one that matches its own
+# Chrome, so the default needs no plumbing in the workflow.
 DRIVER=""
+if [ -z "${CHROMEDRIVER:-}" ] && [ -x "${CHROMEWEBDRIVER:-}/chromedriver" ]; then
+	CHROMEDRIVER="$CHROMEWEBDRIVER/chromedriver"
+fi
 if [ -n "${CHROMEDRIVER:-}" ]; then
+	echo "ui-gate: chromedriver $CHROMEDRIVER"
 	DRIVER="--chromedriver-path $CHROMEDRIVER"
 fi
 

@@ -426,19 +426,32 @@ var gateSink int
 // gateCompare is the whole judgement, kept apart from the measurement so that
 // it can be tested with numbers instead of with a corpus.
 func gateCompare(now, base gateBaseline, haveBase bool, tol float64) (failures, notes []string) {
-	// The backstop, which needs no baseline. A class the recorded baseline
-	// already misses is exempt from it and is held to the baseline instead: the
-	// budgets are what the query path is aiming at rather than what it has hit,
-	// three of them are missed today and that is written down in
-	// benchcorpus/BASELINE.md, and a gate that failed every pull request until
-	// they are met is a gate that gets deleted in a week. The exemption expires
-	// on its own the moment a baseline inside the budget is recorded.
+	// The backstop, which is the one absolute number in here. A class the
+	// recorded baseline already misses is exempt from it and is held to the
+	// baseline instead: the budgets are what the query path is aiming at rather
+	// than what it has hit, three of them are missed today and that is written
+	// down in benchcorpus/BASELINE.md, and a gate that failed every pull request
+	// until they are met is a gate that gets deleted in a week. The exemption
+	// expires on its own the moment a baseline inside the budget is recorded.
+	//
+	// A machine with no baseline at all gets no backstop either, because the
+	// exemption is read out of the baseline and without one every class that is
+	// merely aiming at its budget looks like a regression. The budgets were
+	// stated against a laptop and a two core runner is several times slower than
+	// one, so an absolute millisecond applied to a machine nothing has
+	// characterised is the flake the rest of this design exists to avoid. Record
+	// a baseline on the machine and everything below turns on.
+	if !haveBase {
+		return nil, []string{"there is no baseline for this machine, so the numbers above were recorded and nothing was enforced, and " +
+			gatePath() + " is where one produced by make bench-gate-record belongs"}
+	}
+
 	for _, class := range slices.Sorted(maps.Keys(now.Classes)) {
 		got := now.Classes[class]
 		was, recorded := base.Classes[class]
 		switch {
 		case got.Budget <= 0 || got.Best <= got.Budget*gateBackstop:
-		case haveBase && recorded && was.Budget > 0 && was.Best > was.Budget:
+		case recorded && was.Budget > 0 && was.Best > was.Budget:
 			notes = append(notes, fmt.Sprintf(
 				"%s is over its budget of %.1fms at %.1fms, and the baseline records %.1fms, so it is held to the baseline until the budget is met",
 				class, got.Budget, got.Best, was.Best))
@@ -581,7 +594,7 @@ func TestGateComparisonIsHonest(t *testing.T) {
 			gateBaseline{Seed: 2121, Documents: 20_000, Calibration: 20, Classes: reading(16)}, ""},
 		{"a slow machine and a real regression",
 			gateBaseline{Seed: 2121, Documents: 20_000, Calibration: 20, Classes: reading(24)}, "tolerance"},
-		{"past the backstop with no baseline to compare against",
+		{"past the backstop on a class the baseline meets",
 			gateBaseline{Seed: 2121, Documents: 20_000, Calibration: 10, Classes: reading(25)}, "backstop"},
 		{"a tail that moved and a median that did not",
 			// The one the percentiles would have failed and this deliberately
@@ -619,6 +632,16 @@ func TestGateComparisonIsHonest(t *testing.T) {
 	if failures, _ := gateCompare(gateBaseline{Seed: 2121, Documents: 20_000, Calibration: 10, Classes: reading(30)},
 		overBudget, true, gateTolerance); len(failures) == 0 {
 		t.Error("a class exempt from the backstop stopped being held to its baseline as well")
+	}
+
+	// A machine with no baseline is a machine nothing is known about. It reports
+	// and it does not fail, because the budgets describe a laptop and a runner
+	// several times slower than one is not a regression.
+	slow := gateBaseline{Seed: 2121, Documents: 20_000, Calibration: 40, Classes: reading(80)}
+	if failures, notes := gateCompare(slow, gateBaseline{}, false, gateTolerance); len(failures) > 0 {
+		t.Errorf("a run with no baseline failed anyway: %v", failures)
+	} else if !strings.Contains(strings.Join(notes, "\n"), "no baseline") {
+		t.Errorf("the report does not say there was no baseline: %v", notes)
 	}
 
 	// A corpus mismatch is not a regression and must not be reported as one.

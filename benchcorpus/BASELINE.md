@@ -48,6 +48,10 @@ The absolute budgets are still in the code, as a backstop at twice the budget.
 A class that the recorded baseline itself misses is exempt from that backstop and is held to the baseline instead, which is what keeps the three misses below from failing every pull request while they are being worked on.
 The exemption ends by itself on the day a baseline inside the budget is recorded.
 
+A machine with no baseline at all gets no backstop either.
+The exemption is read out of the baseline, so without one every class that is aiming at a budget it has not met yet looks like a failure, and the budgets were stated against the laptop in the table above rather than against a two core runner that is several times slower than it.
+An absolute millisecond applied to a machine nothing has characterised is the flake the rest of this design exists to avoid, so that run records its numbers, says in the log that it enforced nothing, and leaves the counters to be the half that runs everywhere.
+
 The checked in baseline is the laptop in the table above.
 CI points `GENBA_GATE_BASELINE` at `benchcorpus/baseline-ci.json`, which the nightly workflow produces as an artifact for somebody to commit, because a baseline that updates itself is a ratchet that only turns one way.
 
