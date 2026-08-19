@@ -39,7 +39,15 @@ case $(uname -s) in
 MINGW* | MSYS* | CYGWIN*)
 	TARGET=x86_64-pc-windows-gnu
 	OUT="$SRC/target/$TARGET/release"
-	rustup target add "$TARGET" >/dev/null 2>&1 || true
+	# The standard library for that target has to be installed, and the error
+	# when it is not is "can't find crate for std", which says nothing about
+	# which toolchain is missing. So this runs loudly rather than being tried
+	# and ignored.
+	if ! command -v rustup >/dev/null 2>&1; then
+		echo "kura: rustup is not on PATH, and the $TARGET standard library has to come from somewhere" >&2
+		exit 1
+	fi
+	rustup target add "$TARGET"
 	;;
 esac
 
