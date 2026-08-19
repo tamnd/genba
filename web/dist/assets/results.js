@@ -2,6 +2,7 @@
 
 import { h, replace, svg } from "./dom.js";
 import { kindIcon, sourceColor, label, when, exact, number, duration, icon } from "./format.js";
+import { tile } from "./content.js";
 import * as urlState from "./state.js";
 
 /**
@@ -100,6 +101,7 @@ export class Results {
         h(
           "div",
           { class: "skeleton-result" },
+          h("div", { class: "skeleton skeleton-result__tile" }),
           h("div", { class: "skeleton", style: { width: "60%", height: "20px" } }),
           h("div", { class: "skeleton", style: { width: "40%", height: "14px" } }),
           h("div", { class: "skeleton", style: { width: "100%", height: "14px" } }),
@@ -234,9 +236,10 @@ export class Results {
   /**
    * row is one result.
    *
-   * Title first, then the line of provenance, then the snippet. The old order
-   * put provenance above the title, which meant the first thing on every row
-   * was the least distinguishing thing about it.
+   * A tile, then the title, then the line of provenance, then the snippet. The
+   * old order put provenance above the title, which meant the first thing on
+   * every row was the least distinguishing thing about it. The tile is the only
+   * part of a row that is not words, and for an image it is the whole answer.
    */
   row(hit, i) {
     const open = () => this.onOpen(hit.id);
@@ -254,6 +257,7 @@ export class Results {
           open();
         },
       },
+      tile(hit),
       hit.url
         ? h(
             "a",

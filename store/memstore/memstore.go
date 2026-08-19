@@ -22,17 +22,25 @@ import (
 
 // Store keeps documents in a map guarded by a read write mutex.
 type Store struct {
-	mu     sync.RWMutex
-	docs   map[string]doc.Document
-	closed bool
+	mu   sync.RWMutex
+	docs map[string]doc.Document
+
+	// content is kept out of the document for the same reason the SQLite driver
+	// keeps it in its own table: a scan that carried image bytes would make
+	// every query pay for them.
+	content map[string]doc.Content
+	closed  bool
 }
 
 // New returns an empty store.
 func New() *Store {
-	return &Store{docs: make(map[string]doc.Document)}
+	return &Store{
+		docs:    make(map[string]doc.Document),
+		content: make(map[string]doc.Content),
+	}
 }
 
-var _ store.Store = (*Store)(nil)
+var _ store.ContentStore = (*Store)(nil)
 
 // Put inserts or replaces documents.
 func (s *Store) Put(ctx context.Context, docs ...doc.Document) error {
@@ -48,6 +56,12 @@ func (s *Store) Put(ctx context.Context, docs ...doc.Document) error {
 		if d.ID == "" {
 			return fmt.Errorf("memstore: put: %w", errNoID)
 		}
+		if d.Content != nil {
+			s.content[d.ID] = *d.Content
+		} else {
+			delete(s.content, d.ID)
+		}
+		d.Content = nil
 		s.docs[d.ID] = d
 	}
 	return nil
@@ -65,6 +79,7 @@ func (s *Store) Delete(ctx context.Context, ids ...string) error {
 	}
 	for _, id := range ids {
 		delete(s.docs, id)
+		delete(s.content, id)
 	}
 	return nil
 }
@@ -120,6 +135,33 @@ func (s *Store) Scan(ctx context.Context, p *acl.Principal, fn func(doc.Document
 	return nil
 }
 
+// Content returns the bytes of one document if the principal may read it.
+func (s *Store) Content(ctx context.Context, p *acl.Principal, id string) (doc.Content, error) {
+	if err := ctx.Err(); err != nil {
+		return doc.Content{}, err
+	}
+	if p == nil {
+		return doc.Content{}, genba.ErrNoPrincipal
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return doc.Content{}, genba.ErrClosed
+	}
+	d, ok := s.docs[id]
+	if !ok || !visible(p, d) {
+		return doc.Content{}, genba.ErrNotFound
+	}
+	c, ok := s.content[id]
+	if !ok {
+		// A document with no content is not distinguishable from one that is not
+		// there, because telling the two apart is a way of asking whether a
+		// document exists.
+		return doc.Content{}, genba.ErrNotFound
+	}
+	return c, nil
+}
+
 // Stats reports what the store holds.
 func (s *Store) Stats(ctx context.Context) (store.Stats, error) {
 	if err := ctx.Err(); err != nil {
@@ -147,6 +189,7 @@ func (s *Store) Close() error {
 	defer s.mu.Unlock()
 	s.closed = true
 	s.docs = nil
+	s.content = nil
 	return nil
 }
 

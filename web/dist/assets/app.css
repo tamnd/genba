@@ -679,7 +679,10 @@ time {
  */
 .result {
   position: relative;
-  display: block;
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  column-gap: var(--space-4);
+  align-items: start;
   padding: var(--row-padding-block) var(--space-4);
   border-bottom: 1px solid var(--border);
   border-left: 3px solid transparent;
@@ -707,7 +710,58 @@ time {
   border-left-color: var(--focus-ring);
 }
 
+/*
+ * The tile is the only part of a row that is not words.
+ *
+ * It sits in its own column and spans the three rows of text beside it, so the
+ * row keeps the height its content asks for rather than the height of a square.
+ * For an image it is the image, which is how somebody recognises the one they
+ * meant without opening anything.
+ */
+.tile {
+  grid-row: 1 / 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  overflow: hidden;
+}
+
+.tile--image {
+  border-bottom: none;
+}
+
+.tile .image,
+.tile .image__img {
+  width: 100%;
+  height: 100%;
+}
+
+.tile .image__img {
+  object-fit: cover;
+}
+
+[data-density="compact"] .result {
+  grid-template-columns: 32px minmax(0, 1fr);
+}
+
+[data-density="compact"] .tile {
+  width: 32px;
+  height: 32px;
+}
+
+[data-density="compact"] .tile svg {
+  width: 16px;
+  height: 16px;
+}
+
 .result__title {
+  grid-column: 2;
   display: -webkit-box;
   margin-bottom: var(--space-1);
   padding: 0;
@@ -729,6 +783,7 @@ time {
 }
 
 .result__meta {
+  grid-column: 2;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -740,6 +795,7 @@ time {
 }
 
 .result__snippet {
+  grid-column: 2;
   display: -webkit-box;
   color: var(--text-secondary);
   font-size: var(--text-small);
@@ -1076,7 +1132,10 @@ a.panel__row:hover .panel__row-title {
   position: fixed;
   inset: 0 0 0 auto;
   z-index: var(--z-drawer);
-  width: min(480px, 100vw);
+  /* Wide enough that an eighty column code block does not wrap and an image
+     is shown at a size worth looking at, and narrow enough that the results
+     behind it are still there to go back to. */
+  width: min(720px, 100vw);
   display: flex;
   flex-direction: column;
   background: var(--bg);
@@ -1125,15 +1184,28 @@ a.panel__row:hover .panel__row-title {
   letter-spacing: var(--display-tracking);
 }
 
+/*
+ * The body holds whatever the document turned out to be.
+ *
+ * Prose is held to the measure because a line of a hundred and twenty
+ * characters is a line people lose their place in. Code and images are not:
+ * wrapping code to a measure is how a diff becomes unreadable, and an image
+ * shown at two thirds of the space available is an image shown smaller than it
+ * needed to be.
+ */
 .drawer__body {
   flex: 1;
-  max-width: var(--measure);
+  min-height: 0;
   overflow-y: auto;
   padding: 0 var(--space-6) var(--space-6);
   font-size: var(--text-body);
   line-height: var(--leading-prose);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+}
+
+.drawer__body[data-shape="prose"],
+.drawer__body[data-shape="text"] {
+  max-width: var(--measure);
 }
 
 .drawer__foot {
@@ -1160,6 +1232,339 @@ a.panel__row:hover .panel__row-title {
   from {
     opacity: 0;
   }
+}
+
+/* Content ---------------------------------------------------------------- */
+
+/*
+ * A document body, in whichever of its four shapes it turned out to be.
+ *
+ * The rules here are the same type scale, the same spacing grid and the same
+ * two hairlines as the rest of the interface. A preview that introduces its own
+ * type scale is a second design system living inside the first one, and the
+ * document is the thing people came to read, so it gets the plainest treatment
+ * in the product rather than the most decorated.
+ */
+
+.preview__empty {
+  color: var(--text-muted);
+}
+
+/* Text that is not markdown and not code keeps the line breaks somebody typed
+   and nothing else. */
+.plain {
+  margin: 0;
+  font-family: inherit;
+  font-size: var(--text-body);
+  line-height: var(--leading-prose);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+/* Prose ------------------------------------------------------------------- */
+
+.prose {
+  font-size: var(--text-body);
+  line-height: var(--leading-prose);
+}
+
+.prose > :first-child {
+  margin-top: 0;
+}
+
+.prose__p {
+  margin: 0 0 var(--space-4);
+}
+
+/* Headings take their space from above, so a section is attached to its own
+   content rather than floating between two of them. */
+.prose__h {
+  margin: var(--space-8) 0 var(--space-3);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-title);
+  scroll-margin-top: var(--space-6);
+}
+
+h1.prose__h {
+  font-size: var(--text-heading);
+  line-height: var(--leading-heading);
+  letter-spacing: var(--display-tracking);
+}
+
+h2.prose__h {
+  font-size: var(--text-title);
+}
+
+h3.prose__h {
+  font-size: var(--text-lead);
+  font-weight: var(--weight-semibold);
+}
+
+h4.prose__h,
+h5.prose__h,
+h6.prose__h {
+  font-size: var(--text-body);
+  font-weight: var(--weight-semibold);
+}
+
+.prose__link {
+  color: var(--text-link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.prose__strong {
+  font-weight: var(--weight-semibold);
+}
+
+.prose__del {
+  color: var(--text-muted);
+}
+
+.prose__list {
+  margin: 0 0 var(--space-4);
+  padding-left: var(--space-6);
+}
+
+.prose__list .prose__list {
+  margin: var(--space-2) 0 0;
+}
+
+.prose__item {
+  margin-bottom: var(--space-2);
+}
+
+.prose__item--task {
+  list-style: none;
+  margin-left: calc(var(--space-6) * -1);
+  padding-left: var(--space-6);
+  position: relative;
+}
+
+.prose__item--task input {
+  position: absolute;
+  left: 0;
+  top: 5px;
+  accent-color: var(--accent);
+}
+
+/* A quote is a rule and an indent. A tinted panel would be a card, and there
+   are no cards. */
+.prose__quote {
+  margin: 0 0 var(--space-4);
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.prose__quote > :last-child {
+  margin-bottom: 0;
+}
+
+.prose__rule {
+  margin: var(--space-8) 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.prose__code {
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-subtle);
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+}
+
+.prose__figure {
+  margin: var(--space-6) 0;
+}
+
+.prose__figure figcaption {
+  margin-top: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-small);
+}
+
+.prose__img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.prose__img-missing {
+  color: var(--text-muted);
+  font-size: var(--text-small);
+}
+
+/* A table scrolls sideways inside its own box rather than widening the
+   drawer, because a document with one wide table should not change the width
+   of every other document. */
+.prose__scroll {
+  margin: 0 0 var(--space-4);
+  overflow-x: auto;
+}
+
+.prose__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-small);
+  line-height: var(--leading-small);
+}
+
+.prose__table th,
+.prose__table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.prose__table th {
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+
+/* Code -------------------------------------------------------------------- */
+
+.code {
+  margin: 0 0 var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+
+.prose .code {
+  margin: var(--space-4) 0;
+}
+
+.code__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.code__lang {
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.code__copy {
+  height: 28px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-caption);
+}
+
+.code__pre {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  overflow-x: auto;
+}
+
+.code__text {
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  line-height: 22px;
+  white-space: pre;
+  tab-size: 4;
+}
+
+.tok--keyword {
+  color: var(--code-keyword);
+}
+
+.tok--string {
+  color: var(--code-string);
+}
+
+.tok--number {
+  color: var(--code-number);
+}
+
+.tok--func {
+  color: var(--code-func);
+}
+
+.tok--comment {
+  color: var(--code-comment);
+  font-style: italic;
+}
+
+/* Images ------------------------------------------------------------------ */
+
+/*
+ * The box exists before the bytes do.
+ *
+ * It fills with the source colour of nothing in particular while it waits, and
+ * takes the aspect ratio the server recorded as soon as the response arrives,
+ * so an image landing never pushes the paragraph under it down the page.
+ */
+.image {
+  display: block;
+  background: var(--bg-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.image[data-state="loading"] {
+  background: linear-gradient(
+    90deg,
+    var(--bg-subtle) 25%,
+    var(--bg-active) 37%,
+    var(--bg-subtle) 63%
+  );
+  background-size: 400% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+.image[data-state="failed"] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-small);
+  text-align: center;
+}
+
+.image__img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.figure {
+  margin: 0;
+}
+
+.figure .image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+}
+
+.figure .image__img {
+  width: auto;
+  max-width: 100%;
+  max-height: 70vh;
+  border-radius: var(--radius-sm);
+}
+
+.figure__caption {
+  margin-top: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-small);
 }
 
 /* Buttons ---------------------------------------------------------------- */
@@ -1335,12 +1740,37 @@ a.panel__row:hover .panel__row-title {
   }
 }
 
+/* The same grid as a real row, so the tile column does not appear from
+   nowhere when the answer arrives. */
 .skeleton-result {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  column-gap: var(--space-4);
+  row-gap: var(--space-2);
+  align-items: start;
   padding: var(--row-padding-block) var(--space-4);
   border-bottom: 1px solid var(--border);
+}
+
+.skeleton-result > * {
+  grid-column: 2;
+}
+
+.skeleton-result__tile {
+  grid-column: 1;
+  grid-row: 1 / 5;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-md);
+}
+
+[data-density="compact"] .skeleton-result {
+  grid-template-columns: 32px minmax(0, 1fr);
+}
+
+[data-density="compact"] .skeleton-result__tile {
+  width: 32px;
+  height: 32px;
 }
 
 /* Shortcuts dialog ------------------------------------------------------- */

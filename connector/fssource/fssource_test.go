@@ -1,8 +1,11 @@
 package fssource_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"image"
+	pngenc "image/png"
 	"os"
 	"path/filepath"
 	"slices"
@@ -75,7 +78,7 @@ func TestItReadsATreeIntoDocuments(t *testing.T) {
 
 	got, cursor := collect(t, s, connector.Cursor{})
 
-	want := []string{"repo:README.md", "repo:cmd/main.go", "repo:docs/deep/nested.md", "repo:docs/install.md"}
+	want := []string{"repo:README.md", "repo:assets/logo.png", "repo:cmd/main.go", "repo:docs/deep/nested.md", "repo:docs/install.md"}
 	if !slices.Equal(ids(got), want) {
 		t.Errorf("read %v\nwant %v", ids(got), want)
 	}
@@ -112,8 +115,80 @@ func TestItReadsATreeIntoDocuments(t *testing.T) {
 	if p := byID["repo:cmd/main.go"].Properties["extension"]; p != "go" {
 		t.Errorf("extension property is %q", p)
 	}
+	for id, want := range map[string]string{
+		"repo:README.md":       "text/markdown",
+		"repo:cmd/main.go":     "text/x-go",
+		"repo:assets/logo.png": "image/png",
+	} {
+		if got := byID[id].Properties[doc.MediaType]; got != want {
+			t.Errorf("%s has media type %q, want %q", id, got, want)
+		}
+	}
 	if byID["repo:README.md"].ModifiedAt.IsZero() {
 		t.Error("ModifiedAt was not set from the file")
+	}
+}
+
+// An image is the one binary this connector reads. It has no body, because
+// there is no text in it to search, and it carries its bytes and its pixel size
+// so the preview can show it without guessing either.
+func TestAnImageBecomesADocumentWithItsBytes(t *testing.T) {
+	root := t.TempDir()
+	var png bytes.Buffer
+	if err := pngenc.Encode(&png, image.NewRGBA(image.Rect(0, 0, 24, 16))); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "diagram.png"), png.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A webp is stored without dimensions, because the standard library cannot
+	// read them and a decoder for one format is not worth a dependency.
+	if err := os.WriteFile(filepath.Join(root, "shot.webp"), []byte("RIFF....WEBPVP8 "), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := fssource.New(root, "repo", fssource.PublicToTenant("repo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	got, _ := collect(t, s, connector.Cursor{})
+	byID := map[string]doc.Document{}
+	for _, d := range got {
+		byID[d.ID] = d
+	}
+
+	d := byID["repo:diagram.png"]
+	switch {
+	case d.Kind != doc.KindImage:
+		t.Errorf("kind is %q, want image", d.Kind)
+	case d.Body != "":
+		t.Errorf("an image has a body of %q, want none", d.Body)
+	case d.Content == nil:
+		t.Fatal("an image document carries no bytes")
+	case !bytes.Equal(d.Content.Bytes, png.Bytes()):
+		t.Error("the bytes are not the ones on disk")
+	case d.Content.Width != 24 || d.Content.Height != 16:
+		t.Errorf("size is %dx%d, want 24x16", d.Content.Width, d.Content.Height)
+	}
+	if w := byID["repo:shot.webp"]; w.Content == nil || w.Content.Width != 0 {
+		t.Errorf("a webp should be stored with no dimensions, got %+v", w.Content)
+	}
+}
+
+func TestAnOversizeImageIsSkipped(t *testing.T) {
+	root := tree(t, map[string]string{
+		"small.png": "\x89PNG\r\n\x1a\n",
+		"huge.png":  string(make([]byte, 4096)),
+	})
+	s, err := fssource.New(root, "repo", fssource.PublicToTenant("repo"), fssource.WithMaxImageSize(1024))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := collect(t, s, connector.Cursor{})
+	if !slices.Equal(ids(got), []string{"repo:small.png"}) {
+		t.Errorf("read %v, want only the small image", ids(got))
 	}
 }
 

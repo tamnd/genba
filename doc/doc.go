@@ -28,7 +28,34 @@ const (
 	KindEmail    Kind = "email"
 	KindCalendar Kind = "calendar"
 	KindPerson   Kind = "person"
+	KindImage    Kind = "image"
 )
+
+// MediaType is the property every connector sets to say what a document
+// actually is. The kind is coarse on purpose and drives the layout of a result
+// row; the media type is what a preview needs before it can decide whether it
+// is looking at a wiki page, a Go file or a screenshot.
+//
+// A connector that knows nothing better sets text/plain. An empty media type is
+// treated the same way downstream, but writing the honest default is cheaper
+// than making every reader handle the missing case.
+const MediaType = "media_type"
+
+// Content is the raw bytes of a document whose meaning is not its text.
+//
+// It is nil for everything that is prose, which is almost everything. A store
+// keeps it beside the document rather than inside it, so that the megabyte of
+// PNG behind a screenshot never rides along on the scan that ranking does.
+type Content struct {
+	Bytes []byte
+
+	// Width and Height are pixels, and zero when nobody could tell. They are
+	// recorded at crawl time so a preview can reserve the box before the image
+	// arrives, rather than shoving the paragraph under it down the page when it
+	// does.
+	Width  int
+	Height int
+}
 
 // Person is a name attached to a document, resolved to a subject where we could
 // and left as a raw source identity where we could not.
@@ -65,6 +92,11 @@ type Document struct {
 	// Properties carries source specific fields that are worth faceting or
 	// filtering on, such as a ticket status or a file's mime type.
 	Properties map[string]string
+
+	// Content is the bytes of a document that is not text, and nil for one that
+	// is. It is not indexed and it is not returned by a query path: a store
+	// takes it on Put and hands it back only through [store.ContentStore].
+	Content *Content
 }
 
 // Queryable reports whether the document may be served to a query at all. It is

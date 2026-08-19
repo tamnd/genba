@@ -60,8 +60,9 @@ type Store struct {
 }
 
 var (
-	_ store.Store     = (*Store)(nil)
-	_ store.Retriever = (*Store)(nil)
+	_ store.Store        = (*Store)(nil)
+	_ store.Retriever    = (*Store)(nil)
+	_ store.ContentStore = (*Store)(nil)
 )
 
 // Open opens or creates a database at path and brings its schema up to date.
@@ -154,6 +155,12 @@ func (s *Store) Put(ctx context.Context, docs ...doc.Document) error {
 // joined on it. A delete and insert would give the row a new identity and leave
 // the old terms behind under the old one.
 func putOne(ctx context.Context, tx *sql.Tx, d doc.Document) error {
+	// The content comes off the document before it is encoded, so the data
+	// column stays the size of the text and Get cannot hand image bytes back to
+	// a query path that has no use for them.
+	content := d.Content
+	d.Content = nil
+
 	data, err := json.Marshal(d)
 	if err != nil {
 		return fmt.Errorf("encode: %w", err)
@@ -198,6 +205,20 @@ func putOne(ctx context.Context, tx *sql.Tx, d doc.Document) error {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO document_ref (doc_id, effect, scope, key) VALUES (?, ?, ?, ?)`,
 			d.ID, r.effect, r.scope, r.key,
+		); err != nil {
+			return err
+		}
+	}
+
+	// A put that carries no content clears whatever was there, because a source
+	// replacing a screenshot with a text file has to leave nothing behind.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM document_content WHERE doc_id = ?`, d.ID); err != nil {
+		return err
+	}
+	if content != nil {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO document_content (doc_id, width, height, bytes) VALUES (?, ?, ?, ?)`,
+			d.ID, content.Width, content.Height, content.Bytes,
 		); err != nil {
 			return err
 		}
@@ -307,6 +328,40 @@ func (s *Store) Get(ctx context.Context, p *acl.Principal, id string) (doc.Docum
 	}
 	s.rows.Add(1)
 	return decode(data)
+}
+
+// Content returns the bytes of one document if the principal may read it.
+//
+// The join is the point. The permission predicate is applied in the same
+// statement that reads the blob, so a caller who may not see the document never
+// causes the bytes to be read at all, let alone returned.
+func (s *Store) Content(ctx context.Context, p *acl.Principal, id string) (doc.Content, error) {
+	if err := s.ready(ctx); err != nil {
+		return doc.Content{}, err
+	}
+	if p == nil {
+		return doc.Content{}, genba.ErrNoPrincipal
+	}
+
+	c := visible(p)
+	args := append([]any{id}, c.args...)
+	row := s.db.QueryRowContext(ctx, `
+		SELECT c.width, c.height, c.bytes
+		FROM document_content c
+		JOIN document d ON d.id = c.doc_id
+		WHERE c.doc_id = ? AND `+c.where(), args...)
+
+	var out doc.Content
+	switch err := row.Scan(&out.Width, &out.Height, &out.Bytes); {
+	case errors.Is(err, sql.ErrNoRows):
+		// Missing, invisible and text only are one answer here, for the reason
+		// they are one answer in Get.
+		return doc.Content{}, genba.ErrNotFound
+	case err != nil:
+		return doc.Content{}, fmt.Errorf("sqlitestore: content: %w", err)
+	}
+	s.rows.Add(1)
+	return out, nil
 }
 
 // Scan calls fn for every document the principal may read, in id order.
