@@ -49,11 +49,18 @@ jobs:
         env:
           GENBA_GATE_BASELINE: ${{ github.workspace }}/benchcorpus/baseline-ci.json
           GENBA_GATE_RUNNER: ubuntu-latest nightly
-          GENBA_GATE_SAMPLES: "2000"
-          GENBA_GATE_TOLERANCE: "1.10"
+          # A recording run takes its sample count from the code rather than
+          # from here, because the figure being recorded is the one a pull
+          # request will be compared against and the two have to be the same
+          # shape. A round of two hundred and fifty has a steadier median than a
+          # round of forty, so a baseline recorded that way is a baseline every
+          # pull request is measured against with a ruler it was not drawn with.
+          GENBA_GATE_SAMPLES: ${{ inputs.record && '' || '2000' }}
+          GENBA_GATE_TOLERANCE: ${{ inputs.record && '' || '1.10' }}
           GENBA_GATE_RECORD: ${{ inputs.record && '1' || '' }}
         run: |
           set -o pipefail
+          export GENBA_GATE_DATE=$(date -u +%Y-%m-%d)
           make bench-gate 2>&1 | tee bench-gate.log
       # Recording writes the baseline where the pull request gate will look for
       # it, and the artifact is how it gets to somebody who can commit it. It is
