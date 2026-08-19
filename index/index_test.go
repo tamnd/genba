@@ -238,3 +238,68 @@ func TestTokenize(t *testing.T) {
 		}
 	}
 }
+
+// The browser marks a snippet from the passages the server returned rather than
+// searching the snippet text for the query, because the analyzer is what
+// decided the match and a substring search would highlight words the index
+// never matched. These are the properties the browser relies on.
+func TestPassagesCoverTheSnippetAndMarkOnlyMatches(t *testing.T) {
+	s := newSearcher(t, []fixture{{
+		id:    "d1",
+		title: "Runbook",
+		body:  "Failover the payments queue. Payment volume is unaffected by the failover.",
+		perm:  openTo("eng@acme.com"),
+	}})
+
+	res, err := s.Search(t.Context(), principal("gdrive:eng@acme.com"), index.Query{Text: "payments"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(res.Hits) != 1 {
+		t.Fatalf("got %d hits, want 1", len(res.Hits))
+	}
+	hit := res.Hits[0]
+
+	var rebuilt strings.Builder
+	marked := 0
+	for _, p := range hit.Passages {
+		rebuilt.WriteString(p.Text)
+		if !p.Match {
+			continue
+		}
+		marked++
+		if !strings.EqualFold(p.Text, "payments") {
+			t.Errorf("marked %q, want only the term that matched", p.Text)
+		}
+	}
+	if rebuilt.String() != hit.Snippet {
+		t.Fatalf("the passages join to %q, want the snippet %q", rebuilt.String(), hit.Snippet)
+	}
+	if marked != 1 {
+		t.Fatalf("marked %d passages, want 1", marked)
+	}
+}
+
+// A term the analyzer would fold to nothing, or one that appears only in the
+// title, must not produce a mark that is not there in the text.
+func TestPassagesAreEmptyWithoutAMatchInTheBody(t *testing.T) {
+	s := newSearcher(t, []fixture{{
+		id:    "d1",
+		title: "Failover runbook",
+		body:  "Drain the queue, then bring the replica up.",
+		perm:  openTo("eng@acme.com"),
+	}})
+
+	res, err := s.Search(t.Context(), principal("gdrive:eng@acme.com"), index.Query{Text: "failover"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(res.Hits) != 1 {
+		t.Fatalf("got %d hits, want 1", len(res.Hits))
+	}
+	for _, p := range res.Hits[0].Passages {
+		if p.Match {
+			t.Fatalf("marked %q, which is not in the body", p.Text)
+		}
+	}
+}

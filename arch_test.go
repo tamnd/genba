@@ -23,16 +23,17 @@ const module = "github.com/tamnd/genba"
 // already been filtered. An edge that skips a layer is how a component ends up
 // holding a document it was never supposed to see.
 var allowed = map[string][]string{
-	"":                nil,
-	"acl":             nil,
-	"doc":             {"acl"},
-	"store":           {"acl", "doc"},
-	"store/memstore":  {"", "acl", "doc", "store"},
-	"store/storetest": {"", "acl", "doc", "store"},
-	"index":           {"acl", "doc", "store"},
-	"config":          nil,
-	"web":             nil,
-	"api":             {"", "acl", "doc", "index", "store"},
+	"":                  nil,
+	"acl":               nil,
+	"doc":               {"acl"},
+	"store":             {"acl", "doc"},
+	"store/memstore":    {"", "acl", "doc", "store"},
+	"store/sqlitestore": {"", "acl", "doc", "store"},
+	"store/storetest":   {"", "acl", "doc", "store"},
+	"index":             {"acl", "doc", "store"},
+	"config":            nil,
+	"web":               nil,
+	"api":               {"", "acl", "doc", "index", "store"},
 
 	// Ingestion sits beside the query path rather than under it. A connector
 	// describes documents and who may read them, the pipeline writes them, and
@@ -44,7 +45,7 @@ var allowed = map[string][]string{
 	"ingest":             {"", "connector", "doc", "store"},
 
 	"cmd/genba":  {""},
-	"cmd/genbad": {"", "api", "config", "connector", "connector/fssource", "index", "ingest", "store", "store/memstore", "web"},
+	"cmd/genbad": {"", "api", "config", "connector", "connector/fssource", "index", "ingest", "store", "store/memstore", "store/sqlitestore", "web"},
 }
 
 func TestDependencyDirection(t *testing.T) {

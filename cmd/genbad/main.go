@@ -25,6 +25,7 @@ import (
 	"github.com/tamnd/genba/index"
 	"github.com/tamnd/genba/store"
 	"github.com/tamnd/genba/store/memstore"
+	"github.com/tamnd/genba/store/sqlitestore"
 	"github.com/tamnd/genba/web"
 )
 
@@ -94,7 +95,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 
 	log := newLogger(stderr, cfg.LogLevel)
 
-	st, err := openStore(cfg)
+	st, err := openStore(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -162,14 +163,16 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 
 // openStore builds the storage driver named in the configuration.
 //
-// Drivers other than the in memory one arrive with their own build tags, and
-// this is where an unavailable one is reported. The message says what to do
-// about it, because a person hitting this has usually downloaded a build that
-// does not carry the driver they configured.
-func openStore(cfg config.Config) (store.Store, error) {
+// The memory driver keeps nothing across a restart and the sqlite driver is one
+// file, which covers a laptop and a single node. The drivers that need a server
+// to talk to are not in this build yet, and this is where that is reported
+// rather than at the first query.
+func openStore(ctx context.Context, cfg config.Config) (store.Store, error) {
 	switch cfg.Store {
 	case config.StoreMemory:
 		return memstore.New(), nil
+	case config.StoreSQLite:
+		return sqlitestore.Open(ctx, cfg.DSN)
 	default:
 		return nil, fmt.Errorf("store %q is not available in this build", cfg.Store)
 	}

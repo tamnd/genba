@@ -11,6 +11,14 @@
 // having it be a real implementation rather than a placeholder. Semantic
 // retrieval and learned ranking arrive as additional retrievers behind the same
 // [Searcher] surface, not as a rewrite of it.
+//
+// # Where the work happens
+//
+// A driver that implements [store.Retriever] is asked for the match set and
+// returns it out of an index of its own. A driver that does not is walked with
+// [store.Store.Scan] and filtered here. The ranking is the same either way, and
+// the match set is the same set, which store/storetest checks. The difference
+// is only how much of the corpus had to be touched to produce it.
 package index
 
 import (
@@ -27,14 +35,25 @@ import (
 
 // Query is one search request.
 type Query struct {
-	// Text is what the person typed.
+	// Text is what the person typed, after any operators have been parsed out
+	// of it by [Parse].
 	Text string
 
-	// Sources, Kinds and Container narrow the candidate set. An empty filter
-	// matches everything.
-	Sources   []string
-	Kinds     []doc.Kind
-	Container string
+	// The filters. Values inside one field are alternatives and the fields are
+	// combined with and, which is what a facet sidebar implies when somebody
+	// ticks two sources and one document type.
+	Sources    []string
+	Kinds      []doc.Kind
+	Containers []string
+	Authors    []string
+	Owners     []string
+
+	// Since and Until bound the modification time. A zero value is unbounded.
+	Since time.Time
+	Until time.Time
+
+	// Sort selects the order. The zero value ranks by relevance.
+	Sort Sort
 
 	// Limit is the number of hits to return. Zero means DefaultLimit.
 	Limit int
@@ -43,12 +62,41 @@ type Query struct {
 	Offset int
 }
 
+// Sort is the order results come back in.
+type Sort string
+
+// The orders a query can ask for.
+const (
+	// ByRelevance ranks on the query. It is the zero value because a search
+	// with no opinion about order wants the best match first.
+	ByRelevance Sort = ""
+
+	// ByRecent ranks on modification time, which is what somebody asking what
+	// changed wants, and what a relevance score answers badly.
+	ByRecent Sort = "recency"
+)
+
 // DefaultLimit is the page size used when a query does not ask for one.
 const DefaultLimit = 20
 
 // MaxLimit caps the page size, so one caller cannot ask a store to
 // materialise its whole corpus.
 const MaxLimit = 200
+
+// Request is the match set this query describes, which is what a storage driver
+// is asked for.
+func (q Query) Request() store.Request {
+	return store.Request{
+		Terms:      queryTerms(q.Text),
+		Sources:    q.Sources,
+		Kinds:      q.Kinds,
+		Containers: q.Containers,
+		Authors:    q.Authors,
+		Owners:     q.Owners,
+		Since:      q.Since,
+		Until:      q.Until,
+	}
+}
 
 // Result is one ranked document.
 type Result struct {
@@ -59,6 +107,22 @@ type Result struct {
 	// be shown under the title. It is plain text, and it is the caller's job to
 	// escape it.
 	Snippet string
+
+	// Passages is the same text as Snippet, split so that the runs that matched
+	// the query are marked.
+	//
+	// The split happens here rather than in the browser because the client
+	// would have to reimplement the analyzer to do it, and a client that
+	// tokenizes differently from the index highlights the wrong words. It is
+	// also what keeps the interface from having to build markup out of offsets
+	// into a string whose encoding it is guessing at.
+	Passages []Passage
+}
+
+// Passage is a run of snippet text, either matched by the query or not.
+type Passage struct {
+	Text  string
+	Match bool
 }
 
 // Facet is one value of a facet and how many hits carry it.
@@ -71,12 +135,20 @@ type Facet struct {
 type Results struct {
 	Hits []Result
 
-	// Total is the number of documents that matched before paging.
-	Total int
+	// Total is the number of documents that matched before paging. When
+	// Truncated is set it is a lower bound, because [MaxMatches] stopped the
+	// count.
+	Total     int
+	Truncated bool
 
 	// Facets are counted over the whole match set, not over the page, which is
 	// what makes them usable as filters.
 	Facets map[string][]Facet
+
+	// Took is how long the search ran for. It is reported rather than logged
+	// because the interface shows it, and a number a user can see is a number
+	// somebody will keep honest.
+	Took time.Duration
 }
 
 // Searcher runs queries against a store.
@@ -113,54 +185,89 @@ func New(st store.Store, opts ...Option) *Searcher {
 	return s
 }
 
+// Retrieving reports whether the store behind this searcher can serve a match
+// set out of an index of its own, rather than being walked document by
+// document. It is here so that an operator can be told which one they are
+// running on instead of having to infer it from a latency graph.
+func (s *Searcher) Retrieving() bool {
+	_, ok := s.store.(store.Retriever)
+	return ok
+}
+
 // Search ranks the documents the principal may read.
 //
 // It returns an error matching genba.ErrNoPrincipal when p is nil. There is no
 // anonymous search path, and there is no flag that adds one.
 func (s *Searcher) Search(ctx context.Context, p *acl.Principal, q Query) (Results, error) {
+	start := s.now()
+
 	limit := q.Limit
 	if limit <= 0 {
 		limit = DefaultLimit
 	}
 	limit = min(limit, MaxLimit)
 
-	terms := queryTerms(q.Text)
-
-	cands, err := s.collect(ctx, p, q, terms)
+	req := q.Request()
+	cands, err := s.collect(ctx, p, req)
 	if err != nil {
 		return Results{}, err
 	}
 
 	res := Results{
-		Total:  len(cands.docs),
-		Facets: facetsOf(cands.docs),
+		Total:     len(cands.docs),
+		Truncated: cands.truncated,
+		Facets:    facetsOf(cands.docs),
 	}
 	if len(cands.docs) == 0 {
+		res.Took = s.now().Sub(start)
 		return res, nil
 	}
 
 	now := s.now()
 	scored := make([]Result, 0, len(cands.docs))
 	for i, d := range cands.docs {
-		score := cands.bm25(i, terms)
-		if score == 0 && len(terms) > 0 {
-			continue
-		}
+		score := cands.bm25(i, req.Terms)
 		score *= s.recency(d, now)
-		scored = append(scored, Result{Document: d, Score: score, Snippet: snippet(d.Body, terms)})
+		scored = append(scored, Result{Document: d, Score: score})
 	}
 
 	// Sort by score, then by id, so equal scores do not shuffle between runs and
 	// paging stays stable.
-	sort.SliceStable(scored, func(i, j int) bool {
-		if scored[i].Score != scored[j].Score {
-			return scored[i].Score > scored[j].Score
-		}
-		return scored[i].Document.ID < scored[j].Document.ID
-	})
+	switch q.Sort {
+	case ByRecent:
+		sort.SliceStable(scored, func(i, j int) bool {
+			if !scored[i].Document.ModifiedAt.Equal(scored[j].Document.ModifiedAt) {
+				return scored[i].Document.ModifiedAt.After(scored[j].Document.ModifiedAt)
+			}
+			return scored[i].Document.ID < scored[j].Document.ID
+		})
+	default:
+		sort.SliceStable(scored, func(i, j int) bool {
+			if scored[i].Score != scored[j].Score {
+				return scored[i].Score > scored[j].Score
+			}
+			return scored[i].Document.ID < scored[j].Document.ID
+		})
+	}
 
-	res.Total = len(scored)
 	res.Hits = page(scored, q.Offset, limit)
+
+	// Bodies and snippets are for the page and not for the match set. On a broad
+	// query that is the difference between reading twenty documents and reading
+	// a hundred thousand, and it is why collect drops the bodies it walked past.
+	for i := range res.Hits {
+		full, err := s.store.Get(ctx, p, res.Hits[i].Document.ID)
+		if err != nil {
+			// The document went away or stopped being readable between the walk
+			// and now. Serving the metadata we already ranked without a snippet
+			// is better than failing a whole page over one stale row, and the
+			// permission check has not been skipped: Get applied it too.
+			continue
+		}
+		res.Hits[i].Document = full
+		res.Hits[i].Snippet, res.Hits[i].Passages = snippet(full.Body, req.Terms)
+	}
+	res.Took = s.now().Sub(start)
 	return res, nil
 }
 
@@ -188,51 +295,42 @@ func (s *Searcher) recency(d doc.Document, now time.Time) float64 {
 	return floor + (1-floor)*decay
 }
 
-func snippet(body string, terms []string) string {
-	const width = 240
-	if body == "" {
-		return ""
-	}
-	runes := []rune(body)
-	start := 0
-	if idx := firstMatch(body, terms); idx > 0 {
-		start = max(0, len([]rune(body[:idx]))-width/3)
-	}
-	end := min(start+width, len(runes))
-	out := strings.TrimSpace(string(runes[start:end]))
-	if start > 0 {
-		out = "..." + out
-	}
-	if end < len(runes) {
-		out += "..."
-	}
-	return out
-}
-
-// firstMatch returns the byte offset of the earliest query term in body, or -1.
-func firstMatch(body string, terms []string) int {
-	lower := strings.ToLower(body)
-	best := -1
-	for _, t := range terms {
-		if i := strings.Index(lower, t); i >= 0 && (best < 0 || i < best) {
-			best = i
-		}
-	}
-	return best
-}
-
 func facetsOf(docs []doc.Document) map[string][]Facet {
 	bySource := map[string]int{}
 	byKind := map[string]int{}
+	byContainer := map[string]int{}
+	byAuthor := map[string]int{}
 	for _, d := range docs {
 		bySource[d.Source]++
 		byKind[string(d.Kind)]++
+		byContainer[d.Container]++
+		byAuthor[displayName(d.Author)]++
 	}
 	return map[string][]Facet{
-		"source": sortedFacets(bySource),
-		"kind":   sortedFacets(byKind),
+		"source":    sortedFacets(bySource),
+		"kind":      sortedFacets(byKind),
+		"container": sortedFacets(byContainer),
+		"author":    sortedFacets(byAuthor),
 	}
 }
+
+// displayName is what a person facet is labelled with, which is the most
+// specific thing the connector managed to resolve.
+func displayName(p doc.Person) string {
+	switch {
+	case p.Name != "":
+		return p.Name
+	case p.Email != "":
+		return p.Email
+	default:
+		return p.Identity.Value
+	}
+}
+
+// MaxFacetValues caps how many values one facet reports. A facet with ten
+// thousand values is not a filter, it is a scroll bar, and counting them all
+// into a response costs more than the sidebar it feeds is worth.
+const MaxFacetValues = 50
 
 func sortedFacets(counts map[string]int) []Facet {
 	out := make([]Facet, 0, len(counts))
@@ -248,5 +346,89 @@ func sortedFacets(counts map[string]int) []Facet {
 		}
 		return out[i].Value < out[j].Value
 	})
+	if len(out) > MaxFacetValues {
+		out = out[:MaxFacetValues]
+	}
 	return out
+}
+
+// SnippetWidth is roughly how many characters of body a snippet shows.
+const SnippetWidth = 260
+
+// snippet returns a passage of the body around the first query match, and the
+// same passage split at the matches so the interface can mark them.
+func snippet(body string, terms []string) (string, []Passage) {
+	if body == "" {
+		return "", nil
+	}
+	runes := []rune(body)
+	start := 0
+	if idx := firstMatch(body, terms); idx > 0 {
+		start = max(0, len([]rune(body[:idx]))-SnippetWidth/3)
+	}
+	end := min(start+SnippetWidth, len(runes))
+
+	text := strings.TrimSpace(collapse(string(runes[start:end])))
+	passages := mark(text, terms)
+	if start > 0 {
+		text = "..." + text
+		passages = append([]Passage{{Text: "..."}}, passages...)
+	}
+	if end < len(runes) {
+		text += "..."
+		passages = append(passages, Passage{Text: "..."})
+	}
+	return text, passages
+}
+
+// collapse turns runs of whitespace into single spaces. A snippet lifted out of
+// a source file otherwise carries its indentation into a result card, where it
+// reads as a broken layout rather than as faithful text.
+func collapse(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// mark splits text at the query terms. It analyses the text the same way the
+// index does, so what is highlighted is what was matched rather than what a
+// substring search happened to find: a search for "run" does not light up the
+// middle of "runbook", because the index did not match it there either.
+func mark(text string, terms []string) []Passage {
+	if text == "" || len(terms) == 0 {
+		return []Passage{{Text: text}}
+	}
+	want := make(map[string]bool, len(terms))
+	for _, t := range terms {
+		want[t] = true
+	}
+
+	var (
+		out  []Passage
+		last int
+	)
+	for _, s := range doc.Analyze(text) {
+		if !want[s.Term] {
+			continue
+		}
+		if s.Start > last {
+			out = append(out, Passage{Text: text[last:s.Start]})
+		}
+		out = append(out, Passage{Text: text[s.Start:s.End], Match: true})
+		last = s.End
+	}
+	if last < len(text) {
+		out = append(out, Passage{Text: text[last:]})
+	}
+	return out
+}
+
+// firstMatch returns the byte offset of the first query term in body, or -1.
+func firstMatch(body string, terms []string) int {
+	want := make(map[string]bool, len(terms))
+	for _, t := range terms {
+		want[t] = true
+	}
+	for _, s := range doc.Analyze(body) {
+		if want[s.Term] {
+			return s.Start
+		}
+	}
+	return -1
 }
