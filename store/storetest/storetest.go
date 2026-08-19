@@ -1,0 +1,294 @@
+// Package storetest is the conformance suite every storage driver has to pass.
+//
+// A driver that passes it can be swapped in without reading the rest of the
+// codebase, and a driver that fails it is not a driver. Most of the cases are
+// about permissions rather than about storage, which is the right proportion:
+// the interesting way for a storage layer to be wrong here is not losing a
+// document, it is returning one to the wrong person.
+//
+// Usage from a driver's own test file:
+//
+//	func TestConformance(t *testing.T) {
+//		storetest.Run(t, func(t *testing.T) store.Store { return memstore.New() })
+//	}
+package storetest
+
+import (
+	"errors"
+	"testing"
+
+	"github.com/tamnd/genba"
+	"github.com/tamnd/genba/acl"
+	"github.com/tamnd/genba/doc"
+	"github.com/tamnd/genba/store"
+)
+
+// Factory returns a fresh, empty store for one test case.
+type Factory func(t *testing.T) store.Store
+
+// Run executes the suite against a driver.
+func Run(t *testing.T, newStore Factory) {
+	t.Helper()
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := newStore(t)
+			t.Cleanup(func() { _ = s.Close() })
+			c.run(t, s)
+		})
+	}
+}
+
+type testCase struct {
+	name string
+	run  func(t *testing.T, s store.Store)
+}
+
+var cases = []testCase{
+	{"put then get", testPutGet},
+	{"get is not found for another reader", testGetHidden},
+	{"missing and forbidden are indistinguishable", testNotFoundIsUniform},
+	{"scan only yields readable documents", testScanFiltering},
+	{"scan stops when the callback says so", testScanEarlyStop},
+	{"unresolved permissions are never served", testQuarantine},
+	{"documents of another tenant are never served", testTenantIsolation},
+	{"a nil principal reads nothing", testNilPrincipal},
+	{"delete removes and is repeatable", testDelete},
+	{"put replaces an existing document", testReplace},
+	{"a revoked document disappears", testRevocation},
+	{"stats count served and quarantined documents", testStats},
+}
+
+func reader() *acl.Principal {
+	return &acl.Principal{
+		Tenant:     "acme",
+		Subject:    "u_mei",
+		Identities: []acl.Identity{{Source: "gdrive", Value: "mei@acme.com"}},
+		Groups:     acl.GroupSet{Version: 1, Members: []string{"gdrive:eng@acme.com"}},
+	}
+}
+
+func stranger() *acl.Principal {
+	return &acl.Principal{
+		Tenant:     "acme",
+		Subject:    "u_kenji",
+		Identities: []acl.Identity{{Source: "gdrive", Value: "kenji@acme.com"}},
+		Groups:     acl.GroupSet{Version: 1, Members: []string{"gdrive:sales@acme.com"}},
+	}
+}
+
+func document(id string, perm acl.Permissions) doc.Document {
+	return doc.Document{
+		ID:          id,
+		Tenant:      "acme",
+		Source:      "gdrive",
+		Kind:        doc.KindPage,
+		Title:       "runbook " + id,
+		Body:        "how to fail over the payments queue",
+		Permissions: perm,
+	}
+}
+
+func readable() acl.Permissions {
+	return acl.Permissions{
+		Mode:        acl.ModeACL,
+		Source:      "gdrive",
+		AllowGroups: []acl.Ref{{Source: "gdrive", Value: "eng@acme.com"}},
+		Version:     1,
+	}
+}
+
+func mustPut(t *testing.T, s store.Store, docs ...doc.Document) {
+	t.Helper()
+	if err := s.Put(t.Context(), docs...); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+}
+
+func scanIDs(t *testing.T, s store.Store, p *acl.Principal) []string {
+	t.Helper()
+	var ids []string
+	if err := s.Scan(t.Context(), p, func(d doc.Document) bool {
+		ids = append(ids, d.ID)
+		return true
+	}); err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	return ids
+}
+
+func testPutGet(t *testing.T, s store.Store) {
+	mustPut(t, s, document("d1", readable()))
+	got, err := s.Get(t.Context(), reader(), "d1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.ID != "d1" || got.Title != "runbook d1" {
+		t.Fatalf("Get returned %+v", got)
+	}
+}
+
+func testGetHidden(t *testing.T, s store.Store) {
+	mustPut(t, s, document("d1", readable()))
+	if _, err := s.Get(t.Context(), stranger(), "d1"); !errors.Is(err, genba.ErrNotFound) {
+		t.Fatalf("Get by a reader without access returned %v, want ErrNotFound", err)
+	}
+}
+
+func testNotFoundIsUniform(t *testing.T, s store.Store) {
+	mustPut(t, s, document("d1", readable()))
+
+	_, hidden := s.Get(t.Context(), stranger(), "d1")
+	_, missing := s.Get(t.Context(), stranger(), "does-not-exist")
+
+	if !errors.Is(hidden, genba.ErrNotFound) || !errors.Is(missing, genba.ErrNotFound) {
+		t.Fatalf("hidden = %v, missing = %v, both should match ErrNotFound", hidden, missing)
+	}
+	if hidden.Error() != missing.Error() {
+		t.Fatalf("a hidden document and a missing one produced different errors:\n hidden: %v\nmissing: %v", hidden, missing)
+	}
+}
+
+func testScanFiltering(t *testing.T, s store.Store) {
+	mine := readable()
+	theirs := acl.Permissions{
+		Mode:        acl.ModeACL,
+		Source:      "gdrive",
+		AllowGroups: []acl.Ref{{Source: "gdrive", Value: "sales@acme.com"}},
+		Version:     1,
+	}
+	mustPut(t, s, document("d1", mine), document("d2", theirs), document("d3", mine))
+
+	ids := scanIDs(t, s, reader())
+	if len(ids) != 2 {
+		t.Fatalf("scan yielded %v, want the two readable documents", ids)
+	}
+	for _, id := range ids {
+		if id == "d2" {
+			t.Fatal("scan yielded a document the reader has no access to")
+		}
+	}
+}
+
+func testScanEarlyStop(t *testing.T, s store.Store) {
+	mustPut(t, s, document("d1", readable()), document("d2", readable()), document("d3", readable()))
+
+	seen := 0
+	if err := s.Scan(t.Context(), reader(), func(doc.Document) bool {
+		seen++
+		return false
+	}); err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if seen != 1 {
+		t.Fatalf("the callback ran %d times after asking to stop, want 1", seen)
+	}
+}
+
+func testQuarantine(t *testing.T, s store.Store) {
+	unresolved := acl.Permissions{
+		Mode:        acl.ModeUnknown,
+		Source:      "gdrive",
+		AllowGroups: []acl.Ref{{Source: "gdrive", Value: "eng@acme.com"}},
+	}
+	mustPut(t, s, document("d1", readable()), document("d2", unresolved))
+
+	if _, err := s.Get(t.Context(), reader(), "d2"); !errors.Is(err, genba.ErrNotFound) {
+		t.Fatalf("a document with unresolved permissions was returned by Get: %v", err)
+	}
+	for _, id := range scanIDs(t, s, reader()) {
+		if id == "d2" {
+			t.Fatal("a document with unresolved permissions was returned by Scan")
+		}
+	}
+}
+
+func testTenantIsolation(t *testing.T, s store.Store) {
+	other := document("d1", acl.Permissions{Mode: acl.ModePublicToTenant, Version: 1})
+	other.Tenant = "globex"
+	mustPut(t, s, other)
+
+	if _, err := s.Get(t.Context(), reader(), "d1"); !errors.Is(err, genba.ErrNotFound) {
+		t.Fatalf("a document from another tenant was returned by Get: %v", err)
+	}
+	if ids := scanIDs(t, s, reader()); len(ids) != 0 {
+		t.Fatalf("a document from another tenant was returned by Scan: %v", ids)
+	}
+}
+
+func testNilPrincipal(t *testing.T, s store.Store) {
+	mustPut(t, s, document("d1", acl.Permissions{Mode: acl.ModePublicToTenant, Version: 1}))
+
+	if _, err := s.Get(t.Context(), nil, "d1"); err == nil {
+		t.Fatal("Get with a nil principal returned a document")
+	}
+	err := s.Scan(t.Context(), nil, func(doc.Document) bool {
+		t.Fatal("Scan with a nil principal yielded a document")
+		return false
+	})
+	if err == nil {
+		t.Fatal("Scan with a nil principal returned no error")
+	}
+}
+
+func testDelete(t *testing.T, s store.Store) {
+	mustPut(t, s, document("d1", readable()))
+	if err := s.Delete(t.Context(), "d1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := s.Get(t.Context(), reader(), "d1"); !errors.Is(err, genba.ErrNotFound) {
+		t.Fatalf("Get after Delete returned %v, want ErrNotFound", err)
+	}
+	if err := s.Delete(t.Context(), "d1", "never-existed"); err != nil {
+		t.Fatalf("deleting twice should be harmless, got %v", err)
+	}
+}
+
+func testReplace(t *testing.T, s store.Store) {
+	d := document("d1", readable())
+	mustPut(t, s, d)
+
+	d.Title = "runbook d1, second edition"
+	mustPut(t, s, d)
+
+	got, err := s.Get(t.Context(), reader(), "d1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Title != "runbook d1, second edition" {
+		t.Fatalf("Get returned the stale title %q", got.Title)
+	}
+	if ids := scanIDs(t, s, reader()); len(ids) != 1 {
+		t.Fatalf("replacing a document left %d copies behind", len(ids))
+	}
+}
+
+func testRevocation(t *testing.T, s store.Store) {
+	d := document("d1", readable())
+	mustPut(t, s, d)
+	if _, err := s.Get(t.Context(), reader(), "d1"); err != nil {
+		t.Fatalf("Get before the revocation: %v", err)
+	}
+
+	d.Permissions.DenyGroups = []acl.Ref{{Source: "gdrive", Value: "eng@acme.com"}}
+	d.Permissions.Version++
+	mustPut(t, s, d)
+
+	if _, err := s.Get(t.Context(), reader(), "d1"); !errors.Is(err, genba.ErrNotFound) {
+		t.Fatalf("a revoked document was still readable: %v", err)
+	}
+}
+
+func testStats(t *testing.T, s store.Store) {
+	mustPut(t, s,
+		document("d1", readable()),
+		document("d2", readable()),
+		document("d3", acl.Permissions{Mode: acl.ModeUnknown}),
+	)
+	st, err := s.Stats(t.Context())
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if st.Documents != 2 || st.Quarantined != 1 {
+		t.Fatalf("Stats = %+v, want 2 served and 1 quarantined", st)
+	}
+}

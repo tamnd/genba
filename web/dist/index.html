@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>genba</title>
+    <style>
+      :root {
+        --bg: #ffffff;
+        --fg: #16181d;
+        --muted: #5f6672;
+        --line: #e3e6ea;
+        --accent: #2b5cff;
+        --radius: 10px;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #101216;
+          --fg: #e8eaee;
+          --muted: #949aa5;
+          --line: #262a31;
+          --accent: #6c8dff;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      header {
+        border-bottom: 1px solid var(--line);
+        padding: 18px 24px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      .brand { font-weight: 620; letter-spacing: 0.01em; }
+      .brand span { color: var(--muted); font-weight: 400; margin-left: 8px; }
+      main { max-width: 820px; margin: 0 auto; padding: 28px 24px 80px; }
+      form { display: flex; gap: 10px; }
+      input[type="search"] {
+        flex: 1;
+        padding: 11px 14px;
+        font: inherit;
+        color: inherit;
+        background: transparent;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+      }
+      input[type="search"]:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+      button {
+        padding: 11px 18px;
+        font: inherit;
+        font-weight: 560;
+        color: #fff;
+        background: var(--accent);
+        border: 0;
+        border-radius: var(--radius);
+        cursor: pointer;
+      }
+      .meta { color: var(--muted); font-size: 13px; margin: 18px 0 6px; }
+      .facets { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+      .facet {
+        font-size: 12px;
+        color: var(--muted);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 3px 10px;
+        cursor: pointer;
+        background: transparent;
+      }
+      .facet[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+      ol { list-style: none; margin: 0; padding: 0; }
+      li { padding: 16px 0; border-bottom: 1px solid var(--line); }
+      li h2 { font-size: 15px; margin: 0 0 4px; font-weight: 580; }
+      li a { color: inherit; text-decoration: none; }
+      li a:hover { text-decoration: underline; }
+      li p { margin: 0; color: var(--muted); font-size: 14px; }
+      .source { font-size: 12px; color: var(--muted); margin-top: 6px; }
+      .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand">genba<span>enterprise search</span></div>
+    </header>
+    <main>
+      <form id="search">
+        <input
+          id="q"
+          type="search"
+          name="q"
+          placeholder="Search everything you have access to"
+          autocomplete="off"
+          autofocus
+        />
+        <button type="submit">Search</button>
+      </form>
+      <p class="meta" id="meta"></p>
+      <div class="facets" id="facets"></div>
+      <ol id="results"></ol>
+    </main>
+
+    <script type="module">
+      const form = document.getElementById("search");
+      const input = document.getElementById("q");
+      const meta = document.getElementById("meta");
+      const facets = document.getElementById("facets");
+      const results = document.getElementById("results");
+      const sources = new Set();
+
+      function url() {
+        const params = new URLSearchParams({ q: input.value });
+        if (sources.size > 0) params.set("source", [...sources].join(","));
+        return "/api/v1/search?" + params.toString();
+      }
+
+      async function search() {
+        const query = input.value.trim();
+        history.replaceState(null, "", query ? "/?q=" + encodeURIComponent(query) : "/");
+        meta.textContent = "Searching";
+        let res;
+        try {
+          res = await fetch(url(), { headers: { Accept: "application/json" } });
+        } catch {
+          meta.textContent = "The server could not be reached.";
+          return;
+        }
+        if (res.status === 401) {
+          meta.textContent = "Sign in to search.";
+          results.replaceChildren();
+          return;
+        }
+        if (!res.ok) {
+          meta.textContent = "The search failed.";
+          results.replaceChildren();
+          return;
+        }
+        render(await res.json());
+      }
+
+      function render(data) {
+        meta.textContent = data.total === 1 ? "1 result" : data.total + " results";
+        renderFacets(data.facets && data.facets.source);
+        results.replaceChildren();
+        if (data.hits.length === 0) {
+          const empty = document.createElement("p");
+          empty.className = "empty";
+          empty.textContent = "Nothing here matches, or nothing you have access to does.";
+          results.append(empty);
+          return;
+        }
+        for (const hit of data.hits) {
+          const li = document.createElement("li");
+          const h2 = document.createElement("h2");
+          const a = document.createElement("a");
+          a.href = hit.url || "/api/v1/documents/" + encodeURIComponent(hit.id);
+          a.textContent = hit.title || hit.id;
+          h2.append(a);
+          const p = document.createElement("p");
+          p.textContent = hit.snippet || "";
+          const src = document.createElement("div");
+          src.className = "source";
+          src.textContent = [hit.source, hit.kind].filter(Boolean).join(" · ");
+          li.append(h2, p, src);
+          results.append(li);
+        }
+      }
+
+      function renderFacets(values) {
+        facets.replaceChildren();
+        for (const f of values || []) {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "facet";
+          b.textContent = f.value + " " + f.count;
+          b.setAttribute("aria-pressed", sources.has(f.value) ? "true" : "false");
+          b.addEventListener("click", () => {
+            sources.has(f.value) ? sources.delete(f.value) : sources.add(f.value);
+            search();
+          });
+          facets.append(b);
+        }
+      }
+
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        search();
+      });
+
+      const initial = new URLSearchParams(location.search).get("q");
+      if (initial) {
+        input.value = initial;
+        search();
+      }
+    </script>
+  </body>
+</html>

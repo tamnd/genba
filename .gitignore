@@ -1,0 +1,16 @@
+/bin/
+/dist/
+*.out
+coverage.out
+.DS_Store
+
+# Local data directories a development server writes to.
+/data/
+*.db
+*.db-shm
+*.db-wal
+
+# Frontend build tooling. web/dist is checked in on purpose: it is what the
+# binary embeds, so a clone builds a working server without a node toolchain.
+/web/node_modules/
+/web/.vite/

@@ -1,0 +1,90 @@
+# golangci-lint v2 configuration.
+#
+# The set is the default one plus the checks that catch the mistakes this
+# codebase can actually make: a context that never reaches a call, an error that
+# is dropped, a copied lock, a package comment that does not match the package.
+version: "2"
+
+run:
+  timeout: 5m
+  build-tags:
+    - noassets
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - contextcheck
+    - copyloopvar
+    - durationcheck
+    - errorlint
+    - exhaustive
+    - gocritic
+    - misspell
+    - nilerr
+    - noctx
+    - perfsprint
+    - prealloc
+    - revive
+    - unconvert
+    - usestdlibvars
+    - wastedassign
+    - whitespace
+
+  settings:
+    exhaustive:
+      # A switch over a permission mode or a document kind that forgets a case
+      # is exactly the bug this repository cannot afford.
+      default-signifies-exhaustive: true
+
+    errcheck:
+      check-type-assertions: true
+
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - disableStutteringCheck
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+      disabled-checks:
+        - ifElseChain
+        - whyNoLint
+        # A document, a permission descriptor and a configuration are values,
+        # and passing them by value is what keeps them from being mutated three
+        # layers away from where they were built. The copy is measured in the
+        # benchmarks and is not where the time goes, so these two checks would
+        # only push the codebase towards shared mutable state.
+        - hugeParam
+        - rangeValCopy
+
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - std-error-handling
+    rules:
+      # Test helpers are allowed to be long and to build requests without a
+      # context of their own.
+      - path: _test\.go
+        linters:
+          - noctx
+          - prealloc
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/tamnd/genba
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

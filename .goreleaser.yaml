@@ -1,0 +1,200 @@
+# One tag push produces everything somebody might install from: raw archives for
+# every platform, Linux packages, a multi-arch container image, and entries for
+# Homebrew and Scoop. `git tag vX.Y.Z && git push --tags` fans out to all of them
+# through .github/workflows/release.yml.
+#
+# Publish steps that push to a repository that may not exist yet self-disable
+# when their token is absent, so a release with no extra secrets still produces
+# every downloadable artifact and the container image.
+version: 2
+
+project_name: genba
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  # genbad is the server. It carries the browser interface, so it is the one
+  # binary a first install needs.
+  - id: genbad
+    binary: genbad
+    main: ./cmd/genbad
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/tamnd/genba.Version={{ .Version }}
+      - -X github.com/tamnd/genba.Commit={{ .ShortCommit }}
+      - -X github.com/tamnd/genba.Date={{ .CommitDate }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    targets: &targets
+      - linux_amd64
+      - linux_arm64
+      - linux_386
+      - darwin_amd64
+      - darwin_arm64
+      - windows_amd64
+      - windows_arm64
+      - freebsd_amd64
+      - freebsd_arm64
+
+  # genba is the command line client, useful on its own on a laptop that is not
+  # running a server.
+  - id: genba
+    binary: genba
+    main: ./cmd/genba
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/tamnd/genba.Version={{ .Version }}
+      - -X github.com/tamnd/genba.Commit={{ .ShortCommit }}
+      - -X github.com/tamnd/genba.Date={{ .CommitDate }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    targets: *targets
+
+archives:
+  - id: default
+    ids:
+      - genbad
+      - genba
+    name_template: "genba_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+nfpms:
+  - id: linux-packages
+    package_name: genba
+    ids:
+      - genbad
+      - genba
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: tamnd
+    homepage: https://github.com/tamnd/genba
+    maintainer: Duc-Tam Nguyen <tamnd87@gmail.com>
+    description: Enterprise knowledge intelligence platform, search and assistant over the tools a company already runs.
+    license: MIT
+    formats:
+      - deb
+      - rpm
+      - apk
+    bindir: /usr/bin
+    section: utils
+    contents:
+      - src: ./LICENSE
+        dst: /usr/share/doc/genba/LICENSE
+
+dockers_v2:
+  - images:
+      - ghcr.io/tamnd/genba
+    tags:
+      - "{{ .Version }}"
+      - latest
+    dockerfile: Dockerfile
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.description: "Enterprise knowledge intelligence platform"
+      org.opencontainers.image.url: "https://github.com/tamnd/genba"
+      org.opencontainers.image.source: "https://github.com/tamnd/genba"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.licenses: "MIT"
+
+homebrew_casks:
+  - name: genba
+    ids:
+      - default
+    repository:
+      owner: tamnd
+      name: homebrew-tap
+      token: '{{ envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "" }}'
+    directory: Casks
+    homepage: https://github.com/tamnd/genba
+    description: Enterprise knowledge intelligence platform
+    skip_upload: '{{ if envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "" }}false{{ else }}true{{ end }}'
+    commit_author:
+      name: Duc-Tam Nguyen
+      email: tamnd87@gmail.com
+
+scoops:
+  - ids:
+      - default
+    repository:
+      owner: tamnd
+      name: scoop-bucket
+      token: '{{ envOrDefault "SCOOP_BUCKET_GITHUB_TOKEN" "" }}'
+    homepage: https://github.com/tamnd/genba
+    description: Enterprise knowledge intelligence platform
+    license: MIT
+    skip_upload: '{{ if envOrDefault "SCOOP_BUCKET_GITHUB_TOKEN" "" }}false{{ else }}true{{ end }}'
+    commit_author:
+      name: Duc-Tam Nguyen
+      email: tamnd87@gmail.com
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+sboms:
+  - id: archive
+    artifacts: archive
+
+signs:
+  - cmd: cosign
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+docker_signs:
+  - cmd: cosign
+    artifacts: manifests
+    args:
+      - sign
+      - "${artifact}@${digest}"
+      - "--yes"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Other
+      order: 999
+
+release:
+  github:
+    owner: tamnd
+    name: genba
+  draft: false
+  prerelease: auto
