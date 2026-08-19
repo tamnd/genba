@@ -59,6 +59,20 @@ type Config struct {
 
 	// LogLevel is one of debug, info, warn or error.
 	LogLevel string
+
+	// Cache turns the query caches on. Running without them is supported and
+	// correct: it costs latency on a repeated query and it costs nothing else,
+	// which is the property that makes a cache safe to have in the first place.
+	Cache bool
+
+	// CacheResultExpiry is the backstop on how long a ranked ordering may be
+	// reused. A write to the tenant drops its orderings whatever this says, so
+	// this is what bounds a driver that cannot report its writes.
+	//
+	// Zero turns result caching off while leaving the layers that are bounded by
+	// a write alone, which is what a deployment that cannot tolerate a stale
+	// ordering asks for.
+	CacheResultExpiry time.Duration
 }
 
 // Default returns the configuration a server starts with when nothing is set.
@@ -72,6 +86,11 @@ func Default() Config {
 		WriteTimeout:  60 * time.Second,
 		ShutdownGrace: 15 * time.Second,
 		LogLevel:      "info",
+		Cache:         true,
+		// The same thirty seconds as index.DefaultResultExpiry. It is written
+		// again rather than imported because configuration sits below everything
+		// and importing the query layer to read one constant would invert that.
+		CacheResultExpiry: 30 * time.Second,
 	}
 }
 
@@ -98,6 +117,8 @@ func Load(getenv func(string) string) (Config, error) {
 		dur(getenv, "GENBA_READ_TIMEOUT", &c.ReadTimeout),
 		dur(getenv, "GENBA_WRITE_TIMEOUT", &c.WriteTimeout),
 		dur(getenv, "GENBA_SHUTDOWN_GRACE", &c.ShutdownGrace),
+		dur(getenv, "GENBA_CACHE_RESULT_EXPIRY", &c.CacheResultExpiry),
+		boolean(getenv, "GENBA_CACHE", &c.Cache),
 	)
 	if err != nil {
 		return Config{}, err
@@ -135,6 +156,7 @@ func (c Config) Validate() error {
 		{"read timeout", c.ReadTimeout},
 		{"write timeout", c.WriteTimeout},
 		{"shutdown grace", c.ShutdownGrace},
+		{"cache result expiry", c.CacheResultExpiry},
 	} {
 		if d.value < 0 {
 			errs = append(errs, fmt.Errorf("config: %s is negative", d.name))
@@ -157,6 +179,23 @@ func str(getenv func(string) string, key string, dst *string) {
 	if v := getenv(key); v != "" {
 		*dst = v
 	}
+}
+
+// boolean reads a flag. The accepted spellings are the ones people type in a
+// unit file, rather than only the two Go parses.
+func boolean(getenv func(string) string, key string, dst *bool) error {
+	v := strings.ToLower(strings.TrimSpace(getenv(key)))
+	switch v {
+	case "":
+		return nil
+	case "1", "t", "true", "yes", "on":
+		*dst = true
+	case "0", "f", "false", "no", "off":
+		*dst = false
+	default:
+		return fmt.Errorf("config: %s = %q is not a yes or a no", key, v)
+	}
+	return nil
 }
 
 func dur(getenv func(string) string, key string, dst *time.Duration) error {

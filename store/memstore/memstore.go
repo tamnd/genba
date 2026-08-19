@@ -22,6 +22,13 @@ import (
 
 // Store keeps documents in a map guarded by a read write mutex.
 type Store struct {
+	// Notify makes this driver report its own writes, which is what a cache
+	// invalidates on and what the browser's event stream carries. It is embedded
+	// rather than wrapped so that the reference driver has the same capability
+	// the SQLite one does, and a test of the caching does not have to reach for a
+	// database file to get it.
+	store.Notify
+
 	mu   sync.RWMutex
 	docs map[string]doc.Document
 
@@ -43,6 +50,7 @@ func New() *Store {
 var (
 	_ store.ContentStore = (*Store)(nil)
 	_ store.Statistician = (*Store)(nil)
+	_ store.Notifier     = (*Store)(nil)
 )
 
 // Put inserts or replaces documents.
@@ -50,14 +58,27 @@ func (s *Store) Put(ctx context.Context, docs ...doc.Document) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	written, err := s.put(docs)
+	if err != nil {
+		return err
+	}
+	// Subscribers are told after the write is visible and after the lock is
+	// back, so a subscriber that reads the store from inside its callback sees
+	// what it was told about instead of deadlocking on the way to it.
+	s.Changes(written, false)
+	return nil
+}
+
+func (s *Store) put(docs []doc.Document) (map[string][]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return genba.ErrClosed
+		return nil, genba.ErrClosed
 	}
+	written := make(map[string][]string)
 	for _, d := range docs {
 		if d.ID == "" {
-			return fmt.Errorf("memstore: put: %w", errNoID)
+			return nil, fmt.Errorf("memstore: put: %w", errNoID)
 		}
 		if d.Content != nil {
 			s.content[d.ID] = *d.Content
@@ -66,8 +87,9 @@ func (s *Store) Put(ctx context.Context, docs ...doc.Document) error {
 		}
 		d.Content = nil
 		s.docs[d.ID] = d
+		written[d.Tenant] = append(written[d.Tenant], d.ID)
 	}
-	return nil
+	return written, nil
 }
 
 // Delete removes documents by id.
@@ -75,16 +97,32 @@ func (s *Store) Delete(ctx context.Context, ids ...string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	removed, err := s.remove(ids)
+	if err != nil {
+		return err
+	}
+	s.Changes(removed, true)
+	return nil
+}
+
+func (s *Store) remove(ids []string) (map[string][]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return genba.ErrClosed
+		return nil, genba.ErrClosed
 	}
+	removed := make(map[string][]string)
 	for _, id := range ids {
+		// The tenant is read before the document goes, because afterwards there
+		// is nothing left to read it from, and a change reported with no tenant
+		// on it is a change a subscriber cannot act on.
+		if d, ok := s.docs[id]; ok {
+			removed[d.Tenant] = append(removed[d.Tenant], id)
+		}
 		delete(s.docs, id)
 		delete(s.content, id)
 	}
-	return nil
+	return removed, nil
 }
 
 // Get returns one document if the principal may read it.

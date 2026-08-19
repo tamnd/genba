@@ -27,6 +27,7 @@ import (
 
 	"github.com/tamnd/genba"
 	"github.com/tamnd/genba/acl"
+	"github.com/tamnd/genba/cache"
 	"github.com/tamnd/genba/doc"
 	"github.com/tamnd/genba/index"
 	"github.com/tamnd/genba/store"
@@ -64,6 +65,10 @@ type Server struct {
 
 	// started is when the process came up, reported by the health endpoint.
 	started time.Time
+	now     func() time.Time
+
+	// heartbeat is how often an idle event stream sends a comment.
+	heartbeat time.Duration
 }
 
 // Option configures a [Server].
@@ -85,9 +90,24 @@ func WithAssets(h http.Handler) Option {
 	return func(s *Server) { s.assets = h }
 }
 
-// WithClock sets the clock used for uptime reporting.
+// WithClock sets the clock used for uptime reporting and for timestamping
+// index events.
 func WithClock(now func() time.Time) Option {
-	return func(s *Server) { s.started = now() }
+	return func(s *Server) {
+		if now != nil {
+			s.now, s.started = now, now()
+		}
+	}
+}
+
+// WithHeartbeat sets how often an idle event stream sends a comment. It exists
+// so that a test does not have to wait [HeartbeatInterval] to see one.
+func WithHeartbeat(d time.Duration) Option {
+	return func(s *Server) {
+		if d > 0 {
+			s.heartbeat = d
+		}
+	}
 }
 
 // New returns a server. It does not listen: [Server.Handler] returns something
@@ -95,11 +115,13 @@ func WithClock(now func() time.Time) Option {
 // embeddable in an existing Go service.
 func New(st store.Store, searcher *index.Searcher, auth Authenticator, opts ...Option) *Server {
 	s := &Server{
-		store:    st,
-		searcher: searcher,
-		auth:     auth,
-		log:      slog.Default(),
-		started:  time.Now(),
+		store:     st,
+		searcher:  searcher,
+		auth:      auth,
+		log:       slog.Default(),
+		started:   time.Now(),
+		now:       time.Now,
+		heartbeat: HeartbeatInterval,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -118,6 +140,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/documents/{id}", s.authenticated(s.handleDocument))
 	mux.Handle("GET /api/v1/documents/{id}/content", s.authenticated(s.handleContent))
 	mux.Handle("GET /api/v1/stats", s.authenticated(s.handleStats))
+	mux.Handle("GET /api/v1/events", s.authenticated(s.handleEvents))
 	if s.assets != nil {
 		mux.Handle("GET /", s.assets)
 	}
@@ -279,7 +302,15 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Pri
 			Score:      h.Score,
 		})
 	}
-	writeJSON(w, http.StatusOK, out)
+	writeConditional(w, r, http.StatusOK, out, out.identity())
+}
+
+// identity is the response without the number that changes on every request.
+// Two searches that found the same documents have the same identity even though
+// one of them took a tenth of a millisecond longer.
+func (r searchResponse) identity() any {
+	r.TookMS = 0
+	return r
 }
 
 // parseQuery builds a query from the URL.
@@ -395,7 +426,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, p *acl.Princip
 	}
 	out.Sources = facetValues(res.Facets["source"])
 	out.Kinds = facetValues(res.Facets["kind"])
-	writeJSON(w, http.StatusOK, out)
+	writeConditional(w, r, http.StatusOK, out, nil)
 }
 
 type suggestResponse struct {
@@ -425,7 +456,7 @@ func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request, p *acl.Pr
 	raw := strings.TrimSpace(r.URL.Query().Get("q"))
 	out := suggestResponse{Query: raw, Suggestions: []suggestion{}}
 	if raw == "" {
-		writeJSON(w, http.StatusOK, out)
+		writeConditional(w, r, http.StatusOK, out, out.identity())
 		return
 	}
 
@@ -438,7 +469,7 @@ func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request, p *acl.Pr
 	res, err := s.searcher.Search(r.Context(), p, q)
 	if err != nil {
 		s.log.Warn("suggest failed", "error", err, "tenant", p.Tenant)
-		writeJSON(w, http.StatusOK, out)
+		writeConditional(w, r, http.StatusOK, out, out.identity())
 		return
 	}
 	for _, h := range res.Hits {
@@ -454,7 +485,14 @@ func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request, p *acl.Pr
 		})
 	}
 	out.TookMS = float64(time.Since(start).Microseconds()) / 1000
-	writeJSON(w, http.StatusOK, out)
+	writeConditional(w, r, http.StatusOK, out, out.identity())
+}
+
+// identity is the suggestions without the timing, for the same reason as
+// [searchResponse.identity].
+func (r suggestResponse) identity() any {
+	r.TookMS = 0
+	return r
 }
 
 // operators is the list the typeahead offers, which is also the documentation
@@ -509,7 +547,7 @@ func (s *Server) handleDocument(w http.ResponseWriter, r *http.Request, p *acl.P
 		writeError(w, http.StatusInternalServerError, "internal", "the document could not be read")
 		return
 	}
-	writeJSON(w, http.StatusOK, documentResponse(d))
+	writeConditional(w, r, http.StatusOK, documentResponse(d), nil)
 }
 
 type documentBody struct {
@@ -622,16 +660,30 @@ func (s *Server) writeContent(w http.ResponseWriter, r *http.Request, d doc.Docu
 	http.ServeContent(w, r, "", d.ModifiedAt, bytes.NewReader(c.Bytes))
 }
 
+// statsResponse is what the corpus holds and what the caches have done with it.
+//
+// The cache numbers are here rather than behind an operator only endpoint
+// because a cache nobody can see the hit rate of is a cache nobody can tell is
+// broken. A layer sitting at a two percent hit rate is doing nothing but
+// spending memory, and the only way anyone finds that out is by being able to
+// look.
+type statsResponse struct {
+	Documents   int                    `json:"documents"`
+	Quarantined int                    `json:"quarantined"`
+	Cache       map[string]cache.Stats `json:"cache,omitempty"`
+}
+
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request, _ *acl.Principal) {
 	st, err := s.store.Stats(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "stats are not available")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]int{
-		"documents":   st.Documents,
-		"quarantined": st.Quarantined,
-	})
+	writeConditional(w, r, http.StatusOK, statsResponse{
+		Documents:   st.Documents,
+		Quarantined: st.Quarantined,
+		Cache:       s.searcher.CacheStats(),
+	}, nil)
 }
 
 func facets(in map[string][]index.Facet) map[string][]facet {

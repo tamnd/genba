@@ -93,7 +93,22 @@ type pool struct {
 // changes is how much data had to be touched to get there.
 func (s *Searcher) collect(ctx context.Context, p *acl.Principal, r store.Request, sel store.Selection) (pool, error) {
 	if rk, ok := s.store.(store.Ranker); ok {
-		ranked, err := rk.Rank(ctx, p, r, sel)
+		// The cache goes around this branch and not around the other two. This is
+		// the branch a deployment actually runs, and it is the one whose result is
+		// a value the driver produced under the permission rule, which is what
+		// makes it something a fingerprint can name. The fallbacks are for a driver
+		// that has no index, where the cost is the scan and caching the tail of it
+		// would be measuring the wrong thing.
+		call := func() (store.Ranked, error) { return rk.Rank(ctx, p, r, sel) }
+		var (
+			ranked store.Ranked
+			err    error
+		)
+		if s.cache != nil {
+			ranked, err = s.cache.ranked(p, r, sel, call)
+		} else {
+			ranked, err = call()
+		}
 		if err != nil {
 			return pool{}, err
 		}
@@ -182,7 +197,11 @@ func candidateOf(d doc.Document, terms []string) store.Candidate {
 // all, and both drivers in the tree implement the capability.
 func (s *Searcher) statistics(ctx context.Context, p *acl.Principal, terms []string, from pool) (store.Corpus, error) {
 	if st, ok := s.store.(store.Statistician); ok {
-		return st.Statistics(ctx, p, terms)
+		call := func() (store.Corpus, error) { return st.Statistics(ctx, p, terms) }
+		if s.cache != nil {
+			return s.cache.corpusStats(p, terms, call)
+		}
+		return call()
 	}
 	c := store.Corpus{Documents: len(from.cands), DocFreq: make(map[string]int, len(terms))}
 	for _, cand := range from.cands {
