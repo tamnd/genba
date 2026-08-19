@@ -29,7 +29,8 @@ func measuredServer(t *testing.T) (*api.Server, http.Handler) {
 	t.Cleanup(func() { _ = searcher.Close() })
 
 	s := api.New(st, searcher, api.HeaderAuth{Tenant: "acme"})
-	return s, s.Handler()
+	h := s.Handler()
+	return s, h
 }
 
 // scrape reads the metrics handler.

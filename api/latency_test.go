@@ -295,7 +295,7 @@ func TestSearchLatencyGate(t *testing.T) {
 // can either side of the handler because everything it does lands inside the
 // measurement.
 func gateServe(h http.Handler, target string, hdr map[string]string) int {
-	r := httptest.NewRequest(http.MethodGet, target, nil)
+	r := httptest.NewRequest(http.MethodGet, target, http.NoBody)
 	for k, v := range hdr {
 		r.Header.Set(k, v)
 	}
@@ -460,7 +460,7 @@ func gateCompare(now, base gateBaseline, haveBase bool, tol float64) (failures, 
 	for _, class := range slices.Sorted(maps.Keys(now.Classes)) {
 		got, was := now.Classes[class], base.Classes[class]
 		if was.Best == 0 {
-			notes = append(notes, fmt.Sprintf("%s is not in the baseline, so it was only held to the backstop", class))
+			notes = append(notes, class+" is not in the baseline, so it was only held to the backstop")
 			continue
 		}
 		best := got.Best * scale
