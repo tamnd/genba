@@ -40,7 +40,10 @@ func New() *Store {
 	}
 }
 
-var _ store.ContentStore = (*Store)(nil)
+var (
+	_ store.ContentStore = (*Store)(nil)
+	_ store.Statistician = (*Store)(nil)
+)
 
 // Put inserts or replaces documents.
 func (s *Store) Put(ctx context.Context, docs ...doc.Document) error {
@@ -158,6 +161,51 @@ func (s *Store) Content(ctx context.Context, p *acl.Principal, id string) (doc.C
 		// there, because telling the two apart is a way of asking whether a
 		// document exists.
 		return doc.Content{}, genba.ErrNotFound
+	}
+	return c, nil
+}
+
+// Statistics counts the corpus by walking it.
+//
+// This driver keeps no derived numbers, so it recomputes them, which is O(n) on
+// every call and is the correct thing for a reference implementation to do. It
+// is what the driver that maintains them incrementally is checked against, and
+// the whole value of a reference is that it is obviously right rather than
+// fast.
+func (s *Store) Statistics(ctx context.Context, p *acl.Principal, terms []string) (store.Corpus, error) {
+	if err := ctx.Err(); err != nil {
+		return store.Corpus{}, err
+	}
+	if p == nil {
+		return store.Corpus{}, genba.ErrNoPrincipal
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return store.Corpus{}, genba.ErrClosed
+	}
+
+	want := make(map[string]bool, len(terms))
+	for _, t := range terms {
+		want[t] = true
+	}
+
+	c := store.Corpus{DocFreq: make(map[string]int, len(terms))}
+	for _, d := range s.docs {
+		// The tenant, and not the principal's visibility. See [store.Corpus] for
+		// why the counts are over what the tenant holds.
+		if !d.Queryable() || d.Tenant != p.Tenant {
+			continue
+		}
+		a := d.Analyze()
+		c.Documents++
+		c.TitleTokens += int64(a.TitleTokens)
+		c.BodyTokens += int64(a.BodyTokens)
+		for t := range a.Terms {
+			if want[t] {
+				c.DocFreq[t]++
+			}
+		}
 	}
 	return c, nil
 }

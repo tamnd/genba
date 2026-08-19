@@ -1,7 +1,10 @@
 package sqlitestore
 
 import (
+	"database/sql"
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,6 +32,10 @@ func TestConformance(t *testing.T) {
 
 func TestRetrieverConformance(t *testing.T) {
 	storetest.RunRetriever(t, newStore)
+}
+
+func TestRankerConformance(t *testing.T) {
+	storetest.RunRanker(t, newStore)
 }
 
 // TestMigrationsAreIdempotent opens the same file twice. The second open runs
@@ -66,6 +73,78 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	}
 }
 
+// TestUpgradeFromBeforeTheBodySplit opens a database written before the
+// document body moved into its own table, and checks the document survives.
+//
+// A migration that reshapes stored data is the one kind that cannot be tested
+// by creating a database and using it, because a fresh database runs the
+// migration against nothing. So this builds one at the older version, writes a
+// row the old way, and then opens it the way a running deployment would.
+func TestUpgradeFromBeforeTheBodySplit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	before := migrations[:splitAt(t)]
+
+	db, err := sql.Open("sqlite", dsn(path))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := migrate(t.Context(), db, before); err != nil {
+		t.Fatalf("migrating to the older schema: %v", err)
+	}
+
+	// The old write path, in the shape it had then: everything in one row,
+	// including the document JSON. The permissions are the simple mode, so that
+	// what is being tested is the row and not the reference table.
+	d := readable("d1")
+	d.Permissions = acl.Permissions{Mode: acl.ModePublicToTenant}
+	data, err := json.Marshal(d)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	_, err = db.ExecContext(t.Context(), `
+		INSERT INTO document (
+			id, tenant, source, kind, container_fold, author_keys, owner_keys,
+			modified_at, mode, owner_key, queryable, data,
+			title_tokens, body_tokens, container, author_name
+		) VALUES (?, ?, ?, ?, '', '[]', '[]', ?, ?, '', 1, ?, 0, 0, ?, '')`,
+		d.ID, d.Tenant, d.Source, string(d.Kind), d.ModifiedAt.UnixNano(),
+		int(d.Permissions.Mode), string(data), d.Container)
+	if err != nil {
+		t.Fatalf("writing a row the old way: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	s, err := Open(t.Context(), path)
+	if err != nil {
+		t.Fatalf("opening the upgraded database: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	got, err := s.Get(t.Context(), reader(), "d1")
+	if err != nil {
+		t.Fatalf("the document written before the upgrade is gone: %v", err)
+	}
+	if got.Title != d.Title || got.Body != d.Body {
+		t.Fatalf("the upgrade changed the document: %q, %q", got.Title, got.Body)
+	}
+}
+
+// splitAt is the migration that creates document_data, found by what it does
+// rather than by its number, so appending a migration does not silently move
+// the test to a different one.
+func splitAt(t *testing.T) int {
+	t.Helper()
+	for i, m := range migrations {
+		if strings.Contains(m.sql, "CREATE TABLE document_data") {
+			return i
+		}
+	}
+	t.Fatal("no migration creates document_data")
+	return 0
+}
+
 // TestPermissionFilterIsInTheQuery is the one that has to keep passing.
 //
 // It counts the rows the database handed back. A driver that asked SQLite for
@@ -84,7 +163,7 @@ func TestPermissionFilterIsInTheQuery(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	s.rows.Store(0)
+	s.ResetCounters()
 	var seen int
 	if err := s.Retrieve(t.Context(), stranger(), store.Request{}, func(doc.Document) bool {
 		seen++
@@ -95,7 +174,7 @@ func TestPermissionFilterIsInTheQuery(t *testing.T) {
 	if seen != 0 {
 		t.Fatalf("a reader with no access retrieved %d documents", seen)
 	}
-	if got := s.rows.Load(); got != 0 {
+	if got := s.Counters().Rows; got != 0 {
 		t.Fatalf("the database returned %d rows for a reader who may see nothing, so the permission filter ran in Go rather than in the query", got)
 	}
 
@@ -107,11 +186,11 @@ func TestPermissionFilterIsInTheQuery(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	s.rows.Store(0)
+	s.ResetCounters()
 	if err := s.Retrieve(t.Context(), stranger(), store.Request{}, func(doc.Document) bool { return true }); err != nil {
 		t.Fatalf("Retrieve: %v", err)
 	}
-	if got := s.rows.Load(); got != 1 {
+	if got := s.Counters().Rows; got != 1 {
 		t.Fatalf("the database returned %d rows where one document is readable, want 1", got)
 	}
 }
@@ -135,7 +214,7 @@ func TestTermsAreInTheQuery(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	s.rows.Store(0)
+	s.ResetCounters()
 	var got []string
 	if err := s.Retrieve(t.Context(), reader(), store.Request{Terms: []string{"sourdough"}}, func(d doc.Document) bool {
 		got = append(got, d.ID)
@@ -146,7 +225,7 @@ func TestTermsAreInTheQuery(t *testing.T) {
 	if len(got) != 1 || got[0] != "needle" {
 		t.Fatalf("retrieved %v, want just the one document carrying the term", got)
 	}
-	if rows := s.rows.Load(); rows != 1 {
+	if rows := s.Counters().Rows; rows != 1 {
 		t.Fatalf("the database returned %d rows for a term one document carries, so the term filter is not in the query", rows)
 	}
 }

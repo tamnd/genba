@@ -13,16 +13,19 @@ import (
 	"github.com/tamnd/genba/store/sqlitestore"
 )
 
-// The searcher has two ways to collect candidates. A driver that implements
-// store.Retriever is asked for the match set and does the filtering in its own
-// query, and a driver that does not is scanned with the same rules applied in
-// Go. There is one definition of the match set and both paths are held to it,
-// so the only honest test is to run the same searches through both drivers and
-// require the same answer.
+// The searcher has more than one way to collect candidates. A driver that
+// implements store.Ranker cuts to a candidate pool inside its own query, counts
+// the match set there, and reads the token counts out of columns. A driver that
+// implements neither that nor store.Retriever is scanned and the same rules are
+// applied in Go, over text analysed on the spot. There is one definition of the
+// match set and one ranking function, and both paths are held to them, so the
+// only honest test is to run the same searches through both drivers and require
+// the same answer.
 //
-// This is also the test that would catch a driver drifting from the analyzer:
-// the ranking is computed from what the driver returned, so a candidate set
-// that differs by one document changes the order of everything after it.
+// This is also the test that would catch a driver drifting from the analyzer.
+// The ranking is computed from what the driver reported, so a title token count
+// written at index time that disagrees with what the tokenizer produces now
+// moves every score that document is compared against.
 
 func TestDriversAgree(t *testing.T) {
 	mem := memstore.New()
@@ -37,8 +40,11 @@ func TestDriversAgree(t *testing.T) {
 	if _, ok := any(mem).(store.Retriever); ok {
 		t.Fatal("memstore now implements store.Retriever, so this test no longer covers the scan path")
 	}
-	if _, ok := any(sq).(store.Retriever); !ok {
-		t.Fatal("sqlitestore does not implement store.Retriever, so this test no longer covers the retrieve path")
+	if _, ok := any(mem).(store.Ranker); ok {
+		t.Fatal("memstore now implements store.Ranker, so this test no longer covers the scan path")
+	}
+	if _, ok := any(sq).(store.Ranker); !ok {
+		t.Fatal("sqlitestore does not implement store.Ranker, so this test no longer covers the rank path")
 	}
 
 	docs := driverCorpus()
@@ -50,10 +56,10 @@ func TestDriversAgree(t *testing.T) {
 
 	scanning := index.New(mem, index.WithClock(clock))
 	retrieving := index.New(sq, index.WithClock(clock))
-	if scanning.Retrieving() {
-		t.Fatal("the memstore searcher reports that it retrieves")
+	if scanning.Ranking() {
+		t.Fatal("the memstore searcher reports that it ranks in the driver")
 	}
-	if !retrieving.Retrieving() {
+	if !retrieving.Ranking() {
 		t.Fatal("the sqlite searcher reports that it scans")
 	}
 
