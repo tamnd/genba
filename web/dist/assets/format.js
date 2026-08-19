@@ -113,6 +113,26 @@ export function duration(ms) {
   return `${(ms / 1000).toFixed(2)} s`;
 }
 
+/**
+ * bytes renders a file size the way a file manager does.
+ *
+ * Two significant figures is all anybody reads off a caption, and the unit is
+ * the decimal one because that is what the operating system showing the same
+ * file will say.
+ */
+export function bytes(n) {
+  const size = Number(n) || 0;
+  if (size < 1000) return `${size} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = size / 1000;
+  let unit = 0;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit++;
+  }
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+}
+
 export function initials(name) {
   const parts = String(name || "?").trim().split(/[\s@._-]+/).filter(Boolean);
   if (!parts.length) return "?";

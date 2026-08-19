@@ -74,6 +74,18 @@ var migrations = []string{
 		contentless_delete=1,
 		tokenize='unicode61 remove_diacritics 0'
 	)`,
+
+	// document_content is the bytes of a document that is not text, in its own
+	// table rather than in the data column. The reason is the shape of the
+	// reads: data is selected by every query path, and a megabyte of PNG in it
+	// would be a megabyte read per hit whether or not anybody ever looks at the
+	// image. Here it is only read by the one endpoint that serves it.
+	`CREATE TABLE document_content (
+		doc_id     TEXT PRIMARY KEY REFERENCES document(id) ON DELETE CASCADE,
+		width      INTEGER NOT NULL,
+		height     INTEGER NOT NULL,
+		bytes      BLOB NOT NULL
+	)`,
 }
 
 // migrate brings an open database up to the current schema.

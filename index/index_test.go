@@ -40,6 +40,7 @@ type fixture struct {
 	body     string
 	source   string
 	kind     doc.Kind
+	media    string
 	modified time.Time
 	perm     acl.Permissions
 }
@@ -57,6 +58,10 @@ func newSearcher(t *testing.T, fixtures []fixture, opts ...index.Option) *index.
 		if f.kind == "" {
 			f.kind = doc.KindPage
 		}
+		var props map[string]string
+		if f.media != "" {
+			props = map[string]string{doc.MediaType: f.media}
+		}
 		docs = append(docs, doc.Document{
 			ID:          f.id,
 			Tenant:      "acme",
@@ -66,6 +71,7 @@ func newSearcher(t *testing.T, fixtures []fixture, opts ...index.Option) *index.
 			Body:        f.body,
 			ModifiedAt:  f.modified,
 			Permissions: f.perm,
+			Properties:  props,
 		})
 	}
 	if err := st.Put(t.Context(), docs...); err != nil {
@@ -301,5 +307,67 @@ func TestPassagesAreEmptyWithoutAMatchInTheBody(t *testing.T) {
 		if p.Match {
 			t.Fatalf("marked %q, which is not in the body", p.Text)
 		}
+	}
+}
+
+// Two lines of a result row is a small budget, and a snippet full of hashes,
+// asterisks and table pipes has spent it on nothing.
+func TestSnippetsFromMarkdownReadAsProse(t *testing.T) {
+	s := newSearcher(t, []fixture{{
+		id:    "spec",
+		title: "Permissions",
+		media: "text/markdown",
+		body: "# Permissions\n\n" +
+			"The rule is that a **principal** is applied by the `driver`, not by the caller.\n" +
+			"\n| Mode | Meaning |\n| --- | --- |\n| acl | a list |\n",
+		perm: openTo("eng@acme.com"),
+	}})
+	res, err := s.Search(t.Context(), principal("gdrive:eng@acme.com"), index.Query{Text: "principal"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(res.Hits) != 1 {
+		t.Fatalf("got %d hits, want 1", len(res.Hits))
+	}
+	snippet := res.Hits[0].Snippet
+	for _, syntax := range []string{"#", "**", "`", "|"} {
+		if strings.Contains(snippet, syntax) {
+			t.Errorf("the snippet still carries %q:\n%s", syntax, snippet)
+		}
+	}
+	if !strings.Contains(snippet, "principal") {
+		t.Errorf("the matched term is gone from the snippet:\n%s", snippet)
+	}
+	var marked []string
+	for _, p := range res.Hits[0].Passages {
+		if p.Match {
+			marked = append(marked, p.Text)
+		}
+	}
+	if !slices.Equal(marked, []string{"principal"}) {
+		t.Errorf("marked %v, want the term marked at its offset in the stripped text", marked)
+	}
+}
+
+// A source file is not markdown, and stripping what looks like syntax out of
+// code would be lying about the file.
+func TestSnippetsFromCodeAreLeftAlone(t *testing.T) {
+	s := newSearcher(t, []fixture{{
+		id:    "src",
+		title: "store/store.go",
+		kind:  doc.KindCode,
+		media: "text/x-go",
+		body:  "// principal is applied by the driver\nfunc visible(p *acl.Principal) bool { return *p.ok }\n",
+		perm:  openTo("eng@acme.com"),
+	}})
+	res, err := s.Search(t.Context(), principal("gdrive:eng@acme.com"), index.Query{Text: "principal"})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(res.Hits) != 1 {
+		t.Fatalf("got %d hits, want 1", len(res.Hits))
+	}
+	if !strings.Contains(res.Hits[0].Snippet, "*p.ok") {
+		t.Errorf("the code was rewritten:\n%s", res.Hits[0].Snippet)
 	}
 }

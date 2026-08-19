@@ -10,6 +10,7 @@
 import { h, replace, svg } from "./dom.js";
 import { api } from "./api.js";
 import { icon, label, sourceColor, when, exact } from "./format.js";
+import { body as renderBody, shapeOf } from "./content.js";
 
 export class Drawer {
   constructor({ onClose }) {
@@ -90,12 +91,15 @@ export class Drawer {
         h("span", { class: "source__dot", style: { background: sourceColor(d.source) } }),
         label(d.source),
       ),
-      h("span", { class: "crumbs__sep" }, "/"),
+      h("span", { class: "crumbs__sep" }, "·"),
       h("span", {}, label(d.kind)),
-      d.container && h("span", { class: "crumbs__sep" }, "/"),
+      d.container && h("span", { class: "crumbs__sep" }, "·"),
       d.container && h("span", {}, d.container),
     );
-    replace(this.body, d.body || "This document has no text body.");
+    // The body decides its own shape from the media type, so the drawer only
+    // has to say where it goes and how wide it is.
+    this.body.dataset.shape = shapeOf(d);
+    replace(this.body, renderBody(d));
     replace(
       this.foot,
       d.url &&
@@ -118,6 +122,7 @@ export class Drawer {
     const missing = err.status === 404;
     replace(this.title, missing ? "Not available" : "Could not load this document");
     replace(this.meta);
+    this.body.dataset.shape = "text";
     replace(
       this.body,
       missing

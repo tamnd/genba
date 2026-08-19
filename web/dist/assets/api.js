@@ -84,11 +84,32 @@ async function get(path, params, signal) {
   return res.json();
 }
 
+/**
+ * bytes fetches a document's raw content.
+ *
+ * An img tag cannot carry the identity headers, so the bytes come through fetch
+ * and become an object URL. That keeps one rule for who may read what: the
+ * server decides, from the same headers as every other request, and a document
+ * somebody may not read is a 404 here exactly as it is everywhere else.
+ */
+async function bytes(path, signal) {
+  const res = await fetch(BASE + path, { headers: headers(), signal });
+  if (!res.ok) throw new ApiError(res.status, "error", `the server returned ${res.status}`);
+  const dims = (res.headers.get("X-Content-Dimensions") || "").split("x");
+  return {
+    blob: await res.blob(),
+    type: res.headers.get("Content-Type") || "",
+    width: Number(dims[0]) || 0,
+    height: Number(dims[1]) || 0,
+  };
+}
+
 export const api = {
   me: (signal) => get("/me", {}, signal),
   stats: (signal) => get("/stats", {}, signal),
   search: (query, signal) => get("/search", query, signal),
   suggest: (q, signal) => get("/suggest", { q }, signal),
   document: (id, signal) => get(`/documents/${encodeURIComponent(id)}`, {}, signal),
+  content: (id, signal) => bytes(`/documents/${encodeURIComponent(id)}/content`, signal),
   health: (signal) => fetch("/healthz", { signal }).then((r) => r.json()),
 };
