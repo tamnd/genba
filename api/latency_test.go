@@ -172,12 +172,18 @@ type gateReading struct {
 // TestSearchLatencyGate measures every query class and compares it with the
 // recorded baseline.
 //
+// It is opt in, because it builds a twenty thousand document corpus and then
+// spends fifteen seconds per query class measuring it, and a plain go test
+// ./... that quietly does that is a plain go test ./... that people stop
+// running. Benchmarks get this for free by needing -bench, and a test has to
+// ask for it.
+//
 // Recording a new baseline is GENBA_GATE_RECORD=1, and it belongs in a commit
 // of its own that changes nothing else, because a commit that moves the
 // baseline and the code together is a commit that cannot be reviewed.
 func TestSearchLatencyGate(t *testing.T) {
-	if testing.Short() {
-		t.Skip("the latency gate needs the benchmark corpus")
+	if os.Getenv("GENBA_GATE") == "" {
+		t.Skip("the latency gate builds the benchmark corpus and measures it, so it is opt in: make bench-gate")
 	}
 
 	st, spec := benchcorpus.Fixture(t)

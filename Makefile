@@ -72,7 +72,7 @@ bench-counters:
 # slow query. It writes its numbers to bench-report.json, which CI keeps as an
 # artifact.
 bench-gate:
-	GENBA_BENCH_DOCS=$(BENCH_DOCS) GENBA_GATE_REPORT=$(CURDIR)/bench-report.json go test -v -count=1 -timeout 30m -run 'LatencyGate' ./api/
+	GENBA_GATE=1 GENBA_BENCH_DOCS=$(BENCH_DOCS) GENBA_GATE_REPORT=$(CURDIR)/bench-report.json go test -v -count=1 -timeout 30m -run 'LatencyGate' ./api/
 
 # Record a new baseline for the machine this runs on.
 #
@@ -81,7 +81,7 @@ bench-gate:
 # is measuring is a baseline nobody can review, and one that updates itself is a
 # ratchet that only turns one way.
 bench-gate-record:
-	GENBA_BENCH_DOCS=$(BENCH_DOCS) GENBA_GATE_RECORD=1 GENBA_GATE_RUNNER="$(shell uname -sm)" GENBA_GATE_DATE="$(shell date -u +%Y-%m-%d)" \
+	GENBA_GATE=1 GENBA_BENCH_DOCS=$(BENCH_DOCS) GENBA_GATE_RECORD=1 GENBA_GATE_RUNNER="$(shell uname -sm)" GENBA_GATE_DATE="$(shell date -u +%Y-%m-%d)" \
 		go test -v -count=1 -timeout 30m -run 'LatencyGate' ./api/
 
 # The browser gate: asset budgets, markup safety, axe, and Lighthouse.
