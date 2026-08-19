@@ -309,7 +309,7 @@ func (s *Source) read(ctx context.Context, full, rel string, info fs.FileInfo) (
 		Title:        titleOf(rel, text, kind),
 		Body:         text,
 		URL:          "file://" + filepath.ToSlash(full),
-		Container:    path.Dir(rel),
+		Container:    containerOf(rel),
 		ModifiedAt:   info.ModTime(),
 		CreatedAt:    info.ModTime(),
 		SourceUpdate: info.ModTime().UTC().Format(time.RFC3339Nano),
@@ -372,6 +372,17 @@ func head(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+// containerOf is the directory a file lives in, relative to the root of the
+// tree. A file at the root has no container rather than a container called
+// ".", because that dot travels all the way to the result row and to the
+// facet list, where it means nothing to anybody.
+func containerOf(rel string) string {
+	if dir := path.Dir(rel); dir != "." && dir != "/" {
+		return dir
+	}
+	return ""
 }
 
 // kindOf maps an extension onto a document kind. Anything unrecognised is a

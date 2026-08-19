@@ -18,6 +18,7 @@ const ICONS = {
   keyboard: "M4 7h16v10H4V7ZM7 11h.01M11 11h.01M15 11h.01M8 14h8",
   menu: "M4 7h16M4 12h16M4 17h16",
   check: "m5 12 5 5 9-10",
+  rows: "M4 6h16M4 10h16M4 14h16M4 18h16",
   preview: "M4 6h16v12H4zM4 10h16",
 };
 

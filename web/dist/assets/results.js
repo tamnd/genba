@@ -1,4 +1,4 @@
-// The results view: verticals, filter bar, result cards and facets.
+// The results view: verticals, active filters, result rows and facets.
 
 import { h, replace, svg } from "./dom.js";
 import { kindIcon, sourceColor, label, when, exact, number, duration, icon } from "./format.js";
@@ -30,7 +30,7 @@ const FACETS = [
   { key: "author", field: "author", title: "Person" },
 ];
 
-const FACET_VISIBLE = 6;
+const FACET_VISIBLE = 8;
 
 export class Results {
   constructor({ onQuery, onOpen }) {
@@ -41,47 +41,93 @@ export class Results {
     this.hits = [];
 
     this.tabs = h("div", { class: "tabs", role: "tablist", "aria-label": "Result types" });
-    this.filterbar = h("div", { class: "filterbar" });
-    this.list = h("div", { class: "results__list", role: "list" });
     this.facets = h("aside", { class: "facets", "aria-label": "Filters" });
+
+    // The facet column becomes a disclosure below the medium breakpoint, where
+    // there is no room for a margin column. The button is hidden by CSS above
+    // it rather than by a resize listener, so nothing recomputes on drag.
+    this.toggle = h(
+      "button",
+      {
+        class: "button button--ghost filterbar__toggle",
+        type: "button",
+        "aria-expanded": "false",
+        onClick: () => {
+          const open = this.facets.dataset.open === "true";
+          this.facets.dataset.open = String(!open);
+          this.toggle.setAttribute("aria-expanded", String(!open));
+        },
+      },
+      svg(icon("slider"), 18),
+      "Filters",
+    );
+
+    this.filterbar = h("div", { class: "filterbar" }, this.tabs, this.toggle);
+    this.progress = h("div", { class: "progress", hidden: true });
+    this.chips = h("div", { class: "chips" });
+    this.head = h("div", { class: "results__head" });
+    this.list = h("div", { class: "results__list", role: "list" });
 
     this.el = h(
       "div",
       {},
-      this.tabs,
       this.filterbar,
-      h("div", { class: "results" }, this.list, this.facets),
+      this.progress,
+      this.chips,
+      h(
+        "div",
+        { class: "results" },
+        this.facets,
+        h("div", { class: "results__main" }, this.head, this.list),
+      ),
     );
   }
 
-  /** loading paints the shape of the answer before the answer arrives. */
+  /**
+   * loading paints the shape of the answer before the answer arrives.
+   *
+   * The shell decides when to call this. Under the 120ms threshold in the
+   * motion spec it never calls it at all, and the previous answer stays on
+   * screen until the new one replaces it in a single paint.
+   */
   loading(query) {
     this.renderTabs(query, null);
-    replace(
-      this.filterbar,
-      h("div", { class: "skeleton", style: { width: "220px", height: "20px" } }),
-    );
+    replace(this.chips);
+    replace(this.head, h("div", { class: "skeleton", style: { width: "180px", height: "16px" } }));
     replace(
       this.list,
-      Array.from({ length: 5 }, () =>
+      Array.from({ length: 6 }, () =>
         h(
           "div",
-          { class: "skeleton-card" },
-          h("div", { class: "skeleton", style: { width: "30%", height: "12px" } }),
-          h("div", { class: "skeleton", style: { width: "70%", height: "18px" } }),
-          h("div", { class: "skeleton", style: { width: "100%", height: "12px" } }),
-          h("div", { class: "skeleton", style: { width: "85%", height: "12px" } }),
+          { class: "skeleton-result" },
+          h("div", { class: "skeleton", style: { width: "60%", height: "20px" } }),
+          h("div", { class: "skeleton", style: { width: "40%", height: "14px" } }),
+          h("div", { class: "skeleton", style: { width: "100%", height: "14px" } }),
+          h("div", { class: "skeleton", style: { width: "82%", height: "14px" } }),
         ),
       ),
     );
     replace(this.facets);
   }
 
+  /**
+   * revalidating shows that a cached answer is being checked.
+   *
+   * The content underneath is not dimmed, blurred or overlaid. Dimming stale
+   * content tells the reader that what they are currently reading is wrong,
+   * which it almost never is.
+   */
+  revalidating(on) {
+    this.progress.hidden = !on;
+    this.list.setAttribute("aria-busy", String(Boolean(on)));
+  }
+
   render(query, res) {
     this.hits = res.hits || [];
     this.selected = -1;
     this.renderTabs(query, res);
-    this.renderFilterbar(query, res);
+    this.renderChips(query);
+    this.renderHead(query, res);
     this.renderList(query, res);
     this.renderFacets(query, res);
   }
@@ -108,7 +154,7 @@ export class Results {
     );
   }
 
-  renderFilterbar(query, res) {
+  renderChips(query) {
     const active = [];
     for (const { key, field } of FACETS) {
       for (const value of query[key] || []) {
@@ -125,7 +171,7 @@ export class Results {
                 "aria-label": `Remove the ${labelFor(field)} filter ${value}`,
                 onClick: () => this.onQuery(urlState.toggle(query, key, value)),
               },
-              svg(icon("close"), 12),
+              svg(icon("close"), 14),
             ),
           ),
         );
@@ -133,7 +179,7 @@ export class Results {
     }
 
     replace(
-      this.filterbar,
+      this.chips,
       active,
       active.length > 0 &&
         h(
@@ -141,22 +187,28 @@ export class Results {
           { class: "chip", type: "button", onClick: () => this.onQuery(urlState.clear(query)) },
           "Clear all",
         ),
-      h("span", { class: "filterbar__spacer" }),
+    );
+  }
+
+  renderHead(query, res) {
+    replace(
+      this.head,
       h(
         "span",
-        { class: "filterbar__meta" },
+        { class: "results__count" },
         res.partial
-          ? `${number(res.total)}+ results in ${duration(res.took_ms)}`
-          : `${number(res.total)} ${res.total === 1 ? "result" : "results"} in ${duration(res.took_ms)}`,
+          ? `${number(res.total)}+ results`
+          : `${number(res.total)} ${res.total === 1 ? "result" : "results"}`,
+        h("span", { class: "results__took" }, duration(res.took_ms)),
       ),
       h(
         "label",
-        { class: "filterbar__meta" },
+        {},
         h("span", { class: "visually-hidden" }, "Sort results"),
         h(
           "select",
           {
-            class: "select",
+            class: "sort",
             onChange: (e) => this.onQuery({ ...query, sort: e.target.value, offset: 0 }),
           },
           h("option", { value: "", selected: !query.sort }, "Most relevant"),
@@ -174,59 +226,68 @@ export class Results {
 
     replace(
       this.list,
-      this.hits.map((hit, i) => this.card(hit, i)),
+      this.hits.map((hit, i) => this.row(hit, i)),
       pager(query, res, this.onQuery),
     );
   }
 
-  card(hit, i) {
+  /**
+   * row is one result.
+   *
+   * Title first, then the line of provenance, then the snippet. The old order
+   * put provenance above the title, which meant the first thing on every row
+   * was the least distinguishing thing about it.
+   */
+  row(hit, i) {
     const open = () => this.onOpen(hit.id);
     return h(
       "article",
       {
-        class: "card",
+        class: "result",
         role: "listitem",
         dataset: { index: String(i) },
         onClick: (e) => {
           // A click on the title follows the source link. A click anywhere else
-          // on the card opens the preview, which is the cheaper of the two and
+          // on the row opens the preview, which is the cheaper of the two and
           // the one people want when they are still scanning.
           if (e.target.closest("a")) return;
           open();
         },
       },
+      hit.url
+        ? h(
+            "a",
+            { class: "result__title", href: hit.url, rel: "noreferrer noopener", target: "_blank" },
+            hit.title || hit.id,
+          )
+        : h("button", { class: "result__title", type: "button", onClick: open }, hit.title || hit.id),
       h(
         "div",
-        { class: "card__head" },
+        { class: "result__meta" },
         h(
           "span",
           { class: "source" },
           h("span", { class: "source__dot", style: { background: sourceColor(hit.source) } }),
           label(hit.source),
         ),
-        h("span", { class: "crumbs__sep" }, "/"),
-        h("span", { class: "crumbs" }, svg(kindIcon(hit.kind), 13), label(hit.kind)),
-        hit.container && h("span", { class: "crumbs__sep" }, "/"),
+        h("span", { class: "crumbs__sep" }, "·"),
+        h("span", { class: "crumbs" }, svg(kindIcon(hit.kind), 14), label(hit.kind)),
+        hit.container && h("span", { class: "crumbs__sep" }, "·"),
         hit.container && h("span", { class: "crumbs" }, hit.container),
-      ),
-      hit.url
-        ? h("a", { class: "card__title", href: hit.url, rel: "noreferrer noopener", target: "_blank" }, hit.title || hit.id)
-        : h("button", { class: "card__title", type: "button", onClick: open }, hit.title || hit.id),
-      h("p", { class: "card__snippet" }, passages(hit)),
-      h(
-        "div",
-        { class: "card__foot" },
-        hit.author && h("span", {}, hit.author),
+        hit.author && h("span", { class: "crumbs__sep" }, "·"),
+        hit.author && h("span", { class: "crumbs" }, hit.author),
+        hit.modified_at && h("span", { class: "crumbs__sep" }, "·"),
         hit.modified_at &&
-          h("span", { title: exact(hit.modified_at) }, `Updated ${when(hit.modified_at)}`),
+          h("time", { title: exact(hit.modified_at), datetime: hit.modified_at }, when(hit.modified_at)),
       ),
+      h("p", { class: "result__snippet" }, passages(hit)),
       h(
         "div",
-        { class: "card__actions" },
+        { class: "result__actions" },
         h(
           "button",
           { class: "icon-button", type: "button", title: "Preview (p)", "aria-label": "Preview", onClick: open },
-          svg(icon("preview"), 15),
+          svg(icon("preview"), 18),
         ),
         hit.url &&
           h(
@@ -239,7 +300,7 @@ export class Results {
               title: "Open in source",
               "aria-label": "Open in source",
             },
-            svg(icon("external"), 15),
+            svg(icon("external"), 18),
           ),
       ),
     );
@@ -271,7 +332,7 @@ export class Results {
                   "aria-pressed": String(on),
                   onClick: () => this.onQuery(urlState.toggle(query, key, v.value)),
                 },
-                h("span", { class: "facet__box" }, on ? svg(icon("check"), 10) : null),
+                h("span", { class: "facet__box" }, on ? svg(icon("check"), 12) : null),
                 h("span", { class: "facet__label", title: v.value }, titled ? label(v.value) : v.value),
                 h("span", { class: "facet__count" }, number(v.count)),
               ),
@@ -295,7 +356,11 @@ export class Results {
       );
     }).filter(Boolean);
 
-    replace(this.facets, groups.length ? groups : null);
+    replace(
+      this.facets,
+      groups.length ? h("h2", { class: "facets__title" }, "Filters") : null,
+      groups.length ? groups : null,
+    );
   }
 
   /** move walks the selection with j and k, and scrolls it into view. */
@@ -306,10 +371,10 @@ export class Results {
   }
 
   select(i) {
-    const cards = this.list.querySelectorAll(".card");
-    cards.forEach((card, n) => card.setAttribute("data-active", String(n === i)));
+    const rows = this.list.querySelectorAll(".result");
+    rows.forEach((row, n) => row.setAttribute("data-active", String(n === i)));
     this.selected = i;
-    if (cards[i]) cards[i].scrollIntoView({ block: "nearest" });
+    if (rows[i]) rows[i].scrollIntoView({ block: "nearest" });
   }
 
   current() {
@@ -354,7 +419,7 @@ function pager(query, res, onQuery) {
 
   return h(
     "nav",
-    { class: "filterbar", "aria-label": "Result pages" },
+    { class: "pager", "aria-label": "Result pages" },
     h(
       "button",
       {
@@ -367,7 +432,7 @@ function pager(query, res, onQuery) {
     ),
     h(
       "span",
-      { class: "filterbar__meta" },
+      { class: "pager__meta" },
       `${number(offset + 1)} to ${number(Math.min(offset + limit, res.total))} of ${number(res.total)}`,
     ),
     h(
@@ -396,6 +461,7 @@ function emptyState(query, res, onQuery) {
     return h(
       "div",
       { class: "state" },
+      h("span", { class: "state__icon" }, svg(icon("search"), 40)),
       h("p", { class: "state__title" }, "Search your company"),
       h("p", { class: "state__body" }, "Start typing above. Add app:, type:, in: or from: to narrow it down."),
     );
@@ -404,6 +470,7 @@ function emptyState(query, res, onQuery) {
     return h(
       "div",
       { class: "state" },
+      h("span", { class: "state__icon" }, svg(icon("slider"), 40)),
       h("p", { class: "state__title" }, "No results with these filters"),
       h("p", { class: "state__body" }, `Nothing matches ${query.q ? `"${query.q}"` : "this search"} in the selected filters.`),
       h(
@@ -420,6 +487,7 @@ function emptyState(query, res, onQuery) {
   return h(
     "div",
     { class: "state" },
+    h("span", { class: "state__icon" }, svg(icon("search"), 40)),
     h("p", { class: "state__title" }, `Nothing found for "${query.q}"`),
     h(
       "p",
