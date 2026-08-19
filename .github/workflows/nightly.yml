@@ -1,0 +1,124 @@
+name: nightly
+
+# The slow half of the performance work, on its own schedule.
+#
+# The gate on a pull request has to be fast and it has to be quiet, so it takes
+# a few hundred samples per class and allows a thirty five percent move. This run
+# has the machine to itself and all night to use it, so it takes more samples and
+# allows ten, which is enough to see a drift that twenty pull requests each hid
+# inside the tolerance.
+#
+# Nothing here fails a build. A nightly job that goes red blocks nobody and gets
+# muted, so a move files an issue instead, with the numbers in it.
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      record:
+        description: Record a new baseline for this runner instead of comparing against it
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+      - name: cache the benchmark corpus
+        uses: actions/cache@v4
+        with:
+          path: testdata
+          key: benchcorpus-${{ hashFiles('benchcorpus/*.go', 'benchcorpus/gen/**', 'benchcorpus/queries.txt') }}
+      - name: the corpus
+        run: make bench-corpus
+      - name: latency
+        id: gate
+        continue-on-error: true
+        shell: bash
+        env:
+          GENBA_GATE_BASELINE: ${{ github.workspace }}/benchcorpus/baseline-ci.json
+          GENBA_GATE_RUNNER: ubuntu-latest nightly
+          GENBA_GATE_SAMPLES: "2000"
+          GENBA_GATE_TOLERANCE: "1.10"
+          GENBA_GATE_RECORD: ${{ inputs.record && '1' || '' }}
+        run: |
+          set -o pipefail
+          make bench-gate 2>&1 | tee bench-gate.log
+      # Recording writes the baseline where the pull request gate will look for
+      # it, and the artifact is how it gets to somebody who can commit it. It is
+      # not committed from here on purpose: a baseline that updates itself is a
+      # ratchet that only turns one way.
+      - name: keep the numbers
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-bench
+          path: |
+            bench-report.json
+            bench-gate.log
+            benchcorpus/baseline-ci.json
+          if-no-files-found: warn
+      - name: file an issue when something moved
+        if: steps.gate.outcome == 'failure' && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "The nightly latency run on ${{ github.sha }} moved past the tighter nightly tolerance."
+            echo
+            echo "It takes more samples than the pull request gate and allows a ten percent move rather than thirty five, so this can fire on a drift that every individual pull request was within its tolerance for."
+            echo "The numbers are attached to the run as an artifact."
+            echo
+            echo '```'
+            tail -40 bench-gate.log
+            echo '```'
+            echo
+            echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } > issue.md
+          gh issue create \
+            --title "Nightly latency moved on $(date -u +%Y-%m-%d)" \
+            --body-file issue.md \
+            --label performance
+
+  # Lighthouse, enforced here rather than on a pull request, because a
+  # performance score on a shared runner moves by ten points between two runs of
+  # the same commit and a check that does that stops being read.
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: ui gate
+        id: ui
+        continue-on-error: true
+        env:
+          GENBA_UI_STRICT: "1"
+        run: make ui-gate
+      - name: file an issue when the interface slipped
+        if: steps.ui.outcome == 'failure' && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "Nightly interface audit failed on $(date -u +%Y-%m-%d)" \
+            --body "The nightly run enforces the Lighthouse floors that are advisory on a pull request, and one of them was missed on ${{ github.sha }}. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --label performance

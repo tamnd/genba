@@ -65,6 +65,79 @@ jobs:
       - name: test without the interface
         run: go test -tags noassets -count=1 ./...
 
+  # The performance gate, in two halves.
+  #
+  # The counters assert work rather than wall clock: rows read, statements
+  # issued, documents decoded, candidates ranked. A shared runner cannot measure
+  # a millisecond and it can count rows exactly, so that half fails on a change
+  # that makes a query walk the corpus and stays quiet when the runner is busy.
+  #
+  # The latency gate is the half the counters cannot do, which is a change that
+  # does the same work more slowly. It compares against a baseline recorded on
+  # this kind of runner, normalises by a calibration workload so a busy afternoon
+  # is not read as a regression, and writes its numbers out either way. Until a
+  # baseline recorded on the runner is committed it reports and does not fail,
+  # and it says so in the log rather than passing quietly.
+  #
+  # The corpus is generated rather than committed, and cached on the hash of the
+  # generator so that a run only pays for it when the generator changes. The
+  # baseline is not in that cache on purpose: a number a stale cache can
+  # overwrite is a number that stops meaning anything.
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+      - name: cache the benchmark corpus
+        uses: actions/cache@v4
+        with:
+          path: testdata
+          key: benchcorpus-${{ hashFiles('benchcorpus/*.go', 'benchcorpus/gen/**', 'benchcorpus/queries.txt') }}
+      - name: the corpus
+        run: make bench-corpus
+      - name: counters
+        run: make bench-counters
+      - name: latency
+        env:
+          GENBA_GATE_BASELINE: ${{ github.workspace }}/benchcorpus/baseline-ci.json
+          GENBA_GATE_RUNNER: ubuntu-latest
+        run: make bench-gate
+      - name: keep the numbers
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-report
+          path: bench-report.json
+          if-no-files-found: warn
+
+  # The browser gate: asset budgets, markup safety, axe and Lighthouse.
+  #
+  # The Go tests are the part that cannot flake and they run first. axe reports
+  # violations of a standard rather than an opinion and it fails the job.
+  # Lighthouse is advisory here and enforced on the nightly run, because a
+  # performance score on a shared runner moves by ten points between two runs of
+  # the same commit.
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: ui gate
+        run: make ui-gate
+
   # The binary is meant to run on Windows too, and cross compiling catches the
   # path handling and syscall mistakes that only show up there.
   cross:

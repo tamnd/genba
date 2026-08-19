@@ -17,7 +17,39 @@ The point of writing it down is that the next person who changes any of this has
 
 Read these as orientation, not as a gate.
 They were taken on a laptop that was doing other things, and the same commit measured 43ms and 50ms for the same benchmark twenty minutes apart.
-That is exactly why the thing CI enforces is `make bench-counters`, which counts rows and statements and cannot flake, and why the latency gate that will sit beside it compares against a baseline recorded on the runner it runs on.
+That is exactly why the thing CI enforces is `make bench-counters`, which counts rows and statements and cannot flake, and why the latency gate that sits beside it compares against a baseline recorded on the runner it runs on.
+
+## The latency gate
+
+`make bench-gate` is the wall clock half, and `benchcorpus/baseline.json` is what it compares against.
+
+It drives the search endpoint rather than the searcher, because the budget is what a browser waits for and request parsing and JSON encoding are part of that wait.
+It warms every class, then measures them all eight times over, and reports p50, p95 and p99 for each.
+
+What it compares was picked by measuring the same commit twice rather than by reasoning about it.
+Two runs of an unchanged tree, on the same laptop, disagreed by a factor of two on the p95 of the most expensive class.
+The median of the quietest round of those same runs held to within a quarter, and to within a tenth for half the classes.
+So the number that fails a build is the quietest median, the tolerance is set above what an unchanged tree was measured to do rather than at a number that sounds strict, and the percentiles are recorded and printed and never compared.
+
+That limit is worth stating plainly: a regression that only moves the tail will not fail this gate.
+Nothing that runs on a shared machine can catch that, and a check that pretends otherwise goes red on a Tuesday for no reason and is deleted on the Wednesday.
+
+Four things keep it honest:
+
+- It compares against a baseline rather than against an absolute number, and allows a thirty five percent move.
+- It measures the classes in interleaved rounds rather than one class at a time, so a burst of load lands across all of them rather than in whichever one was unlucky, and every round runs the same queries in the same order.
+- It times a calibration workload that does not touch the search path, between every round rather than once at the start, and scales the comparison by the median of those readings.
+  A runner half the speed of the one that recorded the baseline shows up in the calibration rather than in every class, and load that arrives halfway through a run shows up there too.
+  The workload allocates and sorts its way through a few megabytes rather than hashing a buffer that fits in cache, because the first version did the latter and reported the machine getting slower across two runs where every search class got faster.
+  It is a proxy, so it is applied only once the two figures are a tenth apart, and below that the run is compared unscaled rather than corrected by the proxy's own noise.
+- It refuses to compare at all when the calibration is more than twice apart, or when the corpus differs, and says so instead of passing quietly.
+
+The absolute budgets are still in the code, as a backstop at twice the budget.
+A class that the recorded baseline itself misses is exempt from that backstop and is held to the baseline instead, which is what keeps the three misses below from failing every pull request while they are being worked on.
+The exemption ends by itself on the day a baseline inside the budget is recorded.
+
+The checked in baseline is the laptop in the table above.
+CI points `GENBA_GATE_BASELINE` at `benchcorpus/baseline-ci.json`, which the nightly workflow produces as an artifact for somebody to commit, because a baseline that updates itself is a ratchet that only turns one way.
 
 ## The endpoints
 
