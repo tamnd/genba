@@ -94,5 +94,8 @@ Nothing else in CI links it, and the binary that ships is still the pure Go one.
 The job exists so the binding does not rot.
 The engine is a separate repository that moves on its own, and a change to its ABI should fail in this repository's CI rather than in somebody's build.
 
-The leak tests are in that job too.
+The leak tests are in that job too, in a second pass without the race detector.
 They run twenty thousand allocate and free cycles and compare the resident set high water mark either side, because the memory at risk is the engine's and the Go allocator has never heard of it.
+That is also why they skip under `-race`: the detector keeps shadow memory for every address the program touches and grows the resident set as it goes, which is the measurement being read.
+They are Unix only for the same reason, since the portable way to read a high water mark is `getrusage` and Windows does not have one.
+Windows runs the rest of the suite, and a leak in a cross platform Rust library is not going to be one that only happens there.
