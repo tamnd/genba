@@ -295,7 +295,10 @@ func (s *shard[V]) get(key string, now time.Time) (V, bool) {
 	if !ok {
 		return zero, false
 	}
-	e := el.Value.(*entry[V])
+	e, ok := entryIn[V](el)
+	if !ok {
+		return zero, false
+	}
 	if !e.expires.IsZero() && !now.Before(e.expires) {
 		s.ll.Remove(el)
 		delete(s.items, key)
@@ -308,10 +311,11 @@ func (s *shard[V]) get(key string, now time.Time) (V, bool) {
 // put stores a value and reports whether storing it evicted another.
 func (s *shard[V]) put(key string, v V, expires time.Time) bool {
 	if el, ok := s.items[key]; ok {
-		e := el.Value.(*entry[V])
-		e.val, e.expires = v, expires
-		s.ll.MoveToFront(el)
-		return false
+		if e, ok := entryIn[V](el); ok {
+			e.val, e.expires = v, expires
+			s.ll.MoveToFront(el)
+			return false
+		}
 	}
 	s.items[key] = s.ll.PushFront(&entry[V]{key: key, val: v, expires: expires})
 	if s.ll.Len() <= s.cap {
@@ -319,9 +323,23 @@ func (s *shard[V]) put(key string, v V, expires time.Time) bool {
 	}
 	if back := s.ll.Back(); back != nil {
 		s.ll.Remove(back)
-		delete(s.items, back.Value.(*entry[V]).key)
+		if e, ok := entryIn[V](back); ok {
+			delete(s.items, e.key)
+		}
 	}
 	return true
+}
+
+// entryIn reads an entry back out of a list element.
+//
+// The list holds anything, and everything this file puts in it is an entry, so
+// the assertion is here for the compiler rather than for a case that happens.
+// It is written as a check rather than as a bare assertion so that a change
+// which put something else in the list would drop a cache entry instead of
+// taking the process down inside a read.
+func entryIn[V any](el *list.Element) (*entry[V], bool) {
+	e, ok := el.Value.(*entry[V])
+	return e, ok
 }
 
 func (s *shard[V]) remove(key string) {

@@ -448,7 +448,7 @@ func stream(t *testing.T, url string, headers map[string]string) (<-chan string,
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		cancel()
 		t.Fatalf("building the request: %v", err)
@@ -461,13 +461,19 @@ func stream(t *testing.T, url string, headers map[string]string) (<-chan string,
 		cancel()
 		t.Fatalf("opening the stream: %v", err)
 	}
-	if resp.StatusCode != http.StatusOK {
+	// Every path out of here that is not the goroutine below has to close the
+	// body itself, because the goroutine that would have closed it is never
+	// started.
+	fail := func(format string, args ...any) {
 		cancel()
-		t.Fatalf("the stream returned %d, want 200", resp.StatusCode)
+		_ = resp.Body.Close()
+		t.Fatalf(format, args...)
+	}
+	if resp.StatusCode != http.StatusOK {
+		fail("the stream returned %d, want 200", resp.StatusCode)
 	}
 	if got := resp.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/event-stream") {
-		cancel()
-		t.Fatalf("the stream is %q, want text/event-stream", got)
+		fail("the stream is %q, want text/event-stream", got)
 	}
 	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
 		t.Errorf("the stream says Cache-Control %q, want no-store", got)

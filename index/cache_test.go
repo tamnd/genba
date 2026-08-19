@@ -111,9 +111,13 @@ func (s *counting) Fetch(ctx context.Context, p *acl.Principal, ids []string) ([
 	s.fetched = append(s.fetched, ids...)
 	s.mu.Unlock()
 
+	// Held in a variable rather than reached through the embedded field on
+	// every pass, so that this stays a read of the wrapped store even if
+	// counting ever grows a Get of its own.
+	base := s.Store
 	out := make([]doc.Document, 0, len(ids))
 	for _, id := range ids {
-		d, err := s.Store.Get(ctx, p, id)
+		d, err := base.Get(ctx, p, id)
 		if err != nil {
 			continue
 		}
