@@ -14,10 +14,20 @@
 //
 // # Where the work happens
 //
-// A driver that implements [store.Retriever] is asked for the match set and
-// returns it out of an index of its own. A driver that does not is walked with
-// [store.Store.Scan] and filtered here. The ranking is the same either way, and
-// the match set is the same set, which store/storetest checks. The difference
+// A search runs in two phases. Phase one asks the driver which documents are
+// worth ranking, and gets back candidates rather than documents: an id, the
+// four strings a result row and a facet are drawn from, a date, and the token
+// counts for the query terms. Phase two ranks those in Go and then reads the
+// bodies for the page, in one statement, which is the only point at which any
+// document text is touched. A query matching a hundred thousand documents
+// therefore decodes twenty of them.
+//
+// A driver that implements [store.Ranker] makes the cut inside the same
+// statement that applies the permission rule, so the cost follows the page. One
+// that implements [store.Retriever] answers the match set out of an index of
+// its own and the cut happens here. One that implements neither is walked with
+// [store.Store.Scan] and filtered here. The ranking is the same in all three
+// cases, over the same match set, which store/storetest checks. The difference
 // is only how much of the corpus had to be touched to produce it.
 package index
 
@@ -190,7 +200,18 @@ func New(st store.Store, opts ...Option) *Searcher {
 // document. It is here so that an operator can be told which one they are
 // running on instead of having to infer it from a latency graph.
 func (s *Searcher) Retrieving() bool {
+	if _, ok := s.store.(store.Ranker); ok {
+		return true
+	}
 	_, ok := s.store.(store.Retriever)
+	return ok
+}
+
+// Ranking reports whether the store can cut to a candidate pool for itself,
+// which is the difference between a search whose cost follows the page and one
+// whose cost follows the match set.
+func (s *Searcher) Ranking() bool {
+	_, ok := s.store.(store.Ranker)
 	return ok
 }
 
@@ -208,27 +229,37 @@ func (s *Searcher) Search(ctx context.Context, p *acl.Principal, q Query) (Resul
 	limit = min(limit, MaxLimit)
 
 	req := q.Request()
-	cands, err := s.collect(ctx, p, req)
+	sel := store.Selection{Limit: CandidatePool(q.Offset, limit), Recent: q.Sort == ByRecent}
+
+	// Phase one. Which documents are worth ranking, how many matched, and what
+	// the facet counts are, all under the permission rule and none of it
+	// carrying a body.
+	found, err := s.collect(ctx, p, req, sel)
 	if err != nil {
+		return Results{}, err
+	}
+	if found.corpus, err = s.statistics(ctx, p, req.Terms, found); err != nil {
 		return Results{}, err
 	}
 
 	res := Results{
-		Total:     len(cands.docs),
-		Truncated: cands.truncated,
-		Facets:    facetsOf(cands.docs),
+		Total:     found.total,
+		Truncated: found.truncated,
+		Facets:    found.facets,
 	}
-	if len(cands.docs) == 0 {
+	if len(found.cands) == 0 {
 		res.Took = s.now().Sub(start)
 		return res, nil
 	}
 
+	// Phase two. Ranking, in Go, over the candidates and nothing else.
 	now := s.now()
-	scored := make([]Result, 0, len(cands.docs))
-	for i, d := range cands.docs {
-		score := cands.bm25(i, req.Terms)
-		score *= s.recency(d, now)
-		scored = append(scored, Result{Document: d, Score: score})
+	scored := make([]ranked, 0, len(found.cands))
+	for _, c := range found.cands {
+		scored = append(scored, ranked{
+			cand:  c,
+			score: score(c, req.Terms, found.corpus) * s.recency(c.ModifiedAt, now),
+		})
 	}
 
 	// Sort by score, then by id, so equal scores do not shuffle between runs and
@@ -236,43 +267,100 @@ func (s *Searcher) Search(ctx context.Context, p *acl.Principal, q Query) (Resul
 	switch q.Sort {
 	case ByRecent:
 		sort.SliceStable(scored, func(i, j int) bool {
-			if !scored[i].Document.ModifiedAt.Equal(scored[j].Document.ModifiedAt) {
-				return scored[i].Document.ModifiedAt.After(scored[j].Document.ModifiedAt)
+			if !scored[i].cand.ModifiedAt.Equal(scored[j].cand.ModifiedAt) {
+				return scored[i].cand.ModifiedAt.After(scored[j].cand.ModifiedAt)
 			}
-			return scored[i].Document.ID < scored[j].Document.ID
+			return scored[i].cand.ID < scored[j].cand.ID
 		})
 	default:
 		sort.SliceStable(scored, func(i, j int) bool {
-			if scored[i].Score != scored[j].Score {
-				return scored[i].Score > scored[j].Score
+			if scored[i].score != scored[j].score {
+				return scored[i].score > scored[j].score
 			}
-			return scored[i].Document.ID < scored[j].Document.ID
+			return scored[i].cand.ID < scored[j].cand.ID
 		})
 	}
 
-	res.Hits = page(scored, q.Offset, limit)
-
 	// Bodies and snippets are for the page and not for the match set. On a broad
 	// query that is the difference between reading twenty documents and reading
-	// a hundred thousand, and it is why collect drops the bodies it walked past.
-	for i := range res.Hits {
-		full, err := s.store.Get(ctx, p, res.Hits[i].Document.ID)
-		if err != nil {
-			// The document went away or stopped being readable between the walk
-			// and now. Serving the metadata we already ranked without a snippet
-			// is better than failing a whole page over one stale row, and the
-			// permission check has not been skipped: Get applied it too.
-			continue
+	// a hundred thousand, and it is why phase one never asks for a body.
+	window := page(scored, q.Offset, limit)
+	bodies, err := s.fetch(ctx, p, window)
+	if err != nil {
+		return Results{}, err
+	}
+	res.Hits = make([]Result, 0, len(window))
+	for _, r := range window {
+		hit := Result{Document: outline(r.cand), Score: r.score}
+		if full, ok := bodies[r.cand.ID]; ok {
+			hit.Document = full
+			hit.Snippet, hit.Passages = snippet(readable(full), req.Terms)
 		}
-		res.Hits[i].Document = full
-		res.Hits[i].Snippet, res.Hits[i].Passages = snippet(readable(full), req.Terms)
+		res.Hits = append(res.Hits, hit)
 	}
 	res.Took = s.now().Sub(start)
 	return res, nil
 }
 
+// ranked is a candidate and what it scored.
+type ranked struct {
+	cand  store.Candidate
+	score float64
+}
+
+// fetch reads the documents behind one page.
+//
+// A driver that can do it in one statement is asked to. One that cannot is
+// asked document by document, which is the old behaviour and is correct, just
+// twenty round trips instead of one. Either way an id that has stopped being
+// readable between the ranking and now is simply missing from the result, and
+// the caller falls back to the metadata it already ranked rather than failing
+// the page.
+func (s *Searcher) fetch(ctx context.Context, p *acl.Principal, window []ranked) (map[string]doc.Document, error) {
+	out := make(map[string]doc.Document, len(window))
+	if len(window) == 0 {
+		return out, nil
+	}
+	ids := make([]string, 0, len(window))
+	for _, r := range window {
+		ids = append(ids, r.cand.ID)
+	}
+
+	if f, ok := s.store.(store.Fetcher); ok {
+		docs, err := f.Fetch(ctx, p, ids)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range docs {
+			out[d.ID] = d
+		}
+		return out, nil
+	}
+	for _, id := range ids {
+		d, err := s.store.Get(ctx, p, id)
+		if err != nil {
+			continue
+		}
+		out[id] = d
+	}
+	return out, nil
+}
+
+// outline is the document a result falls back to when the fetch could not read
+// it: everything the ranking already knew, and no body.
+func outline(c store.Candidate) doc.Document {
+	return doc.Document{
+		ID:         c.ID,
+		Source:     c.Source,
+		Kind:       c.Kind,
+		Container:  c.Container,
+		Author:     doc.Person{Name: c.Author},
+		ModifiedAt: c.ModifiedAt,
+	}
+}
+
 // page slices a sorted result set, tolerating an offset past the end.
-func page(all []Result, offset, limit int) []Result {
+func page(all []ranked, offset, limit int) []ranked {
 	if offset < 0 || offset >= len(all) {
 		return nil
 	}
@@ -282,74 +370,17 @@ func page(all []Result, offset, limit int) []Result {
 // recency is a multiplier in (0, 1]. A document modified now scores at full
 // weight and one older than several half lives keeps a floor, because an old
 // document that is a perfect lexical match is still the right answer.
-func (s *Searcher) recency(d doc.Document, now time.Time) float64 {
-	if s.halfLife <= 0 || d.ModifiedAt.IsZero() {
+func (s *Searcher) recency(modified, now time.Time) float64 {
+	if s.halfLife <= 0 || modified.IsZero() {
 		return 1
 	}
-	age := now.Sub(d.ModifiedAt)
+	age := now.Sub(modified)
 	if age <= 0 {
 		return 1
 	}
 	const floor = 0.5
 	decay := math.Exp2(-age.Hours() / s.halfLife.Hours())
 	return floor + (1-floor)*decay
-}
-
-func facetsOf(docs []doc.Document) map[string][]Facet {
-	bySource := map[string]int{}
-	byKind := map[string]int{}
-	byContainer := map[string]int{}
-	byAuthor := map[string]int{}
-	for _, d := range docs {
-		bySource[d.Source]++
-		byKind[string(d.Kind)]++
-		byContainer[d.Container]++
-		byAuthor[displayName(d.Author)]++
-	}
-	return map[string][]Facet{
-		"source":    sortedFacets(bySource),
-		"kind":      sortedFacets(byKind),
-		"container": sortedFacets(byContainer),
-		"author":    sortedFacets(byAuthor),
-	}
-}
-
-// displayName is what a person facet is labelled with, which is the most
-// specific thing the connector managed to resolve.
-func displayName(p doc.Person) string {
-	switch {
-	case p.Name != "":
-		return p.Name
-	case p.Email != "":
-		return p.Email
-	default:
-		return p.Identity.Value
-	}
-}
-
-// MaxFacetValues caps how many values one facet reports. A facet with ten
-// thousand values is not a filter, it is a scroll bar, and counting them all
-// into a response costs more than the sidebar it feeds is worth.
-const MaxFacetValues = 50
-
-func sortedFacets(counts map[string]int) []Facet {
-	out := make([]Facet, 0, len(counts))
-	for v, n := range counts {
-		if v == "" {
-			continue
-		}
-		out = append(out, Facet{Value: v, Count: n})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Count != out[j].Count {
-			return out[i].Count > out[j].Count
-		}
-		return out[i].Value < out[j].Value
-	})
-	if len(out) > MaxFacetValues {
-		out = out[:MaxFacetValues]
-	}
-	return out
 }
 
 // SnippetWidth is roughly how many characters of body a snippet shows.

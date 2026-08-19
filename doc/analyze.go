@@ -98,3 +98,64 @@ func (d Document) Terms() []string {
 	terms = append(terms, body...)
 	return terms
 }
+
+// TermCount is how often one term occurs in a document, by field.
+type TermCount struct{ Title, Body int }
+
+// Analysis is everything a ranker needs to know about one document, computed
+// once from its text.
+//
+// It exists because the alternative is computing it at query time, which means
+// running the analyzer over every document in the match set on every search.
+// That is the single thing that made search cost a second on a five thousand
+// document corpus: the numbers here are small, they never change unless the
+// document does, and a store that keeps them turns a scan of the corpus into a
+// lookup of a few hundred rows.
+type Analysis struct {
+	// TitleTokens and BodyTokens are token counts, not distinct terms. BM25
+	// normalises by document length and length is a count of tokens.
+	TitleTokens int
+	BodyTokens  int
+
+	// Terms is the per term occurrence count, by field.
+	Terms map[string]TermCount
+}
+
+// Analyze returns the document's statistics in one pass over its text.
+func (d Document) Analyze() Analysis {
+	title, body := Tokenize(d.Title), Tokenize(d.Body)
+	a := Analysis{
+		TitleTokens: len(title),
+		BodyTokens:  len(body),
+		Terms:       make(map[string]TermCount, len(title)+len(body)),
+	}
+	for _, t := range title {
+		c := a.Terms[t]
+		c.Title++
+		a.Terms[t] = c
+	}
+	for _, t := range body {
+		c := a.Terms[t]
+		c.Body++
+		a.Terms[t] = c
+	}
+	return a
+}
+
+// Display is what a person is labelled with in a facet or a result row, which
+// is the most specific thing the connector managed to resolve.
+//
+// It is here rather than in whichever package happened to need it first because
+// a storage driver stores this string in a column and the ranking counts facets
+// over it. Two definitions of a person's display name is two facet lists that
+// disagree about who wrote what.
+func (p Person) Display() string {
+	switch {
+	case p.Name != "":
+		return p.Name
+	case p.Email != "":
+		return p.Email
+	default:
+		return p.Identity.Value
+	}
+}

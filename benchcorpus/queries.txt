@@ -1,0 +1,1003 @@
+# 1000 benchmark queries, seed 2121, class distribution from the budgets.
+# Regenerated with: go run ./internal/benchcorpus/gen -queries internal/benchcorpus/queries.txt
+# Regenerating this file invalidates every recorded baseline.
+term-filter	pervelro source:notion
+common	ronixba
+term-filter	sarfalro source:notion
+rare	casmisared
+multi	lummika dorralro raltorten raltenten
+filter	source:github kind:email
+pathological	bababa
+multi	sarqueka tordorten lumgonro ralrodor
+term-filter	tritenka source:github
+multi	gondorro lumroten dorvexro
+common	nixtenba
+term-filter	casroka source:gdrive
+common	falfalba
+pathological	bababa
+common	baroba
+filter	source:confluence kind:code
+filter	source:jira kind:person
+common	vexkaba
+multi	falithba bamidor lumlumfal
+multi	zalbaten ithvexba
+multi	kafalten bamifal zalgonba
+common	ralkaba
+term-filter	sennixka source:github
+term-filter	dornixro source:jira
+common	minixba
+multi	roveldor faltenka
+common	quetenba
+multi	triralmi miithmi trikaten velperro
+multi	velroba sarvelten zalkafal
+filter	source:confluence kind:email
+filter	source:confluence kind:person
+multi	pervelba sartriro
+common	dorroba
+common	badorba
+common	tormiba
+filter	source:confluence kind:file
+term-filter	zalfalro source:jira
+multi	dorroro gonvexro
+multi	lumraldor faltendor
+term-filter	nixkaba source:gdrive
+multi	sarralro wyndordor kaperten bawynro
+common	dorfalba
+term-filter	rotriba source:notion
+term-filter	torvelka source:notion
+filter	source:confluence kind:page
+filter	source:slack kind:page
+term-filter	tenroba source:slack
+common	quefalba
+common	wyntenba
+rare	zzqx632
+common	vextenba
+term-filter	quesenba source:github
+term-filter	sarnixro source:notion
+common	vexfalba
+pathological	bababa
+common	lumroba
+common	torkaba
+filter	source:slack kind:calendar
+term-filter	rolumka source:notion
+multi	senithka morgonten velperfal
+filter	source:confluence kind:ticket
+common	badorba
+common	nixkaba
+common	sarfalba
+term-filter	romika source:jira
+common	falfalba
+common	velqueba
+term-filter	kamorka source:confluence
+multi	sartenfal vexzaldor ithroro perbaten
+common	vexfalba
+common	tortenba
+multi	senvelka nixroka zalralfal zalsarba
+filter	source:slack kind:page
+common	senqueba
+filter	source:confluence kind:email
+filter	source:jira kind:file
+common	morroba
+multi	ralcasten rogonmi mornixfal tenquero
+common	caskaba
+multi	migonro gonfaldor tenfalten wyndorfal
+filter	source:github kind:calendar
+multi	lumtenka mitorfal
+common	dordorba
+multi	roralro dorwynten quesendor morsarba
+common	falroba
+multi	ralsarmi tenvelka karomi
+rare	zzqx103
+multi	gonquefal katorro
+common	miroba
+multi	gonzalro senrodor gonbafal falralten
+term-filter	dorfalka source:jira
+common	vextenba
+multi	wynzalro zaltordor romorka
+common	bafalba
+multi	lumromi ralquero nixlumdor
+common	vexroba
+multi	senwynmi wynsenmi wyntriba
+term-filter	rovelba source:gdrive
+multi	tentenmi kagonten senpermi dorithdor
+common	senmiba
+term-filter	casnixka source:jira
+common	morroba
+multi	tenmiro bafalfal
+term-filter	roralka source:confluence
+term-filter	dorlumba source:slack
+multi	morperten ithbaka nixnixka
+multi	roraldor falcasdor tenmordor
+filter	source:github kind:calendar
+common	banixba
+common	lumqueba
+multi	vexvexfal morvelba gongonten kaithfal
+term-filter	falgonba source:jira
+common	minixba
+common	ithroba
+common	gontenba
+common	tenkaba
+filter	source:notion kind:person
+multi	perwynmi sarroro sartriro wyntorten
+multi	gontenten sargonba lumperten
+term-filter	ralsenba source:github
+multi	velquemi queralro sententen
+multi	kadorten nixperten goncasba
+multi	falralro migondor lumsarro
+common	gonkaba
+multi	ralgonka basardor vexdordor
+common	lumqueba
+common	mikaba
+term-filter	ralroro source:notion
+multi	rotenba tormorba
+filter	source:jira kind:person
+common	baroba
+common	senfalba
+multi	senqueka morzalba
+pathological	bababa
+multi	mitordor ithkami trivexfal percasba
+multi	perfalten gonithfal velbaro
+common	kamiba
+multi	nixvelten zaltriten dorbaka caszaldor
+multi	caslumka mivelka
+common	casroba
+multi	perkaka lumvexmi zalrodor
+multi	zalsenten wynwynba
+multi	vexmika vexvexmi
+common	lumfalba
+common	triroba
+multi	raltorfal morperten nixralba
+filter	source:slack kind:calendar
+term-filter	torwynka source:notion
+multi	misarka senithdor batorro katorka
+term-filter	tensarmi source:gdrive
+filter	source:slack kind:file
+common	casqueba
+filter	source:slack kind:message
+term-filter	torzalba source:notion
+common	falnixba
+common	sarqueba
+multi	velquero lumithka velfalka sarzalba
+term-filter	casfalka source:notion
+common	roqueba
+common	casroba
+common	mordorba
+multi	rallumfal caslumten
+term-filter	vexsarka source:notion
+multi	casvexmi basarmi
+common	morkaba
+common	zalmiba
+filter	source:gdrive kind:code
+multi	ralnixro faltenfal
+multi	ralzalten nixquedor
+rare	lumsarpered
+multi	lumqueka bavexdor
+multi	sarzalmi ithmidor
+multi	senlumten dorsardor torralmi
+common	minixba
+common	torroba
+multi	nixvelro ronixmi
+multi	rotenten dormimi ralvexba
+term-filter	dorlumro source:slack
+term-filter	nixcasro source:jira
+filter	source:gdrive kind:email
+filter	source:confluence kind:calendar
+filter	source:gdrive kind:person
+multi	persenten lumfalfal
+multi	perqueba pernixdor nixdorba lumbaten
+term-filter	veltrika source:gdrive
+multi	tridordor kacasfal percasdor
+multi	velfalmi ralveldor tenkaro
+term-filter	vexralba source:notion
+multi	lumwynten sartriten tordorro
+common	perroba
+multi	lummimi lummorba
+filter	source:confluence kind:ticket
+term-filter	morroka source:notion
+multi	torroten morgonro
+multi	robami ithsarfal vexmorro sartenmi
+filter	source:notion kind:page
+term-filter	quevexro source:slack
+multi	nixlumro tortorka rotenfal
+multi	midordor migonfal gonperten
+filter	source:github kind:ticket
+filter	source:jira kind:file
+common	morfalba
+multi	vexvexmi falmormi dordordor
+term-filter	falfalba source:jira
+multi	senmiba trisenmi
+multi	quewynka tentorka
+common	ralfalba
+common	senroba
+multi	rotormi casraldor
+common	gonmiba
+common	ralmiba
+multi	kaveldor tencasmi queroka rosarmi
+multi	lumvelba mortrifal katenmi casmiro
+multi	tennixro quenixdor
+term-filter	nixroro source:slack
+common	perroba
+multi	ralralba sensenten kaquemi
+multi	miralro veltorten
+rare	zalsarnixed
+multi	gonwynro katorka mitorba
+common	roroba
+term-filter	senbaka source:confluence
+term-filter	caswynka source:notion
+common	quequeba
+filter	source:confluence kind:file
+term-filter	lumfalmi source:gdrive
+common	nixdorba
+multi	casquedor veltrimi vexnixka velzalten
+multi	tridorfal nixtridor perralfal ralithdor
+multi	cascasmi sarmiro
+term-filter	nixtenka source:notion
+multi	zalithba tenralro
+multi	gonrofal quezalfal
+term-filter	micaska source:notion
+common	zalkaba
+rare	sarquemied
+multi	sarzalba ithsarro
+common	zalqueba
+multi	gonbami dorgonba rotrifal
+term-filter	trivelba source:github
+multi	zalmiro minixdor morsenro gonwynfal
+multi	percasten nixlumka zaldorten
+filter	source:confluence kind:email
+term-filter	vexnixba source:github
+common	morqueba
+common	vextenba
+rare	ithcasdorer
+common	wynbaba
+term-filter	mitenmi source:notion
+multi	mormorten tricasmi ithralka velwyndor
+term-filter	zalqueba source:confluence
+common	quedorba
+common	triroba
+term-filter	sardorba source:jira
+common	mormiba
+filter	source:jira kind:code
+common	batenba
+term-filter	faltenmi source:gdrive
+rare	bamilumed
+term-filter	bacasba source:confluence
+common	zalfalba
+term-filter	zalralba source:confluence
+multi	casnixfal rotorka midorba
+filter	source:jira kind:person
+filter	source:jira kind:page
+multi	ithsenfal quetriba kaithfal torlumba
+term-filter	baqueka source:github
+multi	rosarten ithmika vexwynmi
+pathological	bababa
+common	zalbaba
+common	quemiba
+filter	source:notion kind:message
+filter	source:jira kind:email
+filter	source:github kind:file
+common	morroba
+common	sartenba
+multi	ithgonro tendorro
+term-filter	tenroba source:notion
+multi	gonfalka velmiro wynmika
+common	dornixba
+common	dormiba
+term-filter	roperba source:notion
+common	falfalba
+term-filter	dormorba source:gdrive
+rare	sarraldorer
+common	trifalba
+term-filter	sartorro source:confluence
+multi	ralkador lumtridor migonmi
+multi	rocasten raltrimi falsenfal baroka
+multi	falmorka falromi
+term-filter	quegonro source:jira
+multi	perzalmi nixralmi tenlumba
+common	wyntenba
+common	miqueba
+multi	tritorka velnixro
+multi	perqueka mitenfal
+term-filter	sentorba source:github
+common	ithkaba
+multi	vexrofal ithvelfal bacasten triithfal
+multi	zalkaka casgonro
+common	sarkaba
+common	permiba
+common	karoba
+term-filter	nixwynba source:github
+common	bakaba
+common	gonqueba
+multi	lumnixro kabaro wyntrika tribami
+term-filter	wyntenba source:jira
+filter	source:gdrive kind:calendar
+common	dormiba
+multi	sarmiro trisenro karalro
+common	vexdorba
+term-filter	bagonmi source:jira
+multi	morveldor bamiba ronixka raltorfal
+multi	tritriten nixbaka
+common	triqueba
+multi	tricaska nixgonka tenralten gonfalmi
+term-filter	castorro source:slack
+filter	source:jira kind:calendar
+common	mimiba
+common	bafalba
+filter	source:notion kind:ticket
+filter	source:jira kind:message
+common	zalroba
+common	casdorba
+multi	morzaldor miroka ralralka bacasmi
+common	dorkaba
+filter	source:notion kind:code
+common	gonkaba
+common	ithdorba
+multi	ralfaldor tenzalba pervelba wynbaka
+multi	rovelfal casmorfal
+common	dorkaba
+multi	ralkador raldordor
+rare	caszalmier
+multi	wynwynro trimiba veltenten
+common	senroba
+multi	tendorka morzalten tortenfal mivexten
+term-filter	zalbami source:slack
+common	casfalba
+common	nixkaba
+multi	sarmiro wyntendor
+common	wynkaba
+filter	source:slack kind:person
+multi	casgonten nixtriba
+common	vexqueba
+filter	source:slack kind:message
+filter	source:gdrive kind:code
+common	sarfalba
+multi	quesenba trigonka lumraldor
+multi	torgonba tenwynro ithquemi
+multi	nixmidor tribaten tortenten mitormi
+multi	gonsarfal nixtenmi sentriba dorbador
+multi	queromi casdorfal morzalmi
+common	tendorba
+term-filter	ralfalmi source:confluence
+rare	zzqx311
+multi	velvexten rogondor
+common	baqueba
+multi	tritenmi sarmiro zaltrifal kazalfal
+filter	source:jira kind:person
+common	perqueba
+term-filter	gonithro source:github
+term-filter	falbaka source:github
+multi	queperdor fallumba zallumdor
+common	vexbaba
+filter	source:notion kind:code
+multi	karomi caswynba
+common	gonqueba
+multi	perbador wynnixdor micasten wynroba
+multi	vexgonba zaldorfal
+multi	rodordor nixmorba nixfalba
+common	dornixba
+common	badorba
+multi	dorwynmi perlumten
+common	permiba
+term-filter	nixgonba source:github
+multi	ithralka rallumba
+term-filter	lumvelro source:notion
+filter	source:notion kind:calendar
+term-filter	trinixka source:jira
+multi	morperten vexpermi
+multi	vexgonten zalmidor senzalmi
+multi	sensarmi torgonro
+multi	perrofal velbami mortorten miralba
+common	triqueba
+multi	sartenka falralka
+term-filter	ralsarka source:jira
+common	ithroba
+rare	mirosened
+common	mimiba
+common	badorba
+filter	source:gdrive kind:file
+common	dorqueba
+multi	senvexfal lummiten falralfal
+multi	nixwynmi mimifal rogonfal casqueka
+common	quedorba
+common	dorroba
+multi	gonperro perkaka wyndorfal
+term-filter	torgonro source:notion
+common	rodorba
+multi	zalnixten nixsenten quegonba vexmorfal
+filter	source:slack kind:email
+common	dormiba
+multi	nixvelka falveldor nixralro tenmiro
+common	wynroba
+common	velfalba
+multi	sendorten nixralfal katorka
+multi	pernixdor dorcasdor wynvexba
+term-filter	lumralka source:github
+filter	source:confluence kind:message
+common	falkaba
+term-filter	velnixka source:jira
+filter	source:notion kind:calendar
+common	zalroba
+multi	miralro nixithten
+term-filter	veltenka source:notion
+common	casdorba
+filter	source:gdrive kind:person
+term-filter	kadorka source:gdrive
+multi	wynqueka baquemi
+common	ithqueba
+multi	ralithdor lumkaka falwynba
+term-filter	nixtrimi source:github
+multi	triithten nixkaba perralba kasarfal
+filter	source:notion kind:email
+term-filter	morroba source:confluence
+term-filter	rosarba source:notion
+common	mimiba
+multi	quefalba morsenten ralzalka
+multi	ralperfal dorwynten falgonka
+term-filter	falralro source:github
+common	gonmiba
+multi	tritenten quenixka wyntorba
+common	vexkaba
+multi	casvexmi mibami
+common	ithfalba
+filter	source:notion kind:calendar
+common	kakaba
+term-filter	senzalba source:notion
+filter	source:jira kind:ticket
+multi	mirodor casbami nixsarka
+common	nixkaba
+multi	ithmorka sarroro tenvelba
+common	sarmiba
+multi	mormimi sarsardor morsenfal
+filter	source:notion kind:page
+filter	source:github kind:ticket
+filter	source:jira kind:code
+multi	velgonmi morsardor wyntenfal
+multi	faldorfal ralquedor wynsarmi
+common	nixqueba
+common	banixba
+filter	source:jira kind:code
+multi	senfalfal velkaka ralzalro mitenro
+multi	tortorfal mivelten quetenro dorvelro
+multi	triquefal lumvexfal gonzalten quenixro
+common	banixba
+common	vexkaba
+term-filter	veltriro source:notion
+multi	raltorba sentenka casgonmi gontrika
+common	nixkaba
+common	tordorba
+multi	veltrika trikaba wynroka
+rare	zalzalzaling
+multi	tormifal ithsenka balumfal
+multi	tormorba ithcasdor morcasdor
+filter	source:notion kind:ticket
+common	bamiba
+filter	source:notion kind:person
+common	nixfalba
+multi	wynithka quefalfal
+filter	source:slack kind:code
+common	baroba
+multi	casvelka velcasro
+filter	source:confluence kind:ticket
+multi	ithgondor percasten zalralba sensardor
+term-filter	tenithka source:notion
+term-filter	pernixmi source:jira
+pathological	bababa
+filter	source:notion kind:code
+common	ithqueba
+filter	source:jira kind:file
+filter	source:github kind:page
+common	dorfalba
+multi	lumralba tensardor
+common	perfalba
+rare	pertorkaer
+term-filter	mormiba source:gdrive
+multi	wynfaldor sarlumfal
+filter	source:github kind:email
+multi	ithmidor senithten morlumba casmidor
+common	rodorba
+filter	source:slack kind:page
+common	velroba
+filter	source:confluence kind:calendar
+multi	morbador kafalten gonpermi
+filter	source:confluence kind:calendar
+multi	caswynmi wynmordor
+term-filter	senithka source:slack
+multi	quequero wynmifal
+multi	casdormi ithdorka
+rare	zzqx643
+common	lumroba
+multi	bagonmi torwynten lummordor quemiba
+multi	zalbafal bavelro casbami ithmika
+pathological	x
+common	ralkaba
+common	miroba
+multi	quetenka lumithba tenlumdor
+common	kanixba
+multi	baithmi ralqueba bamorfal
+common	nixtenba
+term-filter	senvexro source:gdrive
+term-filter	katenba source:jira
+common	vexfalba
+term-filter	pertenka source:slack
+filter	source:gdrive kind:calendar
+multi	wynnixfal wyngonmi basenba
+multi	tensenba dorvexba
+multi	goncasdor mornixba gonsenba trisarten
+multi	torrodor lumtorten
+common	vexfalba
+filter	source:notion kind:code
+common	dornixba
+multi	senmiten sarralba
+common	dorfalba
+filter	source:notion kind:email
+multi	baralba mirodor velnixfal perralfal
+multi	quezaldor gonfaldor
+common	baroba
+multi	quebami nixithfal
+common	trifalba
+filter	source:github kind:person
+multi	vexperdor kakaro
+multi	kasarka kazalka gonzalro
+common	ithdorba
+multi	morgonten senperka torqueba
+common	triqueba
+filter	source:gdrive kind:page
+term-filter	mibaka source:notion
+multi	wynqueba morquemi mordormi
+term-filter	lumzalro source:github
+rare	mivellumed
+rare	perpertener
+multi	perfalba banixro
+term-filter	sarithka source:slack
+multi	lumnixba quetenten tenperdor
+multi	velromi tribaro
+term-filter	falwynro source:jira
+multi	dorquemi vextenro
+common	banixba
+rare	karoroed
+common	tennixba
+term-filter	vexvelka source:gdrive
+common	tormiba
+common	bamiba
+multi	nixlumka vexbaten zalbafal lumtenten
+filter	source:confluence kind:person
+common	faldorba
+filter	source:github kind:message
+filter	source:confluence kind:code
+term-filter	castenro source:jira
+multi	wynwyndor vexzalfal
+common	casroba
+multi	mimifal morcasmi rovexka gontordor
+term-filter	senmorba source:gdrive
+multi	sarmorba lumroro mifalba
+common	baqueba
+multi	kavelba velithfal
+filter	source:notion kind:message
+term-filter	vextenmi source:github
+multi	triithten roveldor castordor lumnixba
+multi	bavexfal misarka romidor
+term-filter	nixroka source:jira
+filter	source:gdrive kind:file
+multi	sargonmi wynwynmi
+common	senmiba
+filter	source:confluence kind:ticket
+filter	source:gdrive kind:file
+filter	source:gdrive kind:person
+common	vexkaba
+multi	dorgonmi mimiro
+multi	ithtenten misenmi falithro
+common	dormiba
+common	tenkaba
+multi	tortenro kazalba sentorfal quenixfal
+multi	tenbaka casnixfal
+common	zaldorba
+filter	source:jira kind:code
+filter	source:jira kind:file
+multi	zalsarten torvexfal milumba mortenmi
+multi	tenbaro rocasdor ithsarro
+common	veltenba
+common	falroba
+common	morfalba
+multi	velbami nixcasro wynkaka
+common	ithkaba
+common	sarroba
+multi	tennixmi ithbafal
+common	trikaba
+common	roqueba
+multi	mormimi nixsardor
+term-filter	caslumro source:github
+filter	source:gdrive kind:code
+rare	pergonsared
+common	ithqueba
+rare	sarsenithed
+common	rokaba
+multi	pervelro quesarfal pertorro
+filter	source:gdrive kind:page
+common	rotenba
+rare	nixtribaer
+term-filter	bamorro source:slack
+filter	source:confluence kind:page
+multi	falithka falgonro ithkafal queralfal
+multi	torkami ralperten
+multi	mitriro casvexka
+term-filter	velsarmi source:gdrive
+common	tenroba
+multi	sargonro misardor falvelmi
+common	senmiba
+common	senfalba
+term-filter	torvexba source:confluence
+multi	kanixmi castorten
+filter	source:notion kind:email
+common	wynmiba
+filter	source:jira kind:page
+term-filter	gondorka source:notion
+common	nixdorba
+filter	source:gdrive kind:message
+multi	dorsarka falgonka gonithten
+term-filter	kamika source:notion
+multi	mormiba quebador dorcasro
+multi	tendorka zalfalro barofal rogonro
+rare	vexmormier
+multi	misendor kafalro senralfal
+multi	tormordor trikaba mortormi
+multi	miralfal nixveldor gonzalfal nixithro
+multi	torvexro rolummi
+filter	source:slack kind:calendar
+term-filter	misenro source:confluence
+multi	ralnixba raldordor gontorten
+filter	source:confluence kind:code
+filter	source:github kind:ticket
+filter	source:jira kind:code
+rare	velgonlumed
+multi	tencasdor velfalmi
+multi	perwynka triperka castriten cascasfal
+common	lumkaba
+multi	wynbami mitenba
+common	falroba
+multi	mortrika dormiba casithba morveldor
+multi	ralmormi vexgonka
+multi	babador morgonka sartormi sengonmi
+common	falroba
+multi	gonithmi tenlumdor gontenmi ithvelka
+filter	source:jira kind:calendar
+multi	ralsarka dortenten nixkaba
+filter	source:notion kind:code
+term-filter	ralperka source:slack
+common	veldorba
+rare	vexithvexed
+common	vexdorba
+filter	source:gdrive kind:ticket
+common	romiba
+multi	falgonba veltorka rosarro
+filter	source:jira kind:ticket
+common	perdorba
+rare	nixvelcased
+multi	tortenba velmormi sensarfal rozalfal
+common	sarkaba
+multi	wyngonro perdorten miithka
+multi	tenlumro kakaten lumgondor gonbaten
+common	wynkaba
+multi	tribami nixralro lumpermi
+multi	gontorba velqueka ralmorfal
+common	romiba
+multi	casvexka rotorten pertorba
+multi	torroka sarithro falbafal queithten
+common	velqueba
+common	veldorba
+common	perqueba
+multi	gonperten velbaro kagonro tentrika
+rare	kamormied
+common	tritenba
+filter	source:jira kind:person
+common	senkaba
+multi	sarvexba baraldor
+common	dorqueba
+multi	bazalka mormormi
+common	dornixba
+multi	quequefal torgonba sentorba pernixba
+term-filter	zalperba source:gdrive
+multi	tengondor mornixten sencasdor morfalka
+multi	torithka mikaro velgonka
+common	morkaba
+pathological	bababa
+common	rofalba
+rare	zzqx986
+multi	mormimi nixmifal
+multi	morsarmi morzalten ralnixba
+common	mikaba
+common	nixfalba
+common	banixba
+term-filter	tensenro source:gdrive
+multi	trivelfal lumvexmi quesarmi mortenka
+multi	mordordor vexmifal trinixten
+filter	source:confluence kind:page
+term-filter	zalmiro source:slack
+multi	percasmi perfalba wynralba quesenba
+term-filter	morlumba source:slack
+multi	morsenro baveldor morithmi tenzalfal
+common	nixqueba
+multi	castorfal faltenten rowynka
+multi	midorro rotrifal sarvexro castorka
+term-filter	torquemi source:gdrive
+rare	velvelwyning
+common	vextenba
+multi	nixperfal tennixmi sennixdor tenrofal
+common	casroba
+filter	source:gdrive kind:person
+multi	queithdor bawynro dordordor quezalfal
+filter	source:jira kind:calendar
+multi	micasba senzalka
+filter	source:jira kind:file
+multi	lumwynmi goncasro dormidor zaldorba
+multi	trilumten trisarmi ralmormi
+term-filter	roquemi source:jira
+term-filter	wynsarka source:slack
+term-filter	lumithba source:jira
+filter	source:confluence kind:code
+term-filter	wynnixmi source:confluence
+multi	ithlumka tenralka sardorro torzalba
+common	vexmiba
+common	falfalba
+common	nixkaba
+common	morqueba
+common	perfalba
+multi	falperka senroten zalithfal perperro
+multi	mimorfal rosarka
+term-filter	wynqueka source:gdrive
+multi	nixvelro trivelten ithmiro sartrifal
+common	zaldorba
+multi	pervexten rosenfal
+common	gondorba
+filter	source:gdrive kind:person
+common	banixba
+common	quedorba
+term-filter	tenkaka source:confluence
+filter	source:slack kind:message
+common	triqueba
+multi	kasarfal kamimi sartrika
+common	ronixba
+multi	triithro tritrifal quesarka trizalfal
+common	minixba
+common	lumroba
+multi	faltenro gonmorfal
+filter	source:notion kind:message
+term-filter	falnixka source:jira
+common	nixmiba
+common	wyndorba
+common	tendorba
+common	faltenba
+multi	zalnixdor karoro kavexdor
+common	zalfalba
+filter	source:jira kind:file
+multi	gonlummi rorodor
+multi	quecasba ithveldor torsenka nixvexka
+multi	zalsarmi permordor bamiro zalgonba
+multi	rovexmi dortriba bavexfal cassarka
+term-filter	minixmi source:confluence
+common	vexmiba
+common	lumdorba
+multi	rofalka morcasten lumvexro
+multi	nixsarten falmorro kadorten tormiten
+multi	bafalro midordor
+filter	source:jira kind:page
+common	dorroba
+rare	falfaldored
+multi	kavexro trisarba ithroba senzalten
+common	badorba
+filter	source:slack kind:code
+filter	source:slack kind:code
+term-filter	veltrimi source:notion
+multi	miithdor quemorten
+common	zalfalba
+rare	dorithdored
+multi	bazalba perbaten
+filter	source:gdrive kind:message
+common	zaldorba
+multi	rolumro ralquefal
+filter	source:slack kind:message
+common	nixfalba
+multi	casmiro pertridor zalmiba
+common	morqueba
+multi	kafalmi sarroro
+term-filter	quesenro source:slack
+multi	kawynmi pervelka
+multi	wynlumten mortordor nixzalba
+multi	kaquedor trinixmi lumdorba
+term-filter	dortenka source:github
+multi	trivexdor senvelten gontenka tentridor
+filter	source:notion kind:page
+multi	trimormi babador
+multi	faltenro ralzalba morithro ithbador
+common	faltenba
+common	ralmiba
+common	casroba
+term-filter	batorba source:gdrive
+common	miroba
+filter	source:slack kind:person
+term-filter	kavexro source:gdrive
+term-filter	mikaro source:slack
+common	gonqueba
+common	lumqueba
+filter	source:jira kind:email
+filter	source:jira kind:message
+term-filter	raltenba source:gdrive
+common	bamiba
+multi	tenlummi gondorba bagonmi dorfalfal
+pathological	bababa
+multi	torralten mitorba velzalfal
+multi	ithithten falquero mimidor
+multi	bamimi tenmiro sengonro
+filter	source:jira kind:person
+common	dordorba
+multi	mitenka lumtenten vextorba
+filter	source:slack kind:email
+filter	source:confluence kind:code
+common	sarqueba
+term-filter	senlumka source:confluence
+common	wynqueba
+common	faltenba
+term-filter	torralro source:github
+common	karoba
+rare	zzqx697
+filter	source:github kind:page
+filter	source:gdrive kind:calendar
+common	midorba
+multi	romorfal quecasfal katrika
+common	wyntenba
+multi	senroro kaithdor
+multi	perbafal gonsarro wynlumten
+multi	ithnixro sartorfal zaldorba balumten
+common	rokaba
+term-filter	senbami source:confluence
+term-filter	casralba source:confluence
+term-filter	gonkaro source:confluence
+filter	source:jira kind:email
+common	gonroba
+multi	rodorba vexlumka cascasfal gonithro
+multi	ithsenka ralsarfal
+term-filter	baralro source:confluence
+filter	source:notion kind:code
+common	nixroba
+term-filter	trizalro source:slack
+multi	dorroka tenrodor
+pathological	bababa
+multi	dorithmi rosenmi falmiro nixfalro
+common	vextenba
+rare	tenfalqueer
+common	perqueba
+filter	source:gdrive kind:person
+common	banixba
+multi	zalbafal tenithfal mitordor
+multi	vextenba wynmorten raltenmi lumtorten
+multi	perralro dorkafal
+common	wynroba
+rare	zzqx797
+filter	source:confluence kind:email
+term-filter	mitorba source:gdrive
+term-filter	casroro source:notion
+term-filter	velbami source:confluence
+common	senmiba
+filter	source:confluence kind:email
+common	kaqueba
+common	kakaba
+common	casfalba
+filter	source:gdrive kind:code
+multi	vexmiro velzalba torperro caslumka
+common	zaltenba
+multi	morzalka dorroba sendorba dortridor
+rare	zzqx326
+filter	source:confluence kind:ticket
+filter	source:notion kind:message
+common	nixqueba
+filter	source:confluence kind:page
+filter	source:github kind:person
+multi	lumfalmi ithtenten
+rare	falperdored
+common	karoba
+filter	source:notion kind:file
+multi	ithqueten ralfaldor
+rare	zzqx897
+multi	ithwynba vexmimi vexperfal
+common	dortenba
+multi	katrifal faltriten basenmi
+multi	gonvelba ithtriro morsenro
+term-filter	tribaro source:slack
+filter	source:slack kind:email
+filter	source:notion kind:file
+multi	lumbaten dorlumba zalkador
+common	quemiba
+multi	quebafal vexquefal
+multi	nixkafal falbador dorithdor tentridor
+common	sartenba
+common	nixqueba
+filter	source:notion kind:email
+multi	ralzalfal misenro ithdormi ithralka
+common	tenqueba
+multi	ithfalmi wynzalba morqueka sarvexro
+term-filter	velralro source:github
+multi	tenralmi mitriba mortriro
+multi	tricasmi bamiten rokaka raltenba
+filter	source:confluence kind:person
+filter	source:confluence kind:file
+filter	source:gdrive kind:message
+filter	source:slack kind:person
+multi	wynzalmi rodordor
+common	sendorba
+rare	morquemied
+multi	bamordor milumba dorfalmi quequeka
+multi	velroba gonkafal kamidor
+term-filter	falithro source:confluence
+multi	tentenmi vexdorka sarromi kafaldor
+multi	rallumka nixroka
+filter	source:jira kind:ticket
+term-filter	gonroro source:confluence
+rare	triithbaer
+multi	mormordor falralro ithkafal quetrifal
+common	velroba
+term-filter	wyntenro source:slack
+filter	source:notion kind:person
+filter	source:confluence kind:email
+term-filter	vexperka source:notion
+multi	senvelba bagondor wynsardor
+filter	source:github kind:ticket
+multi	tentrifal mivexro morzalka vexromi
+common	tritenba
+common	tormiba
+filter	source:github kind:message
+multi	perperba mitenka ithroka ralroba
+multi	castrika trimidor
+rare	morrowyned
+term-filter	nixmorro source:jira
+common	badorba
+common	dorqueba
+multi	lumbami baithba kaperba
+common	ralqueba
+common	morqueba
+multi	triithmi tordordor trifalfal perzalmi
+multi	zalfalro zalvelba trivexka
+common	sarfalba
+filter	source:gdrive kind:email
+multi	ithzalro bagonmi lumkami fallumfal
+multi	ralsenba castriro casralmi gonquefal
+multi	zalfaldor ralwynmi wyngonba senzaldor
+multi	mormormi lumroba falperdor rocasmi
+filter	source:jira kind:message
+rare	morsenvexed
+term-filter	dorzalka source:gdrive
+multi	senperba ralvelka
+multi	ithmorfal torsenka
+term-filter	torroro source:jira
+term-filter	zalzalba source:gdrive
+multi	batenro baqueba
+common	dornixba
+multi	zaltrimi dorgonka sarmika
+common	ralfalba
+common	dornixba
+multi	nixtriro trimorfal dorzalba
+term-filter	morgonka source:confluence
+multi	lumsarten gonwynfal quevelka wynvexten
+term-filter	mifalro source:gdrive
+multi	wynlumba velkaba permiba
+common	lumkaba
+filter	source:jira kind:file
+multi	raldorro sencasro torlummi
+multi	gonfaldor velbaro ithtriba
+common	lumqueba
+common	velmiba
+multi	nixlummi rovelfal dorgonro quetrifal
+multi	quebafal morralmi sarperka
+common	falqueba
+common	mitenba
+multi	dorbaro nixquero perithba nixzalten
+multi	velvelro gontorka trisarmi
+filter	source:confluence kind:code
+multi	ralvexba senfalmi ithsarten trikafal
+term-filter	senlumba source:confluence
+multi	gongondor torlumfal
+multi	velnixro vexgonfal torzaldor bavelka
+term-filter	ithmorka source:notion
+term-filter	nixroro source:notion
+term-filter	falroka source:jira
+multi	sarroka kacasfal rolummi
+common	roroba
+multi	dortriro senkaba perithdor
+multi	senlumro tennixdor

@@ -44,6 +44,14 @@ var allowed = map[string][]string{
 	"connector/fssource": {"acl", "connector", "doc"},
 	"ingest":             {"", "connector", "doc", "store"},
 
+	// The benchmark corpus sits above everything, like storetest does, because
+	// it exists to be measured against rather than to be built on. It is the one
+	// package that names a driver: the fixture it hands a benchmark is a SQLite
+	// file on disk, cached between runs, and generating it is far too slow to do
+	// through an interface for the sake of symmetry.
+	"benchcorpus":     {"acl", "doc", "store", "store/sqlitestore"},
+	"benchcorpus/gen": {"benchcorpus", "store/sqlitestore"},
+
 	"cmd/genba":  {""},
 	"cmd/genbad": {"", "api", "config", "connector", "connector/fssource", "index", "ingest", "store", "store/memstore", "store/sqlitestore", "web"},
 }

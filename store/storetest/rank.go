@@ -1,0 +1,515 @@
+package storetest
+
+import (
+	"errors"
+	"maps"
+	"slices"
+	"testing"
+
+	"github.com/tamnd/genba"
+	"github.com/tamnd/genba/acl"
+	"github.com/tamnd/genba/doc"
+	"github.com/tamnd/genba/store"
+)
+
+// RunRanker checks the three capabilities a driver can implement to answer a
+// search without materialising the corpus: [store.Ranker], [store.Statistician]
+// and [store.Fetcher].
+//
+// All three are optional and a case skips for a driver that lacks the one it
+// covers, so a driver is free to implement none of them and still pass. What a
+// driver is not free to do is implement one of them differently. Everything
+// here is checked against the same slow, obviously correct answer computed from
+// Scan, because the numbers these capabilities return feed the ranking, and a
+// ranking computed from statistics that quietly drifted is not something anyone
+// notices from the outside. It looks like search getting worse.
+func RunRanker(t *testing.T, newStore Factory) {
+	t.Helper()
+	for _, c := range rankCases {
+		t.Run(c.name, func(t *testing.T) {
+			s := newStore(t)
+			t.Cleanup(func() { _ = s.Close() })
+			c.run(t, s)
+		})
+	}
+}
+
+type rankCase struct {
+	name string
+	run  func(t *testing.T, s store.Store)
+}
+
+var rankCases = []rankCase{
+	{"a pool larger than the match set returns all of it", testRankWholeMatchSet},
+	{"the total counts the match set and not the pool", testRankTotal},
+	{"truncated says whether the ranking saw everything", testRankTruncated},
+	{"facets are counted over the match set and not over the pool", testRankFacets},
+	{"the principal is applied inside rank", testRankPermission},
+	{"a nil principal ranks nothing", testRankNilPrincipal},
+	{"a candidate carries the token counts the analyzer produces", testRankTokens},
+	{"a candidate carries the query terms and only those", testRankTerms},
+	{"a recency selection takes the most recently modified", testRankRecent},
+	{"rank reflects a delete", testRankDelete},
+	{"statistics agree with the analyzer over the corpus", testStatisticsCorpus},
+	{"statistics are over the tenant and not over the reader", testStatisticsTenant},
+	{"statistics follow a replace", testStatisticsReplace},
+	{"statistics follow a delete", testStatisticsDelete},
+	{"a quarantined document is not in the statistics", testStatisticsQuarantine},
+	{"a nil principal has no statistics", testStatisticsNilPrincipal},
+	{"fetch returns the documents behind a page", testFetchPage},
+	{"fetch omits what the principal may not read", testFetchPermission},
+	{"a nil principal fetches nothing", testFetchNilPrincipal},
+}
+
+func ranker(t *testing.T, s store.Store) store.Ranker {
+	t.Helper()
+	rk, ok := s.(store.Ranker)
+	if !ok {
+		t.Skip("driver does not implement store.Ranker")
+	}
+	return rk
+}
+
+func statistician(t *testing.T, s store.Store) store.Statistician {
+	t.Helper()
+	st, ok := s.(store.Statistician)
+	if !ok {
+		t.Skip("driver does not implement store.Statistician")
+	}
+	return st
+}
+
+func fetcher(t *testing.T, s store.Store) store.Fetcher {
+	t.Helper()
+	f, ok := s.(store.Fetcher)
+	if !ok {
+		t.Skip("driver does not implement store.Fetcher")
+	}
+	return f
+}
+
+// mustRank is Rank with the error handling every case would otherwise repeat.
+func mustRank(t *testing.T, rk store.Ranker, p *acl.Principal, r store.Request, sel store.Selection) store.Ranked {
+	t.Helper()
+	got, err := rk.Rank(t.Context(), p, r, sel)
+	if err != nil {
+		t.Fatalf("Rank: %v", err)
+	}
+	return got
+}
+
+// candidateIDs is the pool, sorted, so a case can compare it against the Go
+// rule without depending on the order a driver happened to cut in.
+func candidateIDs(ranked store.Ranked) []string {
+	ids := make([]string, 0, len(ranked.Candidates))
+	for _, c := range ranked.Candidates {
+		ids = append(ids, c.ID)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// pool is a selection large enough that nothing in the fixture is cut.
+func pool() store.Selection { return store.Selection{Limit: 100} }
+
+// wantFacets counts the facets the slow way, from the documents the principal
+// can actually read.
+func wantFacets(t *testing.T, s store.Store, p *acl.Principal, r store.Request) map[string]map[string]int {
+	t.Helper()
+	out := map[string]map[string]int{
+		"source": {}, "kind": {}, "container": {}, "author": {},
+	}
+	count := func(field, value string) {
+		if value != "" {
+			out[field][value]++
+		}
+	}
+	if err := s.Scan(t.Context(), p, func(d doc.Document) bool {
+		if r.Matches(d) {
+			count("source", d.Source)
+			count("kind", string(d.Kind))
+			count("container", d.Container)
+			count("author", d.Author.Display())
+		}
+		return true
+	}); err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	return out
+}
+
+// gotFacets turns a driver's answer into the same shape, which is also where a
+// duplicated facet value would show up as a lost count.
+func gotFacets(t *testing.T, ranked store.Ranked) map[string]map[string]int {
+	t.Helper()
+	out := map[string]map[string]int{
+		"source": {}, "kind": {}, "container": {}, "author": {},
+	}
+	for field, values := range ranked.Facets {
+		if _, ok := out[field]; !ok {
+			t.Fatalf("Rank reported a facet nobody asked for: %q", field)
+		}
+		for _, v := range values {
+			if v.Value == "" {
+				t.Fatalf("%s facet has an empty value, which is not a filter anyone can tick", field)
+			}
+			if _, seen := out[field][v.Value]; seen {
+				t.Fatalf("%s facet reports %q twice", field, v.Value)
+			}
+			out[field][v.Value] = v.Count
+		}
+	}
+	return out
+}
+
+func testRankWholeMatchSet(t *testing.T, s store.Store) {
+	rk := ranker(t, s)
+	mustPut(t, s, corpus()...)
+
+	for _, r := range []store.Request{
+		{},
+		{Terms: []string{"payments"}},
+		{Sources: []string{"gdrive"}},
+		{Terms: []string{"queue"}, Kinds: []doc.Kind{doc.KindCode}},
+	} {
+		got := candidateIDs(mustRank(t, rk, reader(), r, pool()))
+		want := wantIDs(t, s, reader(), r)
+		if !slices.Equal(got, want) {
+			t.Fatalf("Rank and Scan disagree for %+v:\n     ranked: %v\n   expected: %v", r, got, want)
+		}
+	}
+}
+
+func testRankTotal(t *testing.T, s store.Store) {
+	rk := ranker(t, s)
+	mustPut(t, s, corpus()...)
+
+	// The pool cuts to one candidate, and the total still counts everything that
+	// matched. A total that reports the pool would tell the interface there is
+	// one result when there are four, which is the number a person reads before
+	// deciding the search is broken.
+	got := mustRank(t, rk, reader(), store.Request{}, store.Selection{Limit: 1})
+	if len(got.Candidates) != 1 {
+		t.Fatalf("asked for one candidate and got %d", len(got.Candidates))
+	}
+	if want := len(wantIDs(t, s, reader(), store.Request{})); got.Total != want {
+		t.Fatalf("Total = %d, the match set has %d documents in it", got.Total, want)
+	}
+}
+
+func testRankTruncated(t *testing.T, s store.Store) {
+	rk := ranker(t, s)
+	mustPut(t, s, corpus()...)
+
+	if got := mustRank(t, rk, reader(), store.Request{}, pool()); got.Truncated {
+		t.Fatal("Truncated is set for a pool that held the whole match set")
+	}
+	if got := mustRank(t, rk, reader(), store.Request{}, store.Selection{Limit: 2}); !got.Truncated {
+		t.Fatal("Truncated is not set for a pool that cut the match set in half")
+	}
+}
+
+func testRankFacets(t *testing.T, s store.Store) {
+	rk := ranker(t, s)
+	mustPut(t, s, corpus()...)
+
+	want := wantFacets(t, s, reader(), store.Request{})
+	// Both selections, because the facets belong to the match set. Counting them
+	// over the pool would make the sidebar change as somebody pages, and the
+	// counts it shows would be a description of the current page rather than of
+	// what ticking the filter is about to do.
+	for _, sel := range []store.Selection{pool(), {Limit: 1}} {
+		got := gotFacets(t, mustRank(t, rk, reader(), store.Request{}, sel))
+		if !maps.EqualFunc(got, want, maps.Equal) {
+			t.Fatalf("facets for a pool of %d are %v, expected %v", sel.Limit, got, want)
+		}
+	}
+}
+
+func testRankPermission(t *testing.T, s store.Store) {
+	rk := ranker(t, s)
+	mustPut(t, s, corpus()...)
+
+	got := mustRank(t, rk, stranger(), store.Request{}, pool())
+	if len(got.Candidates) != 0 || got.Total != 0 {
+		t.Fatalf("a stranger ranked %d of %d documents", len(got.Candidates), got.Total)
+	}
+	for field, values := range got.Facets {
+		if len(values) != 0 {
+			t.Fatalf("a stranger sees the %s facet: %v", field, values)
+		}
+	}
+}
+
+func testRankNilPrincipal(t *testing.T, s store.Store) {
+	rk := ranker(t, s)
+	mustPut(t, s, corpus()...)
+
+	if _, err := rk.Rank(t.Context(), nil, store.Request{}, pool()); !errors.Is(err, genba.ErrNoPrincipal) {
+		t.Fatalf("Rank with no principal returned %v, expected ErrNoPrincipal", err)
+	}
+}
+
+func testRankTokens(t *testing.T, s store.Store) {
+	rk := ranker(t, s)
+	docs := corpus()
+	mustPut(t, s, docs...)
+
+	want := make(map[string]doc.Analysis, len(docs))
+	for _, d := range docs {
+		want[d.ID] = d.Analyze()
+	}
+
+	// The lengths a driver reports were computed when the document was written,
+	// and the ranking divides by their mean. A driver that stores the character
+	// count, or the count before folding, produces a plausible number that
+	// penalises exactly the wrong documents.
+	for _, c := range mustRank(t, rk, reader(), store.Request{}, pool()).Candidates {
+		a := want[c.ID]
+		if c.TitleTokens != a.TitleTokens || c.BodyTokens != a.BodyTokens {
+			t.Fatalf("%s has %d title and %d body tokens, the analyzer produces %d and %d",
+				c.ID, c.TitleTokens, c.BodyTokens, a.TitleTokens, a.BodyTokens)
+		}
+	}
+}
+
+func testRankTerms(t *testing.T, s store.Store) {
+	rk := ranker(t, s)
+	docs := corpus()
+	mustPut(t, s, docs...)
+
+	want := make(map[string]doc.Analysis, len(docs))
+	for _, d := range docs {
+		want[d.ID] = d.Analyze()
+	}
+
+	const term = "payments"
+	got := mustRank(t, rk, reader(), store.Request{Terms: []string{term}}, pool())
+	if len(got.Candidates) == 0 {
+		t.Fatal("nothing matched a term the fixture carries")
+	}
+	for _, c := range got.Candidates {
+		if len(c.Terms) > 1 {
+			t.Fatalf("%s carries %v, and the query asked about one term", c.ID, slices.Sorted(maps.Keys(c.Terms)))
+		}
+		if got, expected := c.Terms[term], want[c.ID].Terms[term]; got != expected {
+			t.Fatalf("%s counts %+v occurrences of %q, the analyzer counts %+v", c.ID, got, term, expected)
+		}
+	}
+}
+
+func testRankRecent(t *testing.T, s store.Store) {
+	rk := ranker(t, s)
+	docs := corpus()
+	mustPut(t, s, docs...)
+
+	newest := slices.Clone(docs)
+	slices.SortFunc(newest, func(a, b doc.Document) int { return b.ModifiedAt.Compare(a.ModifiedAt) })
+
+	// A recency selection has to cut on the date rather than cut on relevance
+	// and sort what survives, or a search for what changed this week returns the
+	// most recent of whatever happened to match best.
+	got := mustRank(t, rk, reader(), store.Request{}, store.Selection{Limit: 2, Recent: true})
+	want := []string{newest[0].ID, newest[1].ID}
+	slices.Sort(want)
+	if ids := candidateIDs(got); !slices.Equal(ids, want) {
+		t.Fatalf("the two most recent documents are %v, the pool held %v", want, ids)
+	}
+}
+
+func testRankDelete(t *testing.T, s store.Store) {
+	rk := ranker(t, s)
+	mustPut(t, s, corpus()...)
+
+	if err := s.Delete(t.Context(), "r1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	got := mustRank(t, rk, reader(), store.Request{}, pool())
+	if slices.Contains(candidateIDs(got), "r1") {
+		t.Fatal("a deleted document is still a candidate")
+	}
+	if want := len(wantIDs(t, s, reader(), store.Request{})); got.Total != want {
+		t.Fatalf("Total = %d after a delete, expected %d", got.Total, want)
+	}
+}
+
+// wantCorpus computes the statistics the slow way, over every queryable
+// document in the tenant.
+func wantCorpus(docs []doc.Document, terms []string) store.Corpus {
+	want := make(map[string]bool, len(terms))
+	for _, t := range terms {
+		want[t] = true
+	}
+	c := store.Corpus{DocFreq: map[string]int{}}
+	for _, d := range docs {
+		if !d.Queryable() {
+			continue
+		}
+		a := d.Analyze()
+		c.Documents++
+		c.TitleTokens += int64(a.TitleTokens)
+		c.BodyTokens += int64(a.BodyTokens)
+		for term := range a.Terms {
+			if want[term] {
+				c.DocFreq[term]++
+			}
+		}
+	}
+	return c
+}
+
+func checkCorpus(t *testing.T, st store.Statistician, p *acl.Principal, docs []doc.Document, terms []string) {
+	t.Helper()
+	got, err := st.Statistics(t.Context(), p, terms)
+	if err != nil {
+		t.Fatalf("Statistics: %v", err)
+	}
+	want := wantCorpus(docs, terms)
+	if got.Documents != want.Documents {
+		t.Fatalf("Documents = %d, expected %d", got.Documents, want.Documents)
+	}
+	if got.TitleTokens != want.TitleTokens || got.BodyTokens != want.BodyTokens {
+		t.Fatalf("token sums are %d title and %d body, expected %d and %d",
+			got.TitleTokens, got.BodyTokens, want.TitleTokens, want.BodyTokens)
+	}
+	for term, n := range want.DocFreq {
+		if got.DocFreq[term] != n {
+			t.Fatalf("%d documents carry %q, expected %d", got.DocFreq[term], term, n)
+		}
+	}
+	for term, n := range got.DocFreq {
+		if want.DocFreq[term] == 0 {
+			t.Fatalf("%q is reported in %d documents and nothing carries it", term, n)
+		}
+	}
+}
+
+// statTerms covers a term in several documents, a term in one, and a term
+// nothing carries, which is the case a driver returning zero instead of nothing
+// gets wrong quietly.
+var statTerms = []string{"payments", "onboarding", "zeppelin"}
+
+func testStatisticsCorpus(t *testing.T, s store.Store) {
+	st := statistician(t, s)
+	docs := corpus()
+	mustPut(t, s, docs...)
+	checkCorpus(t, st, reader(), docs, statTerms)
+}
+
+func testStatisticsTenant(t *testing.T, s store.Store) {
+	st := statistician(t, s)
+	docs := corpus()
+	mustPut(t, s, docs...)
+
+	// The counts are a property of the corpus and not of the asker. See
+	// [store.Corpus] for why: a per asker document frequency costs a permission
+	// filtered aggregate over every document carrying the term, on every query,
+	// to move the ranking by a fraction of a percent. This case pins the choice
+	// so that a driver cannot make it differently.
+	checkCorpus(t, st, stranger(), docs, statTerms)
+}
+
+func testStatisticsReplace(t *testing.T, s store.Store) {
+	st := statistician(t, s)
+	docs := corpus()
+	mustPut(t, s, docs...)
+
+	// The replacement is shorter and drops a term the original carried, so a
+	// driver that adds the new numbers without taking the old ones back out is
+	// off in both the lengths and the frequency.
+	docs[0].Title = "Runbook"
+	docs[0].Body = "moved"
+	mustPut(t, s, docs[0])
+	checkCorpus(t, st, reader(), docs, statTerms)
+
+	// Twice, because writing the same document again is the ordinary case for a
+	// connector that re-syncs, and counting it twice is the ordinary bug.
+	mustPut(t, s, docs[0])
+	checkCorpus(t, st, reader(), docs, statTerms)
+}
+
+func testStatisticsDelete(t *testing.T, s store.Store) {
+	st := statistician(t, s)
+	docs := corpus()
+	mustPut(t, s, docs...)
+
+	if err := s.Delete(t.Context(), docs[0].ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	checkCorpus(t, st, reader(), docs[1:], statTerms)
+
+	// Deleting what is already gone must not take it out a second time.
+	if err := s.Delete(t.Context(), docs[0].ID); err != nil {
+		t.Fatalf("Delete again: %v", err)
+	}
+	checkCorpus(t, st, reader(), docs[1:], statTerms)
+}
+
+func testStatisticsQuarantine(t *testing.T, s store.Store) {
+	st := statistician(t, s)
+	docs := corpus()
+	// A document whose permissions did not resolve is served to nobody, so
+	// counting it would mean the ranking is normalised against documents that
+	// can never appear in a result.
+	docs[0].Permissions = acl.Permissions{}
+	mustPut(t, s, docs...)
+	checkCorpus(t, st, reader(), docs, statTerms)
+}
+
+func testStatisticsNilPrincipal(t *testing.T, s store.Store) {
+	st := statistician(t, s)
+	mustPut(t, s, corpus()...)
+
+	if _, err := st.Statistics(t.Context(), nil, statTerms); !errors.Is(err, genba.ErrNoPrincipal) {
+		t.Fatalf("Statistics with no principal returned %v, expected ErrNoPrincipal", err)
+	}
+}
+
+func testFetchPage(t *testing.T, s store.Store) {
+	f := fetcher(t, s)
+	docs := corpus()
+	mustPut(t, s, docs...)
+
+	got, err := f.Fetch(t.Context(), reader(), []string{"r3", "r1", "nothing"})
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	by := make(map[string]doc.Document, len(got))
+	for _, d := range got {
+		by[d.ID] = d
+	}
+	if len(by) != 2 {
+		t.Fatalf("fetched %d documents for two readable ids and one that does not exist", len(by))
+	}
+	// The body is the reason this call exists, so a fetch that returns the same
+	// metadata the ranking already had is a fetch that did nothing.
+	if by["r1"].Body != docs[0].Body || by["r1"].Title != docs[0].Title {
+		t.Fatalf("r1 came back as %q / %q", by["r1"].Title, by["r1"].Body)
+	}
+}
+
+func testFetchPermission(t *testing.T, s store.Store) {
+	f := fetcher(t, s)
+	docs := corpus()
+	mustPut(t, s, docs...)
+
+	got, err := f.Fetch(t.Context(), stranger(), []string{"r1", "r2", "r3", "r4"})
+	if err != nil {
+		// Not an error, on purpose. An id the asker may not read is absent,
+		// because the alternative is a page of twenty results failing because one
+		// document was revoked while it was being ranked.
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("a stranger fetched %d documents", len(got))
+	}
+}
+
+func testFetchNilPrincipal(t *testing.T, s store.Store) {
+	f := fetcher(t, s)
+	mustPut(t, s, corpus()...)
+
+	if _, err := f.Fetch(t.Context(), nil, []string{"r1"}); !errors.Is(err, genba.ErrNoPrincipal) {
+		t.Fatalf("Fetch with no principal returned %v, expected ErrNoPrincipal", err)
+	}
+}

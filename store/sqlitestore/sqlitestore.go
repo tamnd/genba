@@ -51,10 +51,8 @@ type Store struct {
 	// behaviour under load predictable rather than dependent on a timeout.
 	write sync.Mutex
 
-	// rows counts the rows the database handed back. It is what the test that
-	// proves the permission filter is in the SQL asserts on: a reader who may
-	// see nothing has to cost zero rows, not a full walk that Go then discards.
-	rows atomic.Int64
+	// counters are what the performance gate asserts on. See [Counters].
+	counters counters
 
 	closed atomic.Bool
 }
@@ -63,7 +61,77 @@ var (
 	_ store.Store        = (*Store)(nil)
 	_ store.Retriever    = (*Store)(nil)
 	_ store.ContentStore = (*Store)(nil)
+	_ store.Ranker       = (*Store)(nil)
+	_ store.Statistician = (*Store)(nil)
+	_ store.Fetcher      = (*Store)(nil)
 )
+
+// Counters is the work one query cost, counted exactly.
+//
+// It is here because a latency assertion on a shared CI runner is a coin flip
+// and these are not. Rows read, statements issued, documents decoded and
+// candidates scored do not vary with how busy the machine is, they are where a
+// performance regression shows up first, and an assertion on them names the
+// mistake precisely: a per hit refetch reappearing in a year moves Decodes from
+// twenty to twenty plus the match set, on any runner, at any speed.
+type Counters struct {
+	// Rows is the rows the database handed back. It is what the test that
+	// proves the permission filter is in the SQL asserts on: a reader who may
+	// see nothing has to cost zero rows, not a full walk that Go then discards.
+	Rows int64
+
+	// Statements is the statements executed against the database, read paths
+	// only. A search that issues one per result rather than one per page is the
+	// regression this counts.
+	Statements int64
+
+	// Decodes is document JSON decoded into a [doc.Document]. A search should
+	// decode the page and nothing else.
+	Decodes int64
+
+	// Candidates is the documents handed to the ranker. It is bounded by the
+	// candidate pool rather than by the match set, which is the whole point of
+	// two phase retrieval.
+	Candidates int64
+}
+
+type counters struct {
+	rows       atomic.Int64
+	statements atomic.Int64
+	decodes    atomic.Int64
+	candidates atomic.Int64
+}
+
+// Counters reports the work this store has done since it was opened or last
+// reset.
+func (s *Store) Counters() Counters {
+	return Counters{
+		Rows:       s.counters.rows.Load(),
+		Statements: s.counters.statements.Load(),
+		Decodes:    s.counters.decodes.Load(),
+		Candidates: s.counters.candidates.Load(),
+	}
+}
+
+// ResetCounters zeroes them, so that a measurement can be scoped to one query.
+func (s *Store) ResetCounters() {
+	s.counters.rows.Store(0)
+	s.counters.statements.Store(0)
+	s.counters.decodes.Store(0)
+	s.counters.candidates.Store(0)
+}
+
+// query and queryRow are the only two ways this driver reads, so that the
+// statement counter cannot be forgotten at a new call site.
+func (s *Store) query(ctx context.Context, stmt string, args ...any) (*sql.Rows, error) {
+	s.counters.statements.Add(1)
+	return s.db.QueryContext(ctx, stmt, args...)
+}
+
+func (s *Store) queryRow(ctx context.Context, stmt string, args ...any) *sql.Row {
+	s.counters.statements.Add(1)
+	return s.db.QueryRowContext(ctx, stmt, args...)
+}
 
 // Open opens or creates a database at path and brings its schema up to date.
 //
@@ -84,12 +152,29 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if memory(path) {
 		db.SetMaxOpenConns(1)
 	}
-	if err := migrate(ctx, db); err != nil {
+	if err := migrate(ctx, db, migrations); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlitestore: migrate %s: %w", path, err)
 	}
 	return &Store{db: db}, nil
 }
+
+// CacheBytes is the page cache each connection is given.
+//
+// SQLite's default is two thousand pages, which is eight megabytes, and it was
+// chosen for a world where a database was a settings file. It is far too small
+// for either of the things this store does. A write of five hundred documents
+// touches a few hundred thousand b-tree pages across the full text index and
+// the postings, and a cache that cannot hold them spills the difference to the
+// write ahead log and reads it back, which measured as ninety percent of
+// ingestion time spent in write syscalls. A search wants the same headroom for
+// the opposite reason: the latency budget assumes a warm cache, and a cache
+// that cannot hold the working set makes every query pay for a page fault.
+//
+// Sixty four megabytes is per connection, so a pool of eight is half a gigabyte
+// in the worst case. That is a deliberate trade and it is the right one for a
+// search server, which is a thing people run on a machine with memory.
+const CacheBytes = 64 << 20
 
 // dsn adds the pragmas every connection needs.
 //
@@ -100,10 +185,22 @@ func Open(ctx context.Context, path string) (*Store, error) {
 // it off by default.
 func dsn(path string) string {
 	q := url.Values{}
+	// There is deliberately no page_size here. Setting it looked like a win in
+	// a first measurement and turned out to do nothing at all: the pragma only
+	// takes effect before the first page is written, the driver applies these
+	// after the file exists, and a database opened with it reports the default
+	// four kilobytes. A setting that does not take effect is worse than one
+	// that is absent, because the next person reads it and believes it.
 	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "busy_timeout(5000)")
 	q.Add("_pragma", "foreign_keys(1)")
 	q.Add("_pragma", "synchronous(NORMAL)")
+	// Negative is kibibytes rather than pages, which is the only form of this
+	// pragma that means the same thing whatever the page size turns out to be.
+	q.Add("_pragma", fmt.Sprintf("cache_size(-%d)", CacheBytes/1024))
+	// Sorting and the intermediate results of a grouped aggregate, which the
+	// facet counts are. On disk they are a temporary file per query.
+	q.Add("_pragma", "temp_store(MEMORY)")
 	return path + "?" + q.Encode()
 }
 
@@ -138,8 +235,14 @@ func (s *Store) Put(ctx context.Context, docs ...doc.Document) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	w, err := newWriter(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("sqlitestore: put: %w", err)
+	}
+	defer w.close()
+
 	for _, d := range docs {
-		if err := putOne(ctx, tx, d); err != nil {
+		if err := putOne(ctx, tx, w, d); err != nil {
 			return fmt.Errorf("sqlitestore: put %s: %w", d.ID, err)
 		}
 	}
@@ -154,7 +257,7 @@ func (s *Store) Put(ctx context.Context, docs ...doc.Document) error {
 // The upsert keeps the rowid, which matters because the full text index is
 // joined on it. A delete and insert would give the row a new identity and leave
 // the old terms behind under the old one.
-func putOne(ctx context.Context, tx *sql.Tx, d doc.Document) error {
+func putOne(ctx context.Context, tx *sql.Tx, w *writer, d doc.Document) error {
 	// The content comes off the document before it is encoded, so the data
 	// column stays the size of the text and Get cannot hand image bytes back to
 	// a query path that has no use for them.
@@ -171,12 +274,25 @@ func putOne(ctx context.Context, tx *sql.Tx, d doc.Document) error {
 		ownerKey = d.Permissions.Owner.UserKey()
 	}
 
+	// Whatever is stored under this id stops counting before the row that
+	// carries the numbers is overwritten, because after the write there is no
+	// way left to know what it used to contribute.
+	if _, _, err := w.retire(ctx, d.ID); err != nil {
+		return err
+	}
+
+	// One analysis, used three times over: the full text index row, the
+	// postings and the length columns. Running the analyzer once per use is how
+	// indexing ends up three times slower than it needs to be.
+	a := d.Analyze()
+
 	var rowid int64
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO document (
 			id, tenant, source, kind, container_fold, author_keys, owner_keys,
-			modified_at, mode, owner_key, queryable, data
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			modified_at, mode, owner_key, queryable,
+			title_tokens, body_tokens, container, author_name
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			tenant = excluded.tenant,
 			source = excluded.source,
@@ -188,13 +304,26 @@ func putOne(ctx context.Context, tx *sql.Tx, d doc.Document) error {
 			mode = excluded.mode,
 			owner_key = excluded.owner_key,
 			queryable = excluded.queryable,
-			data = excluded.data
+			title_tokens = excluded.title_tokens,
+			body_tokens = excluded.body_tokens,
+			container = excluded.container,
+			author_name = excluded.author_name
 		RETURNING rowid`,
 		d.ID, d.Tenant, d.Source, string(d.Kind),
 		store.Fold(d.Container), jsonKeys(store.PersonKeys(d.Author)), jsonKeys(store.PersonKeys(d.Owner)),
-		nullableTime(d.ModifiedAt), int(d.Permissions.Mode), ownerKey, boolInt(d.Queryable()), string(data),
+		nullableTime(d.ModifiedAt), int(d.Permissions.Mode), ownerKey, boolInt(d.Queryable()),
+		a.TitleTokens, a.BodyTokens, d.Container, d.Author.Display(),
 	).Scan(&rowid)
 	if err != nil {
+		return err
+	}
+
+	// The document itself goes to its own table. See the migration that split
+	// it out for why: it is the one part of a row no query path reads until it
+	// knows which twenty documents it is returning.
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO document_data (doc_id, data) VALUES (?, ?)
+		ON CONFLICT(doc_id) DO UPDATE SET data = excluded.data`, d.ID, string(data)); err != nil {
 		return err
 	}
 
@@ -233,8 +362,10 @@ func putOne(ctx context.Context, tx *sql.Tx, d doc.Document) error {
 	if !d.Queryable() {
 		return nil
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO document_fts (rowid, terms) VALUES (?, ?)`, rowid, d.Analyzed())
-	return err
+	if _, err := tx.ExecContext(ctx, `INSERT INTO document_fts (rowid, terms) VALUES (?, ?)`, rowid, d.Analyzed()); err != nil {
+		return err
+	}
+	return w.index(ctx, rowid, d, a)
 }
 
 // ref is one row of document_ref.
@@ -280,16 +411,24 @@ func (s *Store) Delete(ctx context.Context, ids ...string) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	w, err := newWriter(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("sqlitestore: delete: %w", err)
+	}
+	defer w.close()
+
 	for _, id := range ids {
 		// The rowid is read first because the full text index is keyed on it
 		// and knows nothing about document ids. Deleting a document that is not
-		// there is not an error, which is what makes a retry safe.
-		var rowid int64
-		switch err := tx.QueryRowContext(ctx, `SELECT rowid FROM document WHERE id = ?`, id).Scan(&rowid); {
-		case errors.Is(err, sql.ErrNoRows):
-			continue
-		case err != nil:
+		// there is not an error, which is what makes a retry safe. retire is
+		// what takes the document back out of the corpus statistics, which has
+		// to happen while its postings are still there to be counted.
+		rowid, found, err := w.retire(ctx, id)
+		if err != nil {
 			return fmt.Errorf("sqlitestore: delete %s: %w", id, err)
+		}
+		if !found {
+			continue
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM document_fts WHERE rowid = ?`, rowid); err != nil {
 			return fmt.Errorf("sqlitestore: delete %s: %w", id, err)
@@ -315,7 +454,10 @@ func (s *Store) Get(ctx context.Context, p *acl.Principal, id string) (doc.Docum
 
 	c := visible(p)
 	args := append([]any{id}, c.args...)
-	row := s.db.QueryRowContext(ctx, `SELECT d.data FROM document d WHERE d.id = ? AND `+c.where(), args...)
+	row := s.queryRow(ctx, `
+		SELECT x.data FROM document d
+		JOIN document_data x ON x.doc_id = d.id
+		WHERE d.id = ? AND `+c.where(), args...)
 
 	var data string
 	switch err := row.Scan(&data); {
@@ -326,8 +468,8 @@ func (s *Store) Get(ctx context.Context, p *acl.Principal, id string) (doc.Docum
 	case err != nil:
 		return doc.Document{}, fmt.Errorf("sqlitestore: get: %w", err)
 	}
-	s.rows.Add(1)
-	return decode(data)
+	s.counters.rows.Add(1)
+	return s.decoded(data)
 }
 
 // Content returns the bytes of one document if the principal may read it.
@@ -345,7 +487,7 @@ func (s *Store) Content(ctx context.Context, p *acl.Principal, id string) (doc.C
 
 	c := visible(p)
 	args := append([]any{id}, c.args...)
-	row := s.db.QueryRowContext(ctx, `
+	row := s.queryRow(ctx, `
 		SELECT c.width, c.height, c.bytes
 		FROM document_content c
 		JOIN document d ON d.id = c.doc_id
@@ -360,7 +502,7 @@ func (s *Store) Content(ctx context.Context, p *acl.Principal, id string) (doc.C
 	case err != nil:
 		return doc.Content{}, fmt.Errorf("sqlitestore: content: %w", err)
 	}
-	s.rows.Add(1)
+	s.counters.rows.Add(1)
 	return out, nil
 }
 
@@ -374,7 +516,10 @@ func (s *Store) Scan(ctx context.Context, p *acl.Principal, fn func(doc.Document
 	}
 
 	c := visible(p)
-	return s.stream(ctx, `SELECT d.data FROM document d WHERE `+c.where()+` ORDER BY d.id`, c.args, fn)
+	return s.stream(ctx, `
+		SELECT x.data FROM document d
+		JOIN document_data x ON x.doc_id = d.id
+		WHERE `+c.where()+` ORDER BY d.id`, c.args, fn)
 }
 
 // Retrieve answers a request out of the database's own indexes.
@@ -404,12 +549,15 @@ func (s *Store) Retrieve(ctx context.Context, p *acl.Principal, r store.Request,
 		c.add(`document_fts MATCH ?`, q)
 	}
 
-	return s.stream(ctx, `SELECT d.data FROM `+from+` WHERE `+c.where()+` ORDER BY d.id`, c.args, fn)
+	return s.stream(ctx, `
+		SELECT x.data FROM `+from+`
+		JOIN document_data x ON x.doc_id = d.id
+		WHERE `+c.where()+` ORDER BY d.id`, c.args, fn)
 }
 
 // stream runs a query returning document JSON and hands each row to fn.
 func (s *Store) stream(ctx context.Context, query string, args []any, fn func(doc.Document) bool) error {
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.query(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("sqlitestore: query: %w", err)
 	}
@@ -420,8 +568,8 @@ func (s *Store) stream(ctx context.Context, query string, args []any, fn func(do
 		if err := rows.Scan(&data); err != nil {
 			return fmt.Errorf("sqlitestore: scan: %w", err)
 		}
-		s.rows.Add(1)
-		d, err := decode(data)
+		s.counters.rows.Add(1)
+		d, err := s.decoded(data)
 		if err != nil {
 			return err
 		}
@@ -438,7 +586,7 @@ func (s *Store) Stats(ctx context.Context) (store.Stats, error) {
 		return store.Stats{}, err
 	}
 	var st store.Stats
-	err := s.db.QueryRowContext(ctx, `
+	err := s.queryRow(ctx, `
 		SELECT
 			coalesce(sum(queryable = 1), 0),
 			coalesce(sum(queryable = 0), 0)
@@ -477,6 +625,14 @@ func decode(data string) (doc.Document, error) {
 	return d, nil
 }
 
+// decoded is decode with the counter, for the read paths. The migration path
+// calls decode directly, because a rebuild is not a query and counting it would
+// make a reopened database look like a regression.
+func (s *Store) decoded(data string) (doc.Document, error) {
+	s.counters.decodes.Add(1)
+	return decode(data)
+}
+
 func jsonKeys(keys []string) string {
 	if keys == nil {
 		keys = []string{}
@@ -491,6 +647,10 @@ func nullableTime(t time.Time) any {
 	}
 	return t.UnixNano()
 }
+
+// unixNano is the other direction, in UTC, so that a document read back out of
+// a column compares equal to the one that went in.
+func unixNano(n int64) time.Time { return time.Unix(0, n).UTC() }
 
 func boolInt(b bool) int {
 	if b {

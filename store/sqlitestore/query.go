@@ -145,6 +145,14 @@ func jsonList(values []string) string {
 	return string(b)
 }
 
+func jsonInts(values []int64) string {
+	if values == nil {
+		values = []int64{}
+	}
+	b, _ := json.Marshal(values)
+	return string(b)
+}
+
 func jsonFolded(values []string) string {
 	folded := make([]string, 0, len(values))
 	for _, v := range values {

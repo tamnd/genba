@@ -8,8 +8,20 @@ import (
 	"github.com/tamnd/genba/store/storetest"
 )
 
+func newStore(t *testing.T) store.Store { return memstore.New() }
+
 func TestConformance(t *testing.T) {
-	storetest.Run(t, func(t *testing.T) store.Store { return memstore.New() })
+	storetest.Run(t, newStore)
+}
+
+// memstore implements store.Statistician and neither of the other two, so most
+// of this suite skips. The cases that do run are the ones that matter here: the
+// corpus statistics are what the ranking is normalised against, and they have
+// to mean the same thing on the driver that is walked as on the driver that is
+// queried, or the same corpus ranks differently depending on where it is
+// stored.
+func TestRanking(t *testing.T) {
+	storetest.RunRanker(t, newStore)
 }
 
 func TestClosedStoreRefusesWork(t *testing.T) {
