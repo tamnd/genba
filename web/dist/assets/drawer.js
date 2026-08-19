@@ -9,6 +9,7 @@
 
 import { h, replace, svg } from "./dom.js";
 import { api } from "./api.js";
+import { cache } from "./cache.js";
 import { icon, label, sourceColor, when, exact } from "./format.js";
 import { body as renderBody, shapeOf } from "./content.js";
 
@@ -16,7 +17,7 @@ export class Drawer {
   constructor({ onClose }) {
     this.onClose = onClose;
     this.returnTo = null;
-    this.pending = null;
+    this.currentKey = "";
 
     this.title = h("h2", { class: "drawer__title", id: "drawer-title" });
     this.meta = h("div", { class: "drawer__meta" });
@@ -57,6 +58,34 @@ export class Drawer {
     this.returnTo = document.activeElement;
     this.el.hidden = false;
     this.scrim.hidden = false;
+    this.el.focus();
+
+    const k = cache.key("document", { id });
+    this.currentKey = k;
+
+    // A document the pointer rested on for a moment is usually already here, in
+    // which case the drawer never shows a loading state at all. The skeleton is
+    // only for the ones that are not.
+    if (cache.read(k).state === "miss") this.skeleton();
+
+    let painted = false;
+    try {
+      await cache.swr(
+        k,
+        (opts) => api.document(id, opts),
+        (d) => {
+          if (this.currentKey !== k) return;
+          painted = true;
+          this.render(d);
+        },
+      );
+    } catch (err) {
+      if (err.name === "AbortError") return;
+      if (!painted && this.currentKey === k) this.renderError(err);
+    }
+  }
+
+  skeleton() {
     replace(this.title, "Loading");
     replace(this.meta);
     replace(
@@ -66,19 +95,6 @@ export class Drawer {
       h("div", { class: "skeleton", style: { width: "70%", height: "14px" } }),
     );
     replace(this.foot);
-    this.el.focus();
-
-    if (this.pending) this.pending.abort();
-    const controller = new AbortController();
-    this.pending = controller;
-    try {
-      const d = await api.document(id, controller.signal);
-      if (controller.signal.aborted) return;
-      this.render(d);
-    } catch (err) {
-      if (err.name === "AbortError") return;
-      this.renderError(err);
-    }
   }
 
   render(d) {
@@ -134,7 +150,10 @@ export class Drawer {
 
   close() {
     if (!this.open) return;
-    if (this.pending) this.pending.abort();
+    // A request already in flight is left to finish and fill the cache, because
+    // reopening the same document is the most likely next thing to happen. It
+    // is the key that is dropped, so nothing it returns is painted.
+    this.currentKey = "";
     this.el.hidden = true;
     this.scrim.hidden = true;
     if (this.returnTo && this.returnTo.focus) this.returnTo.focus();

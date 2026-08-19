@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/tamnd/genba/acl"
+	"github.com/tamnd/genba/cache"
 	"github.com/tamnd/genba/doc"
 	"github.com/tamnd/genba/store"
 )
@@ -166,6 +167,12 @@ type Searcher struct {
 	store store.Store
 	now   func() time.Time
 
+	// cache is the derived state a repeated query reuses, and is nil when the
+	// searcher was built without one. See cache.go for what is in it and for the
+	// rule its keys obey.
+	cache     *Cache
+	stopWatch func()
+
 	// halfLife is how long it takes for the recency prior to decay by half. A
 	// document that has not changed in a year should not outrank this week's
 	// runbook on a tie, and it should not be buried either.
@@ -186,13 +193,52 @@ func WithRecencyHalfLife(d time.Duration) Option {
 	return func(s *Searcher) { s.halfLife = d }
 }
 
+// WithCache gives the searcher somewhere to reuse the work a repeated query
+// would otherwise redo. A searcher without one is correct and slower, which is
+// the property that makes the cache safe to have.
+func WithCache(c *Cache) Option {
+	return func(s *Searcher) { s.cache = c }
+}
+
 // New returns a searcher over st.
+//
+// A searcher given a cache subscribes it to the store's writes here rather than
+// leaving that to the caller. Wiring a cache up and forgetting to invalidate it
+// is not a mistake that produces an error: it produces a search that quietly
+// answers from last week, so it is not left as a step somebody can miss.
 func New(st store.Store, opts ...Option) *Searcher {
 	s := &Searcher{store: st, now: time.Now, halfLife: 180 * 24 * time.Hour}
 	for _, opt := range opts {
 		opt(s)
 	}
+	if s.cache != nil {
+		s.stopWatch = s.cache.Watch(st)
+	}
 	return s
+}
+
+// Close releases what the searcher holds, which is at most a subscription to
+// the store's writes. It does not close the store: the searcher did not open it
+// and something else is still using it.
+//
+// A process wide searcher never needs this. It is here for a test, and for an
+// embedder that builds a searcher per tenant and would otherwise accumulate
+// subscriptions for tenants nobody is querying.
+func (s *Searcher) Close() error {
+	if s.stopWatch != nil {
+		s.stopWatch()
+		s.stopWatch = nil
+	}
+	return nil
+}
+
+// CacheStats reports what each cache layer has done, and nil when the searcher
+// has no cache.
+func (s *Searcher) CacheStats() map[string]cache.Stats {
+	if s.cache == nil {
+		return nil
+	}
+	return s.cache.Stats()
 }
 
 // Retrieving reports whether the store behind this searcher can serve a match
@@ -289,13 +335,21 @@ func (s *Searcher) Search(ctx context.Context, p *acl.Principal, q Query) (Resul
 	if err != nil {
 		return Results{}, err
 	}
+	// A candidate whose document did not come back is dropped rather than shown
+	// from the metadata that was ranked. The fetch is the last thing that applies
+	// the permission rule, so an id it declined is an id this person may not read
+	// now, whatever was true when the ordering was made. Showing the title, the
+	// container and the author of a document somebody just lost access to is a
+	// leak, and it is a leak that gets more likely the longer an ordering is
+	// allowed to be reused. Losing a row from the page is the cheaper mistake.
 	res.Hits = make([]Result, 0, len(window))
 	for _, r := range window {
-		hit := Result{Document: outline(r.cand), Score: r.score}
-		if full, ok := bodies[r.cand.ID]; ok {
-			hit.Document = full
-			hit.Snippet, hit.Passages = snippet(readable(full), req.Terms)
+		full, ok := bodies[r.cand.ID]
+		if !ok {
+			continue
 		}
+		hit := Result{Document: full, Score: r.score}
+		hit.Snippet, hit.Passages = snippet(readable(full), req.Terms)
 		res.Hits = append(res.Hits, hit)
 	}
 	res.Took = s.now().Sub(start)
@@ -313,9 +367,13 @@ type ranked struct {
 // A driver that can do it in one statement is asked to. One that cannot is
 // asked document by document, which is the old behaviour and is correct, just
 // twenty round trips instead of one. Either way an id that has stopped being
-// readable between the ranking and now is simply missing from the result, and
-// the caller falls back to the metadata it already ranked rather than failing
-// the page.
+// readable between the ranking and now is simply missing from what comes back,
+// and [Searcher.Search] drops it from the page rather than failing the request.
+//
+// That makes this the point where a stale ordering is checked against the
+// permission rule as it stands now, which is what lets an ordering be reused
+// for thirty seconds without a revocation in that window being visible for
+// thirty seconds.
 func (s *Searcher) fetch(ctx context.Context, p *acl.Principal, window []ranked) (map[string]doc.Document, error) {
 	out := make(map[string]doc.Document, len(window))
 	if len(window) == 0 {
@@ -326,6 +384,36 @@ func (s *Searcher) fetch(ctx context.Context, p *acl.Principal, window []ranked)
 		ids = append(ids, r.cand.ID)
 	}
 
+	// This is the one place the document cache is consulted, and the ids handed
+	// to it are the ids the retrieval above just produced under this principal's
+	// permission predicate. That ordering is what makes an entry keyed by id
+	// alone safe, and it is why the lookup is here rather than behind
+	// store.Store.Get where any id at all could arrive. See [Cache.document].
+	if s.cache != nil {
+		var missing []string
+		out, missing = s.cache.document(ids)
+		if len(missing) == 0 {
+			return out, nil
+		}
+		ids = missing
+	}
+
+	fetched, err := s.read(ctx, p, ids)
+	if err != nil {
+		return nil, err
+	}
+	if s.cache != nil {
+		s.cache.putDocuments(fetched)
+	}
+	for id, d := range fetched {
+		out[id] = d
+	}
+	return out, nil
+}
+
+// read is the fetch itself, with no cache in front of it.
+func (s *Searcher) read(ctx context.Context, p *acl.Principal, ids []string) (map[string]doc.Document, error) {
+	out := make(map[string]doc.Document, len(ids))
 	if f, ok := s.store.(store.Fetcher); ok {
 		docs, err := f.Fetch(ctx, p, ids)
 		if err != nil {
@@ -344,19 +432,6 @@ func (s *Searcher) fetch(ctx context.Context, p *acl.Principal, window []ranked)
 		out[id] = d
 	}
 	return out, nil
-}
-
-// outline is the document a result falls back to when the fetch could not read
-// it: everything the ranking already knew, and no body.
-func outline(c store.Candidate) doc.Document {
-	return doc.Document{
-		ID:         c.ID,
-		Source:     c.Source,
-		Kind:       c.Kind,
-		Container:  c.Container,
-		Author:     doc.Person{Name: c.Author},
-		ModifiedAt: c.ModifiedAt,
-	}
 }
 
 // page slices a sorted result set, tolerating an offset past the end.

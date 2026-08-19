@@ -23,17 +23,24 @@ const module = "github.com/tamnd/genba"
 // already been filtered. An edge that skips a layer is how a component ends up
 // holding a document it was never supposed to see.
 var allowed = map[string][]string{
-	"":                  nil,
-	"acl":               nil,
-	"doc":               {"acl"},
+	"":    nil,
+	"acl": nil,
+	"doc": {"acl"},
+
+	// cache is a map with a lock on it and imports nothing of ours, which is
+	// what lets index depend on it without the dependency meaning anything. A
+	// cache that knew about principals would be a second copy of the permission
+	// model in the package least equipped to hold one.
+	"cache": nil,
+
 	"store":             {"acl", "doc"},
 	"store/memstore":    {"", "acl", "doc", "store"},
 	"store/sqlitestore": {"", "acl", "doc", "store"},
 	"store/storetest":   {"", "acl", "doc", "store"},
-	"index":             {"acl", "doc", "store"},
+	"index":             {"acl", "cache", "doc", "store"},
 	"config":            nil,
 	"web":               nil,
-	"api":               {"", "acl", "doc", "index", "store"},
+	"api":               {"", "acl", "cache", "doc", "index", "store"},
 
 	// Ingestion sits beside the query path rather than under it. A connector
 	// describes documents and who may read them, the pipeline writes them, and

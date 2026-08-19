@@ -59,6 +59,7 @@ var cases = []testCase{
 	{"content is served only to a reader who may see the document", testContent},
 	{"content never rides along on a query path", testContentIsNotInTheDocument},
 	{"deleting a document deletes its content", testContentDelete},
+	{"writes are reported after they are visible", testNotifyWrites},
 }
 
 // contentStore skips a case for a driver that does not hold bytes.

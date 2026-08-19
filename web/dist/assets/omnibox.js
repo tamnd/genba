@@ -10,6 +10,7 @@
 
 import { h, replace, svg } from "./dom.js";
 import { api } from "./api.js";
+import { cache } from "./cache.js";
 import { icon } from "./format.js";
 
 // DEBOUNCE is how long the box waits before asking the server. The suggestion
@@ -18,13 +19,14 @@ import { icon } from "./format.js";
 const DEBOUNCE = 90;
 
 export class Omnibox {
-  constructor({ onSearch, onOpen }) {
+  constructor({ onSearch, onOpen, onHighlight }) {
     this.onSearch = onSearch;
     this.onOpen = onOpen;
+    this.onHighlight = onHighlight || (() => {});
     this.items = [];
     this.active = -1;
     this.timer = null;
-    this.pending = null;
+    this.latest = "";
 
     this.input = h("input", {
       class: "omnibox__input",
@@ -91,18 +93,23 @@ export class Omnibox {
   }
 
   async fetch(q) {
-    // Only the newest request may render. Without this a slow response for a
-    // two letter prefix lands after the fast one for five letters and the list
-    // goes backwards while somebody is still typing.
-    if (this.pending) this.pending.abort();
-    const controller = new AbortController();
-    this.pending = controller;
+    // Only the newest prefix may render. Without this a slow response for two
+    // letters lands after the fast one for five and the list goes backwards
+    // while somebody is still typing. The request itself is not cancelled: it
+    // is on its way to the cache, and backspacing one letter is the single most
+    // likely next thing anybody does in a search box.
+    this.latest = q;
     try {
-      const res = await api.suggest(q, controller.signal);
-      if (controller.signal.aborted) return;
-      this.render(res.suggestions || []);
+      await cache.swr(
+        cache.key("suggest", { q }),
+        (opts) => api.suggest(q, opts),
+        (res) => {
+          if (this.latest !== q) return;
+          this.render(res.suggestions || []);
+        },
+      );
     } catch (err) {
-      if (err.name !== "AbortError") this.close();
+      if (this.latest === q && err.name !== "AbortError") this.close();
     }
   }
 
@@ -161,6 +168,9 @@ export class Omnibox {
     } else {
       this.input.removeAttribute("aria-activedescendant");
     }
+    // The shell decides whether a highlighted row is worth fetching ahead of
+    // Enter being pressed, and how long it has to stay highlighted first.
+    this.onHighlight(this.items[i] || null);
   }
 
   choose(i) {

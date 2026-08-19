@@ -43,6 +43,12 @@ import (
 
 // Store is a [store.Store] over one SQLite database.
 type Store struct {
+	// Notify makes this driver report its own writes. A cache above it drops
+	// what the write made wrong, and the browser's event stream tells the page
+	// on screen that the corpus moved. Both used to be a timer, which is the
+	// answer that is either too slow to be useful or too expensive to be cheap.
+	store.Notify
+
 	db *sql.DB
 
 	// write serialises writers. SQLite allows one at a time and in WAL mode a
@@ -64,6 +70,7 @@ var (
 	_ store.Ranker       = (*Store)(nil)
 	_ store.Statistician = (*Store)(nil)
 	_ store.Fetcher      = (*Store)(nil)
+	_ store.Notifier     = (*Store)(nil)
 )
 
 // Counters is the work one query cost, counted exactly.
@@ -241,14 +248,20 @@ func (s *Store) Put(ctx context.Context, docs ...doc.Document) error {
 	}
 	defer w.close()
 
+	written := make(map[string][]string)
 	for _, d := range docs {
 		if err := putOne(ctx, tx, w, d); err != nil {
 			return fmt.Errorf("sqlitestore: put %s: %w", d.ID, err)
 		}
+		written[d.Tenant] = append(written[d.Tenant], d.ID)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("sqlitestore: put: %w", err)
 	}
+	// After the commit, never before. A subscriber that dropped a cache entry
+	// for a write that then rolled back would refill it from the state the write
+	// was about to replace, which is a worse cache than no cache.
+	s.Changes(written, false)
 	return nil
 }
 
@@ -277,7 +290,7 @@ func putOne(ctx context.Context, tx *sql.Tx, w *writer, d doc.Document) error {
 	// Whatever is stored under this id stops counting before the row that
 	// carries the numbers is overwritten, because after the write there is no
 	// way left to know what it used to contribute.
-	if _, _, err := w.retire(ctx, d.ID); err != nil {
+	if _, _, _, err := w.retire(ctx, d.ID); err != nil {
 		return err
 	}
 
@@ -417,13 +430,14 @@ func (s *Store) Delete(ctx context.Context, ids ...string) error {
 	}
 	defer w.close()
 
+	removed := make(map[string][]string)
 	for _, id := range ids {
 		// The rowid is read first because the full text index is keyed on it
 		// and knows nothing about document ids. Deleting a document that is not
 		// there is not an error, which is what makes a retry safe. retire is
 		// what takes the document back out of the corpus statistics, which has
 		// to happen while its postings are still there to be counted.
-		rowid, found, err := w.retire(ctx, id)
+		rowid, tenant, found, err := w.retire(ctx, id)
 		if err != nil {
 			return fmt.Errorf("sqlitestore: delete %s: %w", id, err)
 		}
@@ -436,10 +450,12 @@ func (s *Store) Delete(ctx context.Context, ids ...string) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM document WHERE id = ?`, id); err != nil {
 			return fmt.Errorf("sqlitestore: delete %s: %w", id, err)
 		}
+		removed[tenant] = append(removed[tenant], id)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("sqlitestore: delete: %w", err)
 	}
+	s.Changes(removed, true)
 	return nil
 }
 

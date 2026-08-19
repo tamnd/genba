@@ -56,7 +56,16 @@ export class ApiError extends Error {
   }
 }
 
-async function get(path, params, signal) {
+/**
+ * get reads one JSON endpoint and reports whether the answer moved.
+ *
+ * Every read returns an envelope rather than the body, because every one of
+ * these responses is revalidated rather than refetched. Passing back the entity
+ * tag lets the next call ask whether what the client holds is still current,
+ * and a server that has not changed its mind answers that in a few hundred
+ * bytes with no body at all, which is the whole point of cache.js.
+ */
+async function get(path, params, opts = {}) {
   const url = new URL(BASE + path, location.origin);
   for (const [key, value] of Object.entries(params || {})) {
     if (value === undefined || value === null || value === "") continue;
@@ -65,7 +74,10 @@ async function get(path, params, signal) {
     }
   }
 
-  const res = await fetch(url, { headers: headers(), signal });
+  const sent = headers();
+  if (opts.etag) sent["If-None-Match"] = opts.etag;
+  const res = await fetch(url, { headers: sent, signal: opts.signal });
+  if (res.status === 304) return { modified: false, etag: opts.etag };
   if (!res.ok) {
     let code = "error";
     let message = `the server returned ${res.status}`;
@@ -81,7 +93,50 @@ async function get(path, params, signal) {
     }
     throw new ApiError(res.status, code, message);
   }
-  return res.json();
+  return { modified: true, etag: res.headers.get("ETag") || "", data: await res.json() };
+}
+
+/**
+ * events reads the index change stream.
+ *
+ * EventSource would be the obvious way to do this and cannot be used, because
+ * it sends no headers of its own and every request here carries the caller's
+ * identity in one. So the stream is read from a normal fetch, which means the
+ * frame parsing is ours: frames are separated by a blank line, a line starting
+ * with a colon is a comment and is how the server keeps the connection alive,
+ * and anything we cannot parse is ignored rather than thrown, because a
+ * malformed frame is not a reason to tear down a working stream.
+ *
+ * It resolves when the server closes the stream, so the caller reconnects.
+ */
+async function events(onEvent, signal) {
+  const res = await fetch(BASE + "/events", { headers: headers(), signal });
+  if (!res.ok || !res.body) {
+    throw new ApiError(res.status, "error", `the event stream returned ${res.status}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    buffer += decoder.decode(value, { stream: true });
+    for (let cut = buffer.indexOf("\n\n"); cut >= 0; cut = buffer.indexOf("\n\n")) {
+      const frame = buffer.slice(0, cut);
+      buffer = buffer.slice(cut + 2);
+      const data = frame
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .join("");
+      if (!data) continue;
+      try {
+        onEvent(JSON.parse(data));
+      } catch {
+        // A frame this client does not understand is a frame it does not need.
+      }
+    }
+  }
 }
 
 /**
@@ -92,8 +147,8 @@ async function get(path, params, signal) {
  * server decides, from the same headers as every other request, and a document
  * somebody may not read is a 404 here exactly as it is everywhere else.
  */
-async function bytes(path, signal) {
-  const res = await fetch(BASE + path, { headers: headers(), signal });
+async function bytes(path, opts = {}) {
+  const res = await fetch(BASE + path, { headers: headers(), signal: opts.signal });
   if (!res.ok) throw new ApiError(res.status, "error", `the server returned ${res.status}`);
   const dims = (res.headers.get("X-Content-Dimensions") || "").split("x");
   return {
@@ -104,12 +159,16 @@ async function bytes(path, signal) {
   };
 }
 
+// Every JSON read takes the same options, { signal, etag }, and returns the
+// same envelope. The two that do not are content, which is bytes rather than a
+// document, and the stream, which never finishes.
 export const api = {
-  me: (signal) => get("/me", {}, signal),
-  stats: (signal) => get("/stats", {}, signal),
-  search: (query, signal) => get("/search", query, signal),
-  suggest: (q, signal) => get("/suggest", { q }, signal),
-  document: (id, signal) => get(`/documents/${encodeURIComponent(id)}`, {}, signal),
-  content: (id, signal) => bytes(`/documents/${encodeURIComponent(id)}/content`, signal),
+  me: (opts) => get("/me", {}, opts),
+  stats: (opts) => get("/stats", {}, opts),
+  search: (query, opts) => get("/search", query, opts),
+  suggest: (q, opts) => get("/suggest", { q }, opts),
+  document: (id, opts) => get(`/documents/${encodeURIComponent(id)}`, {}, opts),
+  content: (id, opts) => bytes(`/documents/${encodeURIComponent(id)}/content`, opts),
+  events,
   health: (signal) => fetch("/healthz", { signal }).then((r) => r.json()),
 };

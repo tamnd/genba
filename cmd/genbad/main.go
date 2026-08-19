@@ -117,7 +117,13 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	if h := web.Handler(); h != nil {
 		opts = append(opts, api.WithAssets(h))
 	}
-	srv := api.New(st, index.New(st), api.HeaderAuth{Tenant: cfg.Tenant}, opts...)
+
+	// The searcher subscribes the cache to the store's writes, so it is closed
+	// before the store is, and it holds nothing else.
+	searcher := index.New(st, searchOptions(cfg)...)
+	defer func() { _ = searcher.Close() }()
+
+	srv := api.New(st, searcher, api.HeaderAuth{Tenant: cfg.Tenant}, opts...)
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,
@@ -132,6 +138,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		"addr", cfg.Addr,
 		"store", cfg.Store,
 		"interface", web.Enabled(),
+		"cache", cfg.Cache,
 	)
 
 	errc := make(chan error, 1)
@@ -184,4 +191,19 @@ func newLogger(w io.Writer, level string) *slog.Logger {
 		l = slog.LevelInfo
 	}
 	return slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: l}))
+}
+
+// searchOptions builds the searcher from the configuration.
+//
+// A deployment that turns the cache off gets a searcher with no cache at all
+// rather than a cache that holds nothing, so that the option is visible in a
+// stack trace and in the stats response instead of being a set of layers
+// reporting zero.
+func searchOptions(cfg config.Config) []index.Option {
+	if !cfg.Cache {
+		return nil
+	}
+	return []index.Option{
+		index.WithCache(index.NewCache(index.WithResultExpiry(cfg.CacheResultExpiry))),
+	}
 }

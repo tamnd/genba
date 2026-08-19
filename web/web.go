@@ -22,6 +22,23 @@
 // gets a 304 for anything it already has, which costs one conditional request
 // per asset and is always correct, including the case that matters: an operator
 // upgrading the binary under a browser that has the old one cached.
+//
+// # What the interface holds
+//
+// assets/cache.js keeps answers in memory for the life of the tab, so that going
+// back to a search paints before the network is asked anything. The same rule
+// the server cache is built on holds here: a key that does not name the asker's
+// visibility is a permission bug. The client cannot work out its own view, so
+// [github.com/tamnd/genba/api] hands it one in the me response and every key is
+// written under it. Switching identity throws the whole store away rather than
+// filtering it, because a tab holds results for more than one person over its
+// life and an entry that survived the switch has leaked a document.
+//
+// Nothing is written to disk. The theme, the density and the development
+// identity live in localStorage and are the whole of what persists, because
+// they are the only things there that the corpus did not say. Results and
+// documents are memory only, since memory is the session's lifetime and the
+// session is exactly how long anybody was allowed to read them.
 package web
 
 import (

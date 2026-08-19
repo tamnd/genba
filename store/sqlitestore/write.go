@@ -117,34 +117,36 @@ func (w *writer) close() {
 //
 // It runs before the row is rewritten, because the columns it reads are the
 // ones about to be overwritten. It returns whether the document was there at
-// all, which is what tells the delete path there is nothing to do.
-func (w *writer) retire(ctx context.Context, id string) (rowid int64, found bool, err error) {
+// all, which is what tells the delete path there is nothing to do, and the
+// tenant it belonged to, which the delete path has no other way to learn: after
+// the row is gone there is nothing left to read it from, and a change reported
+// with no tenant on it is a change a subscriber cannot act on.
+func (w *writer) retire(ctx context.Context, id string) (rowid int64, tenant string, found bool, err error) {
 	var (
-		tenant            string
 		titleTok, bodyTok int64
 		queryable         int
 	)
 	switch err := w.prior.QueryRowContext(ctx, id).Scan(&rowid, &tenant, &titleTok, &bodyTok, &queryable); {
 	case errors.Is(err, sql.ErrNoRows):
-		return 0, false, nil
+		return 0, "", false, nil
 	case err != nil:
-		return 0, false, err
+		return 0, "", false, err
 	}
 
 	// A quarantined document was never counted, so taking it out again would
 	// count it backwards.
 	if queryable == 1 {
 		if _, err := w.retireTerm.ExecContext(ctx, tenant, rowid); err != nil {
-			return 0, false, err
+			return 0, "", false, err
 		}
 		if _, err := w.corpusSub.ExecContext(ctx, titleTok, bodyTok, tenant); err != nil {
-			return 0, false, err
+			return 0, "", false, err
 		}
 	}
 	if _, err := w.dropPost.ExecContext(ctx, rowid); err != nil {
-		return 0, false, err
+		return 0, "", false, err
 	}
-	return rowid, true, nil
+	return rowid, tenant, true, nil
 }
 
 // index writes the postings for a document and folds it into the corpus

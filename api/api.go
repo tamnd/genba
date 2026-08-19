@@ -27,6 +27,7 @@ import (
 
 	"github.com/tamnd/genba"
 	"github.com/tamnd/genba/acl"
+	"github.com/tamnd/genba/cache"
 	"github.com/tamnd/genba/doc"
 	"github.com/tamnd/genba/index"
 	"github.com/tamnd/genba/store"
@@ -64,6 +65,10 @@ type Server struct {
 
 	// started is when the process came up, reported by the health endpoint.
 	started time.Time
+	now     func() time.Time
+
+	// heartbeat is how often an idle event stream sends a comment.
+	heartbeat time.Duration
 }
 
 // Option configures a [Server].
@@ -85,9 +90,24 @@ func WithAssets(h http.Handler) Option {
 	return func(s *Server) { s.assets = h }
 }
 
-// WithClock sets the clock used for uptime reporting.
+// WithClock sets the clock used for uptime reporting and for timestamping
+// index events.
 func WithClock(now func() time.Time) Option {
-	return func(s *Server) { s.started = now() }
+	return func(s *Server) {
+		if now != nil {
+			s.now, s.started = now, now()
+		}
+	}
+}
+
+// WithHeartbeat sets how often an idle event stream sends a comment. It exists
+// so that a test does not have to wait [HeartbeatInterval] to see one.
+func WithHeartbeat(d time.Duration) Option {
+	return func(s *Server) {
+		if d > 0 {
+			s.heartbeat = d
+		}
+	}
 }
 
 // New returns a server. It does not listen: [Server.Handler] returns something
@@ -95,11 +115,13 @@ func WithClock(now func() time.Time) Option {
 // embeddable in an existing Go service.
 func New(st store.Store, searcher *index.Searcher, auth Authenticator, opts ...Option) *Server {
 	s := &Server{
-		store:    st,
-		searcher: searcher,
-		auth:     auth,
-		log:      slog.Default(),
-		started:  time.Now(),
+		store:     st,
+		searcher:  searcher,
+		auth:      auth,
+		log:       slog.Default(),
+		started:   time.Now(),
+		now:       time.Now,
+		heartbeat: HeartbeatInterval,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -118,6 +140,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/documents/{id}", s.authenticated(s.handleDocument))
 	mux.Handle("GET /api/v1/documents/{id}/content", s.authenticated(s.handleContent))
 	mux.Handle("GET /api/v1/stats", s.authenticated(s.handleStats))
+	mux.Handle("GET /api/v1/events", s.authenticated(s.handleEvents))
 	if s.assets != nil {
 		mux.Handle("GET /", s.assets)
 	}
@@ -279,7 +302,27 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Pri
 			Score:      h.Score,
 		})
 	}
-	writeJSON(w, http.StatusOK, out)
+	writeConditional(w, r, http.StatusOK, out, out.identity())
+}
+
+// identity is the response without the numbers that change on every request.
+//
+// Two of them do. How long the search took is the obvious one. The other is the
+// score, which carries a recency prior that decays against the wall clock, so
+// it is a slightly different number every time the same query is run and it
+// would make an entity tag that never matches, which is a revalidation that can
+// never succeed. What the tag has to mean is that the same documents came back
+// in the same order with the same content, and it still means exactly that:
+// scores that moved enough to matter moved the order too.
+func (r searchResponse) identity() any {
+	r.TookMS = 0
+	hits := make([]searchHit, len(r.Hits))
+	copy(hits, r.Hits)
+	for i := range hits {
+		hits[i].Score = 0
+	}
+	r.Hits = hits
+	return r
 }
 
 // parseQuery builds a query from the URL.
@@ -374,6 +417,18 @@ type meResponse struct {
 	Tenant  string   `json:"tenant"`
 	Roles   []string `json:"roles,omitempty"`
 
+	// View names what this principal can see, and is the same fingerprint the
+	// server keys its own caches by.
+	//
+	// The interface holds results in memory and one tab can hold them for more
+	// than one identity over its life, because the identity switcher exists.
+	// Serving one identity's cached results to another is the same bug in a
+	// browser as it is in a server, so the browser prepends this to every cache
+	// key it makes. It is computed here rather than derived there so that the
+	// two cannot drift apart, and it says nothing about the principal that the
+	// rest of this response does not already say out loud.
+	View string `json:"view"`
+
 	// Sources is what this principal can actually see something from, which is
 	// what the interface builds its source filter out of. It is per principal
 	// rather than a list of configured connectors, because telling somebody a
@@ -386,7 +441,14 @@ type meResponse struct {
 // handleMe is what the interface loads before it can draw anything: who the
 // caller is and which filters are worth showing them.
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, p *acl.Principal) {
-	out := meResponse{Subject: p.Subject, Tenant: p.Tenant, Roles: p.Roles, Sources: []facet{}, Kinds: []facet{}}
+	out := meResponse{
+		Subject: p.Subject,
+		Tenant:  p.Tenant,
+		Roles:   p.Roles,
+		View:    acl.Fingerprint(p),
+		Sources: []facet{},
+		Kinds:   []facet{},
+	}
 	res, err := s.searcher.Search(r.Context(), p, index.Query{Limit: 1})
 	if err != nil {
 		s.log.Error("bootstrap failed", "error", err, "tenant", p.Tenant)
@@ -395,7 +457,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, p *acl.Princip
 	}
 	out.Sources = facetValues(res.Facets["source"])
 	out.Kinds = facetValues(res.Facets["kind"])
-	writeJSON(w, http.StatusOK, out)
+	writeConditional(w, r, http.StatusOK, out, nil)
 }
 
 type suggestResponse struct {
@@ -425,7 +487,7 @@ func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request, p *acl.Pr
 	raw := strings.TrimSpace(r.URL.Query().Get("q"))
 	out := suggestResponse{Query: raw, Suggestions: []suggestion{}}
 	if raw == "" {
-		writeJSON(w, http.StatusOK, out)
+		writeConditional(w, r, http.StatusOK, out, out.identity())
 		return
 	}
 
@@ -438,7 +500,7 @@ func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request, p *acl.Pr
 	res, err := s.searcher.Search(r.Context(), p, q)
 	if err != nil {
 		s.log.Warn("suggest failed", "error", err, "tenant", p.Tenant)
-		writeJSON(w, http.StatusOK, out)
+		writeConditional(w, r, http.StatusOK, out, out.identity())
 		return
 	}
 	for _, h := range res.Hits {
@@ -454,7 +516,14 @@ func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request, p *acl.Pr
 		})
 	}
 	out.TookMS = float64(time.Since(start).Microseconds()) / 1000
-	writeJSON(w, http.StatusOK, out)
+	writeConditional(w, r, http.StatusOK, out, out.identity())
+}
+
+// identity is the suggestions without the timing, for the same reason as
+// [searchResponse.identity].
+func (r suggestResponse) identity() any {
+	r.TookMS = 0
+	return r
 }
 
 // operators is the list the typeahead offers, which is also the documentation
@@ -509,7 +578,7 @@ func (s *Server) handleDocument(w http.ResponseWriter, r *http.Request, p *acl.P
 		writeError(w, http.StatusInternalServerError, "internal", "the document could not be read")
 		return
 	}
-	writeJSON(w, http.StatusOK, documentResponse(d))
+	writeConditional(w, r, http.StatusOK, documentResponse(d), nil)
 }
 
 type documentBody struct {
@@ -622,15 +691,42 @@ func (s *Server) writeContent(w http.ResponseWriter, r *http.Request, d doc.Docu
 	http.ServeContent(w, r, "", d.ModifiedAt, bytes.NewReader(c.Bytes))
 }
 
+// statsResponse is what the corpus holds and what the caches have done with it.
+//
+// The cache numbers are here rather than behind an operator only endpoint
+// because a cache nobody can see the hit rate of is a cache nobody can tell is
+// broken. A layer sitting at a two percent hit rate is doing nothing but
+// spending memory, and the only way anyone finds that out is by being able to
+// look.
+type statsResponse struct {
+	Documents   int                    `json:"documents"`
+	Quarantined int                    `json:"quarantined"`
+	Cache       map[string]cache.Stats `json:"cache,omitempty"`
+}
+
+// handleStats reports the corpus and the cache counters.
+//
+// This is the one read endpoint with no entity tag, because the counters it
+// reports are moved by the act of reading them. A tag over a body that counts
+// its own reads can never match on the next request, so a conditional request
+// here is a full response with an extra header on it, and a tag that excluded
+// the counters would be worse: the client would hold the first hit rate it ever
+// saw and never be told a different one. The response is a couple of hundred
+// bytes and the client holds it for a TTL, so the round trip is cheap and the
+// number is always real.
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request, _ *acl.Principal) {
 	st, err := s.store.Stats(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "stats are not available")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]int{
-		"documents":   st.Documents,
-		"quarantined": st.Quarantined,
+	h := w.Header()
+	h.Set("Cache-Control", cacheControl)
+	h.Set(varyHeader, varyValue)
+	writeJSON(w, http.StatusOK, statsResponse{
+		Documents:   st.Documents,
+		Quarantined: st.Quarantined,
+		Cache:       s.searcher.CacheStats(),
 	})
 }
 
