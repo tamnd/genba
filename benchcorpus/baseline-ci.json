@@ -1,0 +1,63 @@
+{
+  "seed": 2121,
+  "documents": 20000,
+  "recorded": "2026-08-19",
+  "runner": "ubuntu-latest nightly",
+  "calibration_ms": 12.41,
+  "classes": {
+    "common": {
+      "samples": 744,
+      "rounds": 8,
+      "best_ms": 85.246,
+      "p50_ms": 86.5,
+      "p95_ms": 149.706,
+      "p99_ms": 164.204,
+      "budget_ms": 10
+    },
+    "filter": {
+      "samples": 936,
+      "rounds": 8,
+      "best_ms": 33.199,
+      "p50_ms": 34.476,
+      "p95_ms": 42.009,
+      "p99_ms": 43.245,
+      "budget_ms": 8
+    },
+    "multi": {
+      "samples": 744,
+      "rounds": 8,
+      "best_ms": 39.473,
+      "p50_ms": 40.668,
+      "p95_ms": 93.849,
+      "p99_ms": 121.429,
+      "budget_ms": 10
+    },
+    "pathological": {
+      "samples": 296,
+      "rounds": 8,
+      "best_ms": 247.504,
+      "p50_ms": 249.094,
+      "p95_ms": 252.664,
+      "p99_ms": 257.135,
+      "budget_ms": 25
+    },
+    "rare": {
+      "samples": 1000,
+      "rounds": 8,
+      "best_ms": 8.014,
+      "p50_ms": 8.194,
+      "p95_ms": 18.429,
+      "p99_ms": 23.391,
+      "budget_ms": 3
+    },
+    "term-filter": {
+      "samples": 744,
+      "rounds": 8,
+      "best_ms": 16.052,
+      "p50_ms": 16.851,
+      "p95_ms": 39.223,
+      "p99_ms": 75.345,
+      "budget_ms": 10
+    }
+  }
+}
