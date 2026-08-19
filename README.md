@@ -238,6 +238,7 @@ func main() {
 | `store` | the storage interface, plus `storetest`, the conformance suite |
 | `store/memstore` | the reference in memory driver |
 | `store/sqlitestore` | the SQLite driver, pure Go, FTS5 and the permission check in one query |
+| `store/pgstore` | the PostgreSQL 18 driver, migrations as SQL files and the permission check in one query |
 | `index` | query parsing, retrieval and ranking |
 | `connector` | the ingestion contract, cursors and checkpoints |
 | `connector/fssource` | the reference connector, a directory tree with OWNERS files |
@@ -310,7 +311,8 @@ Four drivers are planned:
 - `memstore`, in memory, the reference implementation and what the tests run on.
 - `sqlitestore`, pure Go, for a single node install that wants to keep its data.
 - `pgstore`, PostgreSQL 18, for a deployment that already runs one.
-  Not written yet.
+  Connection pooling, retries and the schema all come out of one connection string, and the migrations are SQL files a DBA can read before running them.
+  [docs/postgres.md](docs/postgres.md) has the details, including the trade it makes and the lock the write path takes.
 - `kurastore`, which will link [tamnd/kura](https://github.com/tamnd/kura), a storage engine written in Rust.
   `store/kura` binds what its C ABI offers today, which is bitmaps, posting lists and vectors rather than a document store, so there is a binding and not yet a driver.
   It is compiled in with `-tags kura` and `CGO_ENABLED=1`, and everything else keeps working without it.
@@ -321,6 +323,7 @@ A driver that can do better than a scan says so by implementing `store.Retriever
 There is one definition of the match set and both paths are held to it.
 `store/storetest` runs a driver's `Retrieve` against its own `Scan` and fails any disagreement, and `index` runs the same searches through both drivers and requires the same ranked answer, so a driver cannot quietly drift from the analyzer.
 `sqlitestore` also counts the rows the database hands back, which is what its own tests assert on: a caller who may read nothing costs zero rows rather than five hundred rows filtered afterwards.
+`pgstore` does the same, and adds a test that reads the query plan, because the plan is the only thing that says where in the database the filtering happened rather than just that it happened somewhere.
 
 ## Build
 

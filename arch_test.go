@@ -66,6 +66,7 @@ var allowed = map[string][]string{
 	"store/kura": nil,
 
 	"store/memstore":    {"", "acl", "doc", "store"},
+	"store/pgstore":     {"", "acl", "doc", "store"},
 	"store/sqlitestore": {"", "acl", "doc", "store"},
 	"store/storetest":   {"", "acl", "doc", "store"},
 	"index":             {"acl", "cache", "doc", "store"},
@@ -91,7 +92,7 @@ var allowed = map[string][]string{
 	"benchcorpus/gen": {"benchcorpus", "store/sqlitestore"},
 
 	"cmd/genba":  {""},
-	"cmd/genbad": {"", "api", "config", "connector", "connector/fssource", "index", "ingest", "store", "store/memstore", "store/sqlitestore", "web"},
+	"cmd/genbad": {"", "api", "config", "connector", "connector/fssource", "index", "ingest", "store", "store/memstore", "store/pgstore", "store/sqlitestore", "web"},
 }
 
 func TestDependencyDirection(t *testing.T) {

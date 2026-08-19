@@ -10,7 +10,7 @@ LDFLAGS := -s -w \
 
 export CGO_ENABLED := 0
 
-.PHONY: build cli install test race cover bench bench-corpus bench-search bench-counters bench-gate bench-gate-record ui-gate vet fmt lint tidy vuln headless kura kura-test kura-build clean run
+.PHONY: build cli install test race cover bench bench-corpus bench-search bench-counters bench-gate bench-gate-record ui-gate vet fmt lint tidy vuln pg-server pg-test headless kura kura-test kura-build clean run
 
 # How large the benchmark corpus is. The budgets are stated against a hundred
 # thousand documents, which takes a couple of minutes to generate, so the
@@ -107,6 +107,21 @@ tidy:
 
 vuln:
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+# The Postgres driver, against a server you have to bring.
+#
+# There is no in process Postgres, so these tests skip without one and pg-test
+# says so rather than reporting a pass. pg-server starts a throwaway 18 in a
+# container and prints the connection string to feed it.
+PG_DSN ?= postgres://postgres:genba@127.0.0.1:5432/genba?sslmode=disable
+
+pg-server:
+	docker run --rm -d --name genba-postgres -p 5432:5432 \
+		-e POSTGRES_PASSWORD=genba -e POSTGRES_DB=genba postgres:18
+	@echo "GENBA_TEST_POSTGRES=$(PG_DSN)"
+
+pg-test:
+	GENBA_TEST_POSTGRES="$(PG_DSN)" go test -count=1 ./store/pgstore/...
 
 # Build the API only server, without the browser interface compiled in.
 headless:
