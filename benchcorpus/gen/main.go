@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -41,7 +42,7 @@ func main() {
 		return
 	}
 	if *out == "" {
-		fail(fmt.Errorf("no -out and no -queries, so there is nothing to write"))
+		fail(errors.New("no -out and no -queries, so there is nothing to write"))
 	}
 	if err := writeCorpus(spec, *out); err != nil {
 		fail(err)

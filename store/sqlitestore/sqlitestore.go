@@ -123,14 +123,14 @@ func (s *Store) ResetCounters() {
 
 // query and queryRow are the only two ways this driver reads, so that the
 // statement counter cannot be forgotten at a new call site.
-func (s *Store) query(ctx context.Context, sql string, args ...any) (*sql.Rows, error) {
+func (s *Store) query(ctx context.Context, stmt string, args ...any) (*sql.Rows, error) {
 	s.counters.statements.Add(1)
-	return s.db.QueryContext(ctx, sql, args...)
+	return s.db.QueryContext(ctx, stmt, args...)
 }
 
-func (s *Store) queryRow(ctx context.Context, sql string, args ...any) *sql.Row {
+func (s *Store) queryRow(ctx context.Context, stmt string, args ...any) *sql.Row {
 	s.counters.statements.Add(1)
-	return s.db.QueryRowContext(ctx, sql, args...)
+	return s.db.QueryRowContext(ctx, stmt, args...)
 }
 
 // Open opens or creates a database at path and brings its schema up to date.

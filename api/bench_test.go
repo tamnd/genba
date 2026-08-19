@@ -23,7 +23,7 @@ import (
 // and a number there are comparable and the difference between them is the cost
 // of the HTTP layer.
 
-func handler(b *testing.B) (http.Handler, map[string]string) {
+func handler(b *testing.B) (h http.Handler, ids map[string]string) {
 	b.Helper()
 	st, spec := benchcorpus.Fixture(b)
 	s := api.New(st, index.New(st, index.WithClock(func() time.Time { return benchcorpus.Epoch })),

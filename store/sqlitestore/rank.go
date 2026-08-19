@@ -187,7 +187,7 @@ func (s *Store) frequencies(ctx context.Context, cands []store.Candidate, rowids
 // common table expression is materialised so it is evaluated once. Five
 // statements would apply the permission rule to the match set five times over
 // to answer five questions about the same rows.
-func (s *Store) counts(ctx context.Context, from string, c *clause) (int, map[string][]store.Facet, error) {
+func (s *Store) counts(ctx context.Context, from string, c *clause) (total int, facets map[string][]store.Facet, err error) {
 	const fields = `
 		SELECT 'total' AS field, '' AS value, count(*) AS n FROM m
 		UNION ALL SELECT * FROM (SELECT 'source', source, count(*) FROM m WHERE source <> '' GROUP BY source ORDER BY 3 DESC, 2 LIMIT ?)
@@ -210,10 +210,7 @@ func (s *Store) counts(ctx context.Context, from string, c *clause) (int, map[st
 	}
 	defer func() { _ = rows.Close() }()
 
-	var (
-		total  int
-		facets = map[string][]store.Facet{}
-	)
+	facets = map[string][]store.Facet{}
 	for rows.Next() {
 		var (
 			field, value string
