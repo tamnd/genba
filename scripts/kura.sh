@@ -47,7 +47,12 @@ MINGW* | MSYS* | CYGWIN*)
 		echo "kura: rustup is not on PATH, and the $TARGET standard library has to come from somewhere" >&2
 		exit 1
 	fi
-	rustup target add "$TARGET"
+	# Inside the source tree, because the engine pins its toolchain in a
+	# rust-toolchain.toml and rustup only reads that from the directory it is
+	# run in. Adding the target anywhere else adds it to whichever toolchain
+	# happens to be the default, which is not the one cargo is about to use, and
+	# the build then fails with exactly the error this is here to prevent.
+	(cd "$SRC" && rustup target add "$TARGET")
 	;;
 esac
 
