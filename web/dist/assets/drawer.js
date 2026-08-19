@@ -18,7 +18,7 @@ export class Drawer {
     this.pending = null;
 
     this.title = h("h2", { class: "drawer__title", id: "drawer-title" });
-    this.meta = h("div", { class: "card__head" });
+    this.meta = h("div", { class: "drawer__meta" });
     this.body = h("div", { class: "drawer__body" });
     this.foot = h("div", { class: "drawer__foot" });
 
@@ -40,7 +40,7 @@ export class Drawer {
         h(
           "button",
           { class: "icon-button", type: "button", "aria-label": "Close preview", onClick: () => this.close() },
-          svg(icon("close")),
+          svg(icon("close"), 20),
         ),
       ),
       this.body,
@@ -103,10 +103,10 @@ export class Drawer {
           "a",
           { class: "button button--primary", href: d.url, target: "_blank", rel: "noreferrer noopener" },
           "Open in source",
-          svg(icon("external"), 14),
+          svg(icon("external"), 16),
         ),
       d.modified_at &&
-        h("span", { class: "filterbar__meta", title: exact(d.modified_at) }, `Updated ${when(d.modified_at)}`),
+        h("span", { class: "meta", title: exact(d.modified_at) }, `Updated ${when(d.modified_at)}`),
     );
     // Focus lands on the first thing worth acting on once the content is in,
     // rather than on a spinner.

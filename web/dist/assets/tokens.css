@@ -10,26 +10,44 @@
  * The layers are deliberate. The palette names raw colour. The semantic tokens
  * name what a colour is for. Components only ever use the semantic layer, so
  * re-theming means overriding a dozen values instead of auditing every rule.
+ *
+ * Three rules hold this together and every value below follows from them.
+ *
+ * The ground is white. There is one surface colour in the light theme, and
+ * there is no grey page with white cards floating on it.
+ *
+ * Elevation is a hairline. One pixel, one colour. Two things in the entire
+ * interface cast a shadow, and both of them genuinely float over content that
+ * is still visible behind them.
+ *
+ * Colour is reserved. Neutrals carry the interface. The accent appears on the
+ * focus ring, on links and on the selected state. The highlight appears under
+ * a matched query term. Everything else is grey.
  */
 
 :root {
-  /* Palette: warm neutrals. Cold greys read as unfinished next to document
-     content, which is mostly text on white. */
+  /* Palette: cold neutrals. The previous set was warm on the argument that
+     cold greys read as unfinished next to document content. That argument
+     applies to large grey fills, and the large grey fills are gone. On white,
+     with hairlines and text, a warm grey reads as a yellowed page and fights
+     the highlight. */
   --gray-0: #ffffff;
-  --gray-25: #fcfcfb;
-  --gray-50: #f7f7f5;
-  --gray-100: #efeeec;
-  --gray-200: #e4e2df;
-  --gray-300: #d3d0cc;
-  --gray-400: #a8a49f;
-  --gray-500: #7c7873;
-  --gray-600: #5c5854;
-  --gray-700: #423f3c;
-  --gray-800: #2b2927;
-  --gray-900: #1a1918;
-  --gray-950: #111010;
+  --gray-25: #fafafa;
+  --gray-50: #f5f5f5;
+  --gray-100: #ebebeb;
+  --gray-200: #e0e0e0;
+  --gray-300: #c6c6c6;
+  --gray-400: #9e9e9e;
+  --gray-500: #757575;
+  --gray-600: #5c5c5c;
+  --gray-700: #3d3d3d;
+  --gray-800: #262626;
+  --gray-900: #1a1a1a;
+  --gray-950: #0f0f0f;
 
-  /* Brand indigo. */
+  /* Brand indigo. Unchanged. What changed is how much of it appears: it is
+     the focus ring, the link colour and the selected state, and it is not the
+     fill of anything. */
   --brand-50: #eef2ff;
   --brand-100: #e0e7ff;
   --brand-200: #c7d2fe;
@@ -41,28 +59,25 @@
   --brand-800: #3730a3;
 
   /* Violet is reserved for generated content. Nothing else may use it, so that
-     a person can tell at a glance which parts of a page a model wrote. */
-  --ai-50: #f5f3ff;
-  --ai-100: #ede9fe;
+     a person can tell at a glance which parts of a page a model wrote. It is
+     applied as a rule and a label rather than as a background wash, so it does
+     not tint the text it marks. */
   --ai-300: #c4b5fd;
   --ai-600: #7c3aed;
   --ai-700: #6d28d9;
 
-  /* Functional hues. */
-  --success-50: #ecfdf5;
+  /* Functional hues, for text and rules only. */
   --success-600: #059669;
   --success-700: #047857;
-  --warning-50: #fffbeb;
   --warning-600: #d97706;
   --warning-700: #b45309;
-  --danger-50: #fef2f2;
   --danger-600: #dc2626;
   --danger-700: #b91c1c;
-  --info-50: #eff6ff;
   --info-600: #2563eb;
 
   /* Source accents. A connector gets a colour so that a result list scans by
-     shape and colour before it is read. */
+     shape and colour before it is read. It appears as an eight pixel dot and
+     never as a fill or as text. */
   --source-drive: #0f9d58;
   --source-slack: #611f69;
   --source-github: #24292f;
@@ -70,35 +85,41 @@
   --source-notion: #37352f;
   --source-files: #6b7280;
 
+  /* Highlight. A matched term is set in semibold with this drawn as a two
+     pixel rule behind it, near the baseline. Not a filled background: on a
+     page with eight results and three terms each, filled highlighting turns
+     the page into a rash, and a rule marks the same words and leaves the page
+     calm. */
+  --mark: #fae041;
+
   /* Semantic layer. This is what components use. */
-  --bg: var(--gray-50);
-  --bg-raised: var(--gray-0);
-  --bg-sunken: var(--gray-100);
-  --bg-hover: var(--gray-100);
-  --bg-active: var(--gray-200);
-  --bg-brand-subtle: var(--brand-50);
-  --bg-ai-subtle: var(--ai-50);
-  --bg-overlay: rgb(17 16 16 / 0.45);
+  --bg: var(--gray-0);
+  --bg-subtle: var(--gray-50);
+  --bg-hover: var(--gray-50);
+  --bg-active: var(--gray-100);
+  --bg-inverse: var(--gray-900);
+  --bg-inverse-hover: var(--gray-800);
+  --bg-overlay: rgb(0 0 0 / 0.32);
 
   --text: var(--gray-900);
   --text-secondary: var(--gray-600);
   --text-muted: var(--gray-500);
   --text-inverse: var(--gray-0);
-  --text-brand: var(--brand-700);
   --text-link: var(--brand-700);
 
+  /* Two hairlines. One for structure, one for anything that takes a pointer,
+     and a third for a control that is selected. There is no other border
+     width anywhere except the focus ring. */
   --border: var(--gray-200);
-  --border-strong: var(--gray-300);
-  --border-brand: var(--brand-600);
+  --border-control: var(--gray-300);
+  --border-strong: var(--gray-900);
 
   --accent: var(--brand-600);
-  --accent-hover: var(--brand-700);
-  --accent-subtle: var(--brand-100);
   --focus-ring: var(--brand-500);
-  --mark-bg: #fef3c7;
-  --mark-text: var(--gray-900);
 
-  /* Space, on a 4px grid. */
+  /* Space, on a four pixel grid. The scale was never the problem: nothing
+     above --space-6 was ever used. */
+  --space-0: 0;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -109,8 +130,11 @@
   --space-10: 40px;
   --space-12: 48px;
   --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
 
-  /* Radius. */
+  /* Radius. Controls are pills, containers are twelve, nothing is square
+     except type. */
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
@@ -118,38 +142,68 @@
   --radius-xl: 16px;
   --radius-full: 9999px;
 
-  /* Elevation. Shadows are soft and low contrast: a search result is not a
-     dialog and should not look like one. */
-  --shadow-1: 0 1px 2px rgb(17 16 16 / 0.05);
-  --shadow-2: 0 1px 3px rgb(17 16 16 / 0.08), 0 1px 2px rgb(17 16 16 / 0.04);
-  --shadow-3: 0 4px 12px rgb(17 16 16 / 0.08), 0 2px 4px rgb(17 16 16 / 0.04);
-  --shadow-4: 0 12px 32px rgb(17 16 16 / 0.12), 0 4px 8px rgb(17 16 16 / 0.06);
+  /* Elevation. Two tokens, for the two things that float over content that is
+     still visible behind them. Nothing else in the interface casts a shadow,
+     and a card does not, because there are no cards. */
+  --shadow-popover: 0 4px 16px rgb(0 0 0 / 0.08), 0 1px 3px rgb(0 0 0 / 0.06);
+  --shadow-drawer: 0 16px 48px rgb(0 0 0 / 0.14);
 
   /* Type. The stack is the platform's own UI font. Self hosting a variable
-     font would mean shipping a binary asset and a build step to subset it, and
-     the system stack renders text that already looks native on every desktop
-     this runs on. */
+     font would mean shipping a binary asset and a build step to subset it, the
+     system stack already renders text that looks native on every desktop this
+     runs on, and a web font is a render blocking request the latency budget
+     does not have room for. */
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", "Noto Sans", "Liberation Sans", Arial, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji";
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
     "Liberation Mono", monospace;
 
-  --text-xs: 11px;
-  --text-sm: 12px;
-  --text-base: 13px;
-  --text-md: 14px;
-  --text-lg: 16px;
-  --text-xl: 20px;
-  --text-2xl: 24px;
-  --text-3xl: 32px;
+  /*
+   * The scale is named by role rather than by size, so a component asks for
+   * what it is rather than for how big it is. Sixteen is the interface. The
+   * old scale started at eleven and based the interface on thirteen, which is
+   * the single number that explains why the old interface read as a dense
+   * admin console.
+   *
+   * The steps are wide on purpose. Sizes that sit close together force the
+   * reader to compare rather than glance.
+   *
+   * Line heights are absolute rather than unitless. A unitless line height
+   * inherited into a nested element with a different font size produces a
+   * different absolute leading, which is how a list inside a panel ends up
+   * with different rhythm from the same list outside it.
+   */
+  --text-caption: 12px;
+  --text-small: 14px;
+  --text-body: 16px;
+  --text-lead: 18px;
+  --text-title: 20px;
+  --text-heading: 24px;
+  --text-display: 32px;
+  --text-hero: 44px;
 
-  --leading-tight: 1.25;
-  --leading-normal: 1.5;
-  --leading-relaxed: 1.65;
+  --leading-caption: 16px;
+  --leading-small: 20px;
+  --leading-body: 24px;
+  --leading-lead: 28px;
+  --leading-title: 28px;
+  --leading-heading: 32px;
+  --leading-display: 40px;
+  --leading-hero: 52px;
 
+  --leading-prose: 1.65;
+
+  /* We have no licence for a display face, so the display role is the same
+     face at a tighter setting. Negative tracking at thirty two and above is
+     what makes a system sans read as set rather than as large body text. It is
+     never applied below twenty four, where it costs legibility and buys
+     nothing. */
+  --display-tracking: -0.02em;
+
+  /* Three weights. --weight-medium is gone: it was used in eleven places and
+     in none of them was it distinguishable from normal. */
   --weight-normal: 400;
-  --weight-medium: 500;
   --weight-semibold: 600;
   --weight-bold: 700;
 
@@ -162,11 +216,21 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
   /* Layout. */
-  --rail-width: 260px;
-  --facets-width: 300px;
-  --header-height: 64px;
-  --filterbar-height: 44px;
-  --content-max: 760px;
+  --rail-width: 256px;
+  --facets-width: 280px;
+  --header-height: 72px;
+  --filterbar-height: 56px;
+  --page-max: 1440px;
+  --measure: 68ch;
+
+  /* The gutter grows with the viewport rather than sitting at a fixed value.
+     Forty eight either side on a wide window is what makes the page feel
+     unhurried, and sixteen on a phone is what stops it feeling wasteful. */
+  --gutter: clamp(16px, 4vw, 48px);
+
+  /* Row padding is a variable because the density toggle is the one escape
+     hatch in the system. Comfortable is the default. */
+  --row-padding-block: var(--space-4);
 
   /*
    * Stacking order, lowest first. The header is sticky and has to sit over the
@@ -181,44 +245,65 @@
 }
 
 /*
+ * Density. The restyle costs vertical space on purpose: a viewport that showed
+ * fourteen results shows six. Somebody triaging four hundred results has a
+ * different job from somebody reading one, so there is a toggle.
+ *
+ * It reduces row padding and drops the body size one step. It does not touch
+ * the scale above body, does not reintroduce borders and does not change the
+ * colour system. This is the only density variable allowed to exist.
+ */
+[data-density="compact"] {
+  --row-padding-block: var(--space-2);
+  --text-body: 14px;
+  --leading-body: 20px;
+}
+
+/*
  * Dark theme. Only the semantic layer moves, and the palette is untouched, so
  * a component written against the semantic tokens is already dark ready.
+ *
+ * The ground is a very slightly blue near black rather than pure black. Pure
+ * black next to a white document body in the drawer produces a contrast step
+ * large enough to be uncomfortable at night, which is the only time anybody
+ * uses this theme.
  */
 [data-theme="dark"] {
-  --bg: var(--gray-950);
-  --bg-raised: var(--gray-900);
-  --bg-sunken: #0b0b0a;
-  --bg-hover: var(--gray-800);
-  --bg-active: var(--gray-700);
-  --bg-brand-subtle: #1e1b4b;
-  --bg-ai-subtle: #2e1065;
+  --bg: #0f1011;
+  --bg-subtle: #17191b;
+  --bg-hover: #1c1e21;
+  --bg-active: #24272b;
+
+  /* The primary button inverts rather than staying dark, because the highest
+     contrast fill available against this ground is a light one. */
+  --bg-inverse: #e8eaed;
+  --bg-inverse-hover: #ffffff;
   --bg-overlay: rgb(0 0 0 / 0.6);
 
-  --text: var(--gray-100);
-  --text-secondary: var(--gray-400);
-  --text-muted: var(--gray-500);
-  --text-inverse: var(--gray-950);
-  --text-brand: var(--brand-300);
+  --text: #e8eaed;
+  --text-secondary: #b0b4b9;
+  --text-muted: #8b9096;
+  --text-inverse: #0f1011;
   --text-link: var(--brand-300);
 
-  --border: #322f2c;
-  --border-strong: #46423e;
-  --border-brand: var(--brand-500);
+  --border: #2a2d31;
+  --border-control: #3c4045;
+  --border-strong: #e8eaed;
 
-  --accent: var(--brand-500);
-  --accent-hover: var(--brand-400);
-  --accent-subtle: #312e81;
+  --accent: var(--brand-400);
   --focus-ring: var(--brand-400);
-  --mark-bg: #78350f;
-  --mark-text: #fef3c7;
+
+  /* Higher chroma, to hold against a near black ground. The mark keeps
+     colour: inherit on the text, so no second foreground token is needed. */
+  --mark: #f5c518;
 
   --source-github: #c9d1d9;
   --source-notion: #d4d0c8;
 
-  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.4);
-  --shadow-2: 0 1px 3px rgb(0 0 0 / 0.5), 0 1px 2px rgb(0 0 0 / 0.3);
-  --shadow-3: 0 4px 12px rgb(0 0 0 / 0.5), 0 2px 4px rgb(0 0 0 / 0.3);
-  --shadow-4: 0 12px 32px rgb(0 0 0 / 0.6), 0 4px 8px rgb(0 0 0 / 0.4);
+  /* A shadow on a dark ground carries almost no information, so the drawer
+     additionally takes a hairline to define its edge. */
+  --shadow-popover: 0 4px 16px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
+  --shadow-drawer: 0 16px 48px rgb(0 0 0 / 0.6);
 }
 
 /* Somebody who has asked their system not to animate things means it. */

@@ -3,7 +3,7 @@
 // It owns three things and nothing else: the URL, the keyboard, and which view
 // is on screen. Everything that draws is in its own module and takes a callback
 // rather than reaching back in here, which is what keeps a change to the result
-// card from being a change to routing.
+// row from being a change to routing.
 
 import { h, replace, svg } from "./dom.js";
 import { api, identity, setIdentity, ApiError } from "./api.js";
@@ -15,6 +15,16 @@ import { Drawer } from "./drawer.js";
 import { Home } from "./home.js";
 
 const THEME_KEY = "genba.theme";
+const DENSITY_KEY = "genba.density";
+
+// LOADING_DELAY is how long a search may run before the interface admits to it.
+//
+// Every API in this product is budgeted under ten milliseconds, and at that
+// latency a loading state appears and disappears inside one frame, which reads
+// as a flicker rather than as feedback. So the skeleton is a timer that the
+// response cancels: if the answer beats it, no loading state is ever mounted
+// and the transition is a single paint.
+const LOADING_DELAY = 120;
 
 class App {
   constructor(root) {
@@ -22,7 +32,7 @@ class App {
     this.session = null;
     this.query = urlState.read();
     this.pending = null;
-    this.lastRequest = null;
+    this.loadingTimer = null;
 
     this.omnibox = new Omnibox({
       onSearch: (text) => this.go({ ...this.query, q: text, offset: 0, open: "" }),
@@ -40,7 +50,18 @@ class App {
       onClose: () => this.go({ ...this.query, open: "" }, { replace: true }),
     });
 
-    this.main = h("main", { class: "main", id: "main" });
+    this.main = h("main", {
+      class: "main",
+      id: "main",
+      // The header carries a hairline only once there is something scrolled
+      // under it, so a page at rest has one less line on it.
+      onScroll: () => {
+        const scrolled = this.main.scrollTop > 0;
+        if ((this.header.dataset.scrolled === "true") !== scrolled) {
+          this.header.dataset.scrolled = String(scrolled);
+        }
+      },
+    });
     this.live = h("div", {
       class: "visually-hidden",
       role: "status",
@@ -49,6 +70,7 @@ class App {
     });
 
     this.rail = this.buildRail();
+    this.header = this.buildHeader();
     this.build();
     this.bindKeys();
 
@@ -66,55 +88,70 @@ class App {
         { class: "app" },
         h("a", { class: "visually-hidden", href: "#main" }, "Skip to results"),
         this.rail,
-        h(
-          "header",
-          { class: "header" },
-          h(
-            "button",
-            {
-              class: "icon-button rail__toggle",
-              type: "button",
-              "aria-label": "Menu",
-              onClick: () => {
-                const open = this.rail.dataset.open === "true";
-                this.rail.dataset.open = String(!open);
-              },
-            },
-            svg(icon("menu")),
-          ),
-          this.omnibox.el,
-          h(
-            "div",
-            { class: "header__actions" },
-            h(
-              "button",
-              {
-                class: "icon-button",
-                type: "button",
-                "aria-label": "Keyboard shortcuts",
-                title: "Keyboard shortcuts (?)",
-                onClick: () => this.shortcuts(),
-              },
-              svg(icon("keyboard")),
-            ),
-            h(
-              "button",
-              {
-                class: "icon-button",
-                type: "button",
-                "aria-label": "Switch theme",
-                title: "Switch theme",
-                onClick: () => this.theme(),
-              },
-              svg(icon(document.documentElement.dataset.theme === "dark" ? "sun" : "moon")),
-            ),
-          ),
-        ),
+        this.header,
         this.main,
       ),
       this.drawer.scrim,
       this.drawer.el,
       this.live,
+    );
+  }
+
+  buildHeader() {
+    return h(
+      "header",
+      { class: "header" },
+      h(
+        "button",
+        {
+          class: "icon-button rail__toggle",
+          type: "button",
+          "aria-label": "Menu",
+          onClick: () => {
+            const open = this.rail.dataset.open === "true";
+            this.rail.dataset.open = String(!open);
+          },
+        },
+        svg(icon("menu"), 20),
+      ),
+      this.omnibox.el,
+      h(
+        "div",
+        { class: "header__actions" },
+        h(
+          "button",
+          {
+            class: "icon-button",
+            type: "button",
+            "aria-label": "Switch density",
+            title: "Switch between comfortable and compact rows",
+            onClick: () => this.density(),
+          },
+          svg(icon("rows"), 20),
+        ),
+        h(
+          "button",
+          {
+            class: "icon-button",
+            type: "button",
+            "aria-label": "Keyboard shortcuts",
+            title: "Keyboard shortcuts (?)",
+            onClick: () => this.shortcuts(),
+          },
+          svg(icon("keyboard"), 20),
+        ),
+        h(
+          "button",
+          {
+            class: "icon-button",
+            type: "button",
+            "aria-label": "Switch theme",
+            title: "Switch theme",
+            onClick: () => this.theme(),
+          },
+          svg(icon(document.documentElement.dataset.theme === "dark" ? "sun" : "moon"), 20),
+        ),
+      ),
     );
   }
 
@@ -125,9 +162,9 @@ class App {
       { class: "rail", "aria-label": "Main" },
       h(
         "a",
-        { class: "brand", href: "/", onClick: (e) => this.link(e, {}) },
+        { class: "brand", href: "/", title: "genba", onClick: (e) => this.link(e, {}) },
         h("span", { class: "brand__mark" }, "G"),
-        "genba",
+        h("span", {}, "genba"),
       ),
       h(
         "div",
@@ -137,21 +174,23 @@ class App {
           {
             class: "rail__link",
             href: "/",
+            title: "Home",
             "aria-current": this.query.q || urlState.count(this.query) ? null : "page",
             onClick: (e) => this.link(e, {}),
           },
-          svg(icon("home"), 15),
-          "Home",
+          svg(icon("home"), 20),
+          h("span", { class: "rail__label" }, "Home"),
         ),
         h(
           "a",
           {
             class: "rail__link",
             href: "?sort=recent",
+            title: "Recent",
             onClick: (e) => this.link(e, { q: "", sort: "recent" }),
           },
-          svg(icon("clock"), 15),
-          "Recent",
+          svg(icon("clock"), 20),
+          h("span", { class: "rail__label" }, "Recent"),
         ),
       ),
       h(
@@ -164,10 +203,11 @@ class App {
             {
               class: "rail__link",
               href: `?tab=${v.id}`,
+              title: v.title,
               onClick: (e) => this.link(e, { ...this.query, tab: v.id, kind: [], offset: 0 }),
             },
-            svg(icon(v.id === "people" ? "people" : v.id === "code" ? "code" : v.id === "messages" ? "chat" : v.id === "tickets" ? "ticket" : "doc"), 15),
-            v.title,
+            svg(icon(v.id === "people" ? "people" : v.id === "code" ? "code" : v.id === "messages" ? "chat" : v.id === "tickets" ? "ticket" : "doc"), 20),
+            h("span", { class: "rail__label" }, v.title),
           ),
         ),
       ),
@@ -181,8 +221,7 @@ class App {
           onClick: () => this.switchIdentity(),
         },
         h("span", { class: "avatar" }, initials(who.subject)),
-        h("span", {}, who.subject),
-        svg(icon("slider"), 14),
+        h("span", { class: "rail__label" }, who.subject),
       ),
     );
   }
@@ -221,10 +260,11 @@ class App {
           {
             class: "rail__link",
             href: `?source=${encodeURIComponent(s.value)}`,
+            title: label(s.value),
             onClick: (e) => this.link(e, { source: [s.value] }),
           },
           h("span", { class: "source__dot", style: { background: sourceColor(s.value) } }),
-          label(s.value),
+          h("span", { class: "rail__label" }, label(s.value)),
           h("span", { class: "rail__count" }, s.count),
         ),
       ),
@@ -263,10 +303,20 @@ class App {
   }
 
   async search() {
-    if (this.main.firstChild !== this.results.el) replace(this.main, this.results.el);
+    const mounted = this.main.firstChild === this.results.el;
+    if (!mounted) replace(this.main, this.results.el);
 
     const request = urlState.params(this.query, VERTICALS);
-    this.results.loading(this.query);
+
+    // A first search has nothing on screen to keep, so it gets the skeleton
+    // after the delay. A subsequent one keeps the previous answer visible and
+    // shows a progress bar instead, because the previous answer is almost
+    // always still the right one and dimming it says otherwise.
+    clearTimeout(this.loadingTimer);
+    this.loadingTimer = setTimeout(() => {
+      if (mounted) this.results.revalidating(true);
+      else this.results.loading(this.query);
+    }, LOADING_DELAY);
 
     if (this.pending) this.pending.abort();
     const controller = new AbortController();
@@ -279,6 +329,9 @@ class App {
     } catch (err) {
       if (err.name === "AbortError") return;
       this.fail(err);
+    } finally {
+      clearTimeout(this.loadingTimer);
+      if (!controller.signal.aborted) this.results.revalidating(false);
     }
   }
 
@@ -298,6 +351,7 @@ class App {
       h(
         "div",
         { class: "state state--error" },
+        h("span", { class: "state__icon" }, svg(icon(unauthenticated ? "people" : "close"), 40)),
         h("p", { class: "state__title" }, unauthenticated ? "Not signed in" : "Something went wrong"),
         h(
           "p",
@@ -333,8 +387,24 @@ class App {
     const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
     document.documentElement.dataset.theme = next;
     localStorage.setItem(THEME_KEY, next);
+    this.header = this.buildHeader();
     this.build();
     this.sync();
+  }
+
+  /**
+   * density is the one escape hatch in the spacing system.
+   *
+   * The restyle costs vertical space deliberately, and somebody triaging four
+   * hundred results has a different job from somebody reading one. Compact
+   * reduces the row padding and drops the body size one step. It does not
+   * reintroduce borders, change the colour system or touch the type scale
+   * above body, so it is two token overrides rather than a second theme.
+   */
+  density() {
+    const next = document.documentElement.dataset.density === "compact" ? "comfortable" : "compact";
+    document.documentElement.dataset.density = next;
+    localStorage.setItem(DENSITY_KEY, next);
   }
 
   /**
@@ -496,12 +566,17 @@ class App {
 }
 
 // Theme before first paint, so a dark theme does not arrive as a white flash.
+// The same block runs inline in index.html, and this one is what keeps the two
+// in step when the module loads without a cached document.
 const saved = localStorage.getItem(THEME_KEY);
 if (saved) {
   document.documentElement.dataset.theme = saved;
 } else if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
   document.documentElement.dataset.theme = "dark";
 }
+
+const density = localStorage.getItem(DENSITY_KEY);
+if (density) document.documentElement.dataset.density = density;
 
 const app = new App(document.getElementById("app"));
 app.start();
