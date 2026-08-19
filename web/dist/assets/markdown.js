@@ -268,7 +268,10 @@ function table(rows, options) {
  */
 export function codeBlock(source, lang) {
   const code = h("code", { class: "code__text" }, highlight(source, lang));
-  const pre = h("pre", { class: "code__pre" }, code);
+  // A code block scrolls sideways when a line is long, and a region that
+  // scrolls has to be reachable by keyboard or the only way to read the end of
+  // that line is a mouse.
+  const pre = h("pre", { class: "code__pre", tabindex: "0" }, code);
   const long = source.split("\n").length > 6;
   if (!lang && !long) return h("div", { class: "code" }, pre);
 
