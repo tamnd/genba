@@ -1,4 +1,4 @@
-//go:build !race
+//go:build cgo && kura && !race
 
 package kura
 
