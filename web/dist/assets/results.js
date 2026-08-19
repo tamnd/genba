@@ -34,9 +34,10 @@ const FACETS = [
 const FACET_VISIBLE = 8;
 
 export class Results {
-  constructor({ onQuery, onOpen }) {
+  constructor({ onQuery, onOpen, onHover }) {
     this.onQuery = onQuery;
     this.onOpen = onOpen;
+    this.onHover = onHover || (() => {});
     this.expanded = new Set();
     this.selected = -1;
     this.hits = [];
@@ -249,6 +250,11 @@ export class Results {
         class: "result",
         role: "listitem",
         dataset: { index: String(i) },
+        // A pointer resting on a row is a good guess at the next preview, and
+        // the shell is what decides how long resting means and how many of
+        // those guesses may be in the air at once.
+        onMouseenter: () => this.onHover(hit.id),
+        onMouseleave: () => this.onHover(null),
         onClick: (e) => {
           // A click on the title follows the source link. A click anywhere else
           // on the row opens the preview, which is the cheaper of the two and

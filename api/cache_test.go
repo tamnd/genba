@@ -47,16 +47,20 @@ func cacheCorpus() []doc.Document {
 			Version:     1,
 		}
 	}
+	// Both carry a modification time, because the recency prior is part of the
+	// score and a corpus of documents with no date has a prior of exactly one
+	// for every document, which is the one case where the score cannot drift.
+	written := time.Date(2026, 1, 14, 11, 0, 0, 0, time.UTC)
 	return []doc.Document{
 		{
 			ID: "d1", Tenant: "acme", Source: "gdrive", Kind: doc.KindPage,
 			Title: "Payments failover runbook", Body: "Fail the payments queue over to the replica.",
-			Permissions: perm("eng@acme.com"),
+			ModifiedAt: written, Permissions: perm("eng@acme.com"),
 		},
 		{
 			ID: "d2", Tenant: "acme", Source: "salesforce", Kind: doc.KindTicket,
 			Title: "Renewal for Globex", Body: "The payments discount expires in March.",
-			Permissions: perm("sales@acme.com"),
+			ModifiedAt: written.AddDate(0, -3, 0), Permissions: perm("sales@acme.com"),
 		},
 	}
 }
@@ -72,12 +76,14 @@ func seller() map[string]string {
 // a browser hold a copy without a proxy in the middle holding one too.
 func TestAuthenticatedResponsesCarryTheirCachingRules(t *testing.T) {
 	_, h := cachingServer(t)
-	for _, path := range []string{
-		"/api/v1/me",
-		"/api/v1/search?q=payments",
-		"/api/v1/suggest?q=pay",
-		"/api/v1/documents/d1",
-		"/api/v1/stats",
+	// Stats is the one endpoint with no tag, for the reason given on its
+	// handler, so it is listed here for its headers and excused the tag.
+	for path, tagged := range map[string]bool{
+		"/api/v1/me":                true,
+		"/api/v1/search?q=payments": true,
+		"/api/v1/suggest?q=pay":     true,
+		"/api/v1/documents/d1":      true,
+		"/api/v1/stats":             false,
 	} {
 		t.Run(path, func(t *testing.T) {
 			w := request(t, h, http.MethodGet, path, engineer())
@@ -90,10 +96,34 @@ func TestAuthenticatedResponsesCarryTheirCachingRules(t *testing.T) {
 			if got := w.Header().Get("Vary"); !strings.Contains(got, "Authorization") || !strings.Contains(got, "Cookie") {
 				t.Errorf("Vary is %q, want the credential headers: without them a cache may serve one caller's answer to another", got)
 			}
-			if w.Header().Get("ETag") == "" {
+			if tagged && w.Header().Get("ETag") == "" {
 				t.Error("the response has no ETag, so a client can only revalidate by refetching the whole body")
 			}
 		})
+	}
+}
+
+// TestStatsCarryNoTagBecauseReadingThemMovesThem is the exception to the rule
+// above, written down so that adding the tag back looks like the regression it
+// would be. The body reports cache hits and misses, and serving it is itself a
+// read of those caches, so the tag computed for one response describes a state
+// the next response is no longer in. The client holds stats for a TTL instead,
+// which bounds the request rate without ever showing a number that is not real.
+func TestStatsCarryNoTagBecauseReadingThemMovesThem(t *testing.T) {
+	_, h := cachingServer(t)
+
+	// Warm the layers so the counters have somewhere to move to.
+	request(t, h, http.MethodGet, "/api/v1/search?q=payments", engineer())
+
+	first := request(t, h, http.MethodGet, "/api/v1/stats", engineer())
+	if got := first.Header().Get("ETag"); got != "" {
+		t.Fatalf("stats carry ETag %q, which no later request can match", got)
+	}
+
+	request(t, h, http.MethodGet, "/api/v1/search?q=payments", engineer())
+	second := request(t, h, http.MethodGet, "/api/v1/stats", engineer())
+	if second.Body.String() == first.Body.String() {
+		t.Fatal("two stats responses either side of a search are identical, so the counters are not being reported")
 	}
 }
 
@@ -137,6 +167,73 @@ func TestHowLongASearchTookIsNotPartOfTheTag(t *testing.T) {
 	second := request(t, h, http.MethodGet, "/api/v1/search?q=payments", engineer())
 	if first.Header().Get("ETag") != second.Header().Get("ETag") {
 		t.Fatalf("two identical searches produced two tags, %q and %q", first.Header().Get("ETag"), second.Header().Get("ETag"))
+	}
+}
+
+// TestARankThatDriftsDoesNotMoveTheTag is the same problem as the one above
+// and much easier to miss. The score carries a recency prior that decays
+// against the wall clock, so a query run twice a second apart produces two
+// numbers that differ somewhere past the tenth decimal place and a tag that
+// never matches. The clock here jumps an hour between readings to make it
+// obvious, but on a real deployment a microsecond is enough.
+func TestARankThatDriftsDoesNotMoveTheTag(t *testing.T) {
+	st, err := sqlitestore.Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.Put(t.Context(), cacheCorpus()...); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	at := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
+	clock := func() time.Time {
+		at = at.Add(time.Hour)
+		return at
+	}
+	searcher := index.New(st, index.WithCache(index.NewCache()), index.WithClock(clock))
+	t.Cleanup(func() { _ = searcher.Close() })
+	h := api.New(st, searcher, api.HeaderAuth{Tenant: "acme"}).Handler()
+
+	first := request(t, h, http.MethodGet, "/api/v1/search?q=payments", engineer())
+	second := request(t, h, http.MethodGet, "/api/v1/search?q=payments", engineer())
+	if first.Header().Get("ETag") != second.Header().Get("ETag") {
+		t.Fatalf("the same documents in the same order produced two tags, %q and %q", first.Header().Get("ETag"), second.Header().Get("ETag"))
+	}
+
+	headers := engineer()
+	headers["If-None-Match"] = first.Header().Get("ETag")
+	if w := request(t, h, http.MethodGet, "/api/v1/search?q=payments", headers); w.Code != http.StatusNotModified {
+		t.Fatalf("a revalidation of an unchanged search returned %d, want 304", w.Code)
+	}
+}
+
+// TestTheViewNamesWhoIsAsking is the same leak assertion one layer out. The
+// browser holds answers in memory and one tab holds them for more than one
+// identity over its life, so every key it makes starts with this value. Two
+// people who see different documents must not be able to produce the same key.
+func TestTheViewNamesWhoIsAsking(t *testing.T) {
+	_, h := cachingServer(t)
+
+	view := func(headers map[string]string) string {
+		t.Helper()
+		return decode[struct {
+			View string `json:"view"`
+		}](t, request(t, h, http.MethodGet, "/api/v1/me", headers)).View
+	}
+
+	mine := view(engineer())
+	if mine == "" {
+		t.Fatal("the me endpoint named no view, so the interface has nothing to key its cache by")
+	}
+	if again := view(engineer()); again != mine {
+		t.Errorf("the same caller was given two views, %q then %q, so nothing would ever be reused", mine, again)
+	}
+	if theirs := view(seller()); theirs == mine {
+		t.Error("two callers who see different documents were given the same view")
+	}
+	if wider := view(engineerWithBothGroups()); wider == mine {
+		t.Error("adding a group did not change the view, so entries from before the change stay reachable")
 	}
 }
 

@@ -123,9 +123,13 @@ time {
 .app {
   display: grid;
   grid-template-columns: var(--rail-width) minmax(0, 1fr);
-  grid-template-rows: var(--header-height) minmax(0, 1fr);
+  /* Three rows, and the middle one is the connection banner. It is auto rather
+     than a fixed height so that it takes no space at all when it is hidden,
+     which is almost always. */
+  grid-template-rows: var(--header-height) auto minmax(0, 1fr);
   grid-template-areas:
     "rail header"
+    "rail banner"
     "rail main";
   height: 100vh;
 }
@@ -1684,6 +1688,33 @@ h6.prose__h {
  * almost never. Stale content underneath it is not dimmed: it is the previous
  * answer and it is almost always still the right one.
  */
+/* The offline banner.
+   It states a fact and nothing else. It does not dim the page, cover it or
+   offer a retry button, because what is underneath it is the last thing the
+   server said and is very probably still true. */
+.banner {
+  grid-area: banner;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--gutter);
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  font-size: var(--text-small);
+}
+
+.banner[hidden] {
+  display: none;
+}
+
+.banner__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--warning-600);
+  flex: none;
+}
+
 .progress {
   position: sticky;
   top: var(--filterbar-height);
@@ -1947,6 +1978,7 @@ h6.prose__h {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
       "header"
+      "banner"
       "main";
   }
 

@@ -7,7 +7,13 @@
 
 import { h, replace } from "./dom.js";
 import { api } from "./api.js";
+import { cache } from "./cache.js";
 import { label, sourceColor, when, number, initials } from "./format.js";
+
+// RECENT is the query behind the what changed panel. It is a constant because
+// it is also a cache key, and a request built twice must be built the same way
+// twice or the second build is a miss.
+const RECENT = { sort: "recent", limit: 6 };
 
 export class Home {
   constructor({ onQuery, onOpen }) {
@@ -16,23 +22,45 @@ export class Home {
     this.el = h("div", { class: "home" });
   }
 
+  /**
+   * render paints the home screen, from cache if there is one.
+   *
+   * Home is the destination of the back button and of the brand in the rail, so
+   * it is loaded far more often than it is loaded for the first time. Both
+   * panels are painted from whatever is held, and repainted only if the check
+   * behind them comes back with something different.
+   */
   async render(session) {
-    replace(
-      this.el,
-      h(
-        "header",
-        { class: "home__greeting" },
-        h("h1", { class: "home__title" }, greeting(session)),
-        h("p", { class: "home__subtitle" }, "Everything your company knows, in one search."),
-      ),
-      h("div", { class: "home__grid" }, this.skeletonPanels()),
-    );
+    const recentKey = cache.key("search", RECENT);
+    const statsKey = cache.key("stats", {});
+    let recent = cache.read(recentKey).data || null;
+    let stats = cache.read(statsKey).data || null;
+    this.paint(session, recent, stats);
 
-    const [recent, stats] = await Promise.all([
-      api.search({ sort: "recent", limit: 6 }).catch(() => null),
-      api.stats().catch(() => null),
+    let changed = false;
+    // The paint callbacks fire once with what was already on screen, which is
+    // not a change, and again only if the server disagreed with it.
+    await Promise.all([
+      cache
+        .swr(recentKey, (opts) => api.search(RECENT, opts), (d) => {
+          if (d === recent) return;
+          recent = d;
+          changed = true;
+        })
+        .catch(() => {}),
+      cache
+        .swr(statsKey, (opts) => api.stats(opts), (d) => {
+          if (d === stats) return;
+          stats = d;
+          changed = true;
+        })
+        .catch(() => {}),
     ]);
+    if (changed) this.paint(session, recent, stats);
+  }
 
+  /** paint draws the screen, with skeletons standing in for what is not here. */
+  paint(session, recent, stats) {
     replace(
       this.el,
       h(
@@ -41,14 +69,16 @@ export class Home {
         h("h1", { class: "home__title" }, greeting(session)),
         h("p", { class: "home__subtitle" }, "Everything your company knows, in one search."),
       ),
-      h(
-        "div",
-        { class: "home__grid" },
-        this.recentPanel(recent),
-        this.sourcesPanel(session, recent),
-        this.statsPanel(stats, session),
-        this.tipsPanel(),
-      ),
+      recent
+        ? h(
+            "div",
+            { class: "home__grid" },
+            this.recentPanel(recent),
+            this.sourcesPanel(session, recent),
+            this.statsPanel(stats, session),
+            this.tipsPanel(),
+          )
+        : h("div", { class: "home__grid" }, this.skeletonPanels()),
     );
   }
 

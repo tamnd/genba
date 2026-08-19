@@ -305,11 +305,23 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Pri
 	writeConditional(w, r, http.StatusOK, out, out.identity())
 }
 
-// identity is the response without the number that changes on every request.
-// Two searches that found the same documents have the same identity even though
-// one of them took a tenth of a millisecond longer.
+// identity is the response without the numbers that change on every request.
+//
+// Two of them do. How long the search took is the obvious one. The other is the
+// score, which carries a recency prior that decays against the wall clock, so
+// it is a slightly different number every time the same query is run and it
+// would make an entity tag that never matches, which is a revalidation that can
+// never succeed. What the tag has to mean is that the same documents came back
+// in the same order with the same content, and it still means exactly that:
+// scores that moved enough to matter moved the order too.
 func (r searchResponse) identity() any {
 	r.TookMS = 0
+	hits := make([]searchHit, len(r.Hits))
+	copy(hits, r.Hits)
+	for i := range hits {
+		hits[i].Score = 0
+	}
+	r.Hits = hits
 	return r
 }
 
@@ -405,6 +417,18 @@ type meResponse struct {
 	Tenant  string   `json:"tenant"`
 	Roles   []string `json:"roles,omitempty"`
 
+	// View names what this principal can see, and is the same fingerprint the
+	// server keys its own caches by.
+	//
+	// The interface holds results in memory and one tab can hold them for more
+	// than one identity over its life, because the identity switcher exists.
+	// Serving one identity's cached results to another is the same bug in a
+	// browser as it is in a server, so the browser prepends this to every cache
+	// key it makes. It is computed here rather than derived there so that the
+	// two cannot drift apart, and it says nothing about the principal that the
+	// rest of this response does not already say out loud.
+	View string `json:"view"`
+
 	// Sources is what this principal can actually see something from, which is
 	// what the interface builds its source filter out of. It is per principal
 	// rather than a list of configured connectors, because telling somebody a
@@ -417,7 +441,14 @@ type meResponse struct {
 // handleMe is what the interface loads before it can draw anything: who the
 // caller is and which filters are worth showing them.
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, p *acl.Principal) {
-	out := meResponse{Subject: p.Subject, Tenant: p.Tenant, Roles: p.Roles, Sources: []facet{}, Kinds: []facet{}}
+	out := meResponse{
+		Subject: p.Subject,
+		Tenant:  p.Tenant,
+		Roles:   p.Roles,
+		View:    acl.Fingerprint(p),
+		Sources: []facet{},
+		Kinds:   []facet{},
+	}
 	res, err := s.searcher.Search(r.Context(), p, index.Query{Limit: 1})
 	if err != nil {
 		s.log.Error("bootstrap failed", "error", err, "tenant", p.Tenant)
@@ -673,17 +704,30 @@ type statsResponse struct {
 	Cache       map[string]cache.Stats `json:"cache,omitempty"`
 }
 
+// handleStats reports the corpus and the cache counters.
+//
+// This is the one read endpoint with no entity tag, because the counters it
+// reports are moved by the act of reading them. A tag over a body that counts
+// its own reads can never match on the next request, so a conditional request
+// here is a full response with an extra header on it, and a tag that excluded
+// the counters would be worse: the client would hold the first hit rate it ever
+// saw and never be told a different one. The response is a couple of hundred
+// bytes and the client holds it for a TTL, so the round trip is cheap and the
+// number is always real.
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request, _ *acl.Principal) {
 	st, err := s.store.Stats(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "stats are not available")
 		return
 	}
-	writeConditional(w, r, http.StatusOK, statsResponse{
+	h := w.Header()
+	h.Set("Cache-Control", cacheControl)
+	h.Set(varyHeader, varyValue)
+	writeJSON(w, http.StatusOK, statsResponse{
 		Documents:   st.Documents,
 		Quarantined: st.Quarantined,
 		Cache:       s.searcher.CacheStats(),
-	}, nil)
+	})
 }
 
 func facets(in map[string][]index.Facet) map[string][]facet {

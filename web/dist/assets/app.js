@@ -7,8 +7,10 @@
 
 import { h, replace, svg } from "./dom.js";
 import { api, identity, setIdentity, ApiError } from "./api.js";
+import { cache } from "./cache.js";
+import { Live } from "./live.js";
 import * as urlState from "./state.js";
-import { icon, initials, label, sourceColor } from "./format.js";
+import { icon, initials, label, sourceColor, when } from "./format.js";
 import { Omnibox, shortcutLabel } from "./omnibox.js";
 import { Results, VERTICALS } from "./results.js";
 import { Drawer } from "./drawer.js";
@@ -26,21 +28,45 @@ const DENSITY_KEY = "genba.density";
 // and the transition is a single paint.
 const LOADING_DELAY = 120;
 
+// How long each prefetch waits before it decides somebody meant it.
+//
+// All three are bets, and the delay is what keeps a bet cheap. Passing the
+// pointer over eight rows on the way to the ninth should cost nothing, and
+// arrow keying down a suggestion list should not fire eight searches.
+const PREFETCH_PAGE = 300;
+const PREFETCH_HOVER = 150;
+const PREFETCH_SUGGESTION = 200;
+
+// At most four documents are being guessed at once. Beyond that the prefetches
+// are competing with the request somebody is actually waiting for.
+const PREFETCH_LIMIT = 4;
+
+// How often the offline banner recounts the age of what is on screen. It only
+// runs while the connection is gone, which is the only time anybody is reading
+// it.
+const BANNER_TICK = 30_000;
+
 class App {
   constructor(root) {
     this.root = root;
     this.session = null;
     this.query = urlState.read();
-    this.pending = null;
     this.loadingTimer = null;
+    this.currentKey = "";
+    this.hoverTimer = null;
+    this.pageTimer = null;
+    this.suggestionTimer = null;
+    this.guessing = 0;
 
     this.omnibox = new Omnibox({
       onSearch: (text) => this.go({ ...this.query, q: text, offset: 0, open: "" }),
       onOpen: (id) => this.open(id),
+      onHighlight: (item) => this.guessSuggestion(item),
     });
     this.results = new Results({
       onQuery: (q) => this.go(q),
       onOpen: (id) => this.open(id),
+      onHover: (id) => this.guessDocument(id),
     });
     this.home = new Home({
       onQuery: (q) => this.go({ ...urlState.read(""), ...q }),
@@ -69,10 +95,21 @@ class App {
       "aria-atomic": "true",
     });
 
+    this.banner = h("div", { class: "banner", role: "status", hidden: true });
+
     this.rail = this.buildRail();
     this.header = this.buildHeader();
     this.build();
     this.bindKeys();
+
+    // The page checks itself against the server on four triggers, none of which
+    // is a person pressing reload. What is on screen was correct when it was
+    // painted, and the only question this answers is whether it still is.
+    this.refresher = new Live({
+      onRefresh: () => this.sync(),
+      onConnection: (online) => this.connection(online),
+      onIndex: () => cache.invalidate(),
+    });
 
     window.addEventListener("popstate", () => {
       this.query = urlState.read();
@@ -89,6 +126,7 @@ class App {
         h("a", { class: "visually-hidden", href: "#main" }, "Skip to results"),
         this.rail,
         this.header,
+        this.banner,
         this.main,
       ),
       this.drawer.scrim,
@@ -235,13 +273,18 @@ class App {
 
   async start() {
     try {
-      this.session = await api.me();
+      this.session = (await api.me()).data;
+      // Everything the cache holds is keyed under this, so it is set before
+      // anything is read and the switcher below empties the cache by changing
+      // it. Nothing cached under one identity is reachable from another.
+      cache.as(this.session.view || "");
       this.renderSources();
     } catch (err) {
       this.fail(err);
       return;
     }
     this.sync();
+    this.refresher.start();
   }
 
   renderSources() {
@@ -303,10 +346,25 @@ class App {
   }
 
   async search() {
-    const mounted = this.main.firstChild === this.results.el;
-    if (!mounted) replace(this.main, this.results.el);
+    const showing = this.main.firstChild === this.results.el;
+    if (!showing) replace(this.main, this.results.el);
 
     const request = urlState.params(this.query, VERTICALS);
+    const k = cache.key("search", request);
+    this.currentKey = k;
+
+    let painted = false;
+    const paint = (res) => {
+      // The address bar moved on while this was in flight, so this answer is to
+      // a question nobody is asking any more.
+      if (this.currentKey !== k) return;
+      painted = true;
+      clearTimeout(this.loadingTimer);
+      this.results.revalidating(false);
+      this.results.render(this.query, res);
+      this.announce(res);
+      this.guessNextPage(res);
+    };
 
     // A first search has nothing on screen to keep, so it gets the skeleton
     // after the delay. A subsequent one keeps the previous answer visible and
@@ -314,25 +372,109 @@ class App {
     // always still the right one and dimming it says otherwise.
     clearTimeout(this.loadingTimer);
     this.loadingTimer = setTimeout(() => {
-      if (mounted) this.results.revalidating(true);
+      if (this.currentKey !== k) return;
+      if (painted || showing) this.results.revalidating(true);
       else this.results.loading(this.query);
     }, LOADING_DELAY);
 
-    if (this.pending) this.pending.abort();
-    const controller = new AbortController();
-    this.pending = controller;
     try {
-      const res = await api.search(request, controller.signal);
-      if (controller.signal.aborted) return;
-      this.results.render(this.query, res);
-      this.announce(res);
+      await cache.swr(k, (opts) => api.search(request, opts), paint);
     } catch (err) {
       if (err.name === "AbortError") return;
-      this.fail(err);
+      // A check that failed behind an answer already on screen keeps the
+      // answer. Replacing a page somebody is reading with an error page because
+      // a background request failed is worse than being a minute out of date,
+      // and the banner already says the connection is gone.
+      if (!painted && this.currentKey === k) this.fail(err);
     } finally {
       clearTimeout(this.loadingTimer);
-      if (!controller.signal.aborted) this.results.revalidating(false);
+      if (this.currentKey === k) this.results.revalidating(false);
     }
+  }
+
+  /**
+   * connection shows or hides the offline banner.
+   *
+   * Nothing is dimmed and nothing is hidden while offline. What is on screen
+   * was true when it was fetched, the banner says when that was, and that is a
+   * more useful page than an error.
+   */
+  connection(online) {
+    this.banner.hidden = online;
+    clearInterval(this.bannerTimer);
+    if (online) return;
+    this.sayHowOld();
+    // The age is the whole point of the banner, so it keeps counting. A tab
+    // left open through a long outage would otherwise still claim its results
+    // are six seconds old.
+    this.bannerTimer = setInterval(() => this.sayHowOld(), BANNER_TICK);
+  }
+
+  /** sayHowOld writes the offline banner, naming the age of what is on screen. */
+  sayHowOld() {
+    const held = this.currentKey ? cache.read(this.currentKey) : { state: "miss" };
+    const age = held.state === "miss" ? "" : when(new Date(held.at).toISOString());
+    replace(
+      this.banner,
+      h("span", { class: "banner__dot" }),
+      age ? `You are offline. These are the results from ${age}.` : "You are offline. This is the last answer the server gave.",
+    );
+  }
+
+  /**
+   * guessNextPage fills the cache with the page after this one.
+   *
+   * Paging is the most predictable thing anybody does on a results page, and
+   * one page ahead is where the guessing stops. Two pages ahead is a request
+   * for something most people never look at.
+   */
+  guessNextPage(res) {
+    clearTimeout(this.pageTimer);
+    const limit = this.query.limit || 20;
+    if (!res.hits || res.hits.length < limit) return;
+    const next = urlState.params({ ...this.query, offset: (this.query.offset || 0) + limit }, VERTICALS);
+    this.pageTimer = setTimeout(() => this.guess("search", next, (opts) => api.search(next, opts)), PREFETCH_PAGE);
+  }
+
+  /** guessDocument fetches what the pointer has been resting on. */
+  guessDocument(id) {
+    clearTimeout(this.hoverTimer);
+    if (!id || this.guessing >= PREFETCH_LIMIT) return;
+    this.hoverTimer = setTimeout(() => {
+      this.guessing++;
+      this.guess("document", { id }, (opts) => api.document(id, opts)).finally(() => this.guessing--);
+    }, PREFETCH_HOVER);
+  }
+
+  /** guessSuggestion fetches the search behind a highlighted suggestion. */
+  guessSuggestion(item) {
+    clearTimeout(this.suggestionTimer);
+    if (!item || item.kind === "operator") return;
+    const text = item.value || item.text;
+    if (!text) return;
+    const request = urlState.params({ ...urlState.read(""), q: text }, VERTICALS);
+    this.suggestionTimer = setTimeout(
+      () => this.guess("search", request, (opts) => api.search(request, opts)),
+      PREFETCH_SUGGESTION,
+    );
+  }
+
+  /**
+   * guess fills a cache entry for something nobody has asked for yet.
+   *
+   * A prefetch that fails is a prefetch that did not happen. It is not retried
+   * and it never reaches the error state, because the real request will report
+   * the failure properly and with something on screen to attach it to.
+   */
+  guess(name, params, run) {
+    const k = cache.key(name, params);
+    if (cache.read(k).state !== "miss") return Promise.resolve();
+    return cache
+      .once(k, (signal) => run({ signal }))
+      .then((res) => {
+        if (res.modified) cache.write(k, res.data, res.etag);
+      })
+      .catch(() => {});
   }
 
   /**
@@ -346,6 +488,9 @@ class App {
 
   fail(err) {
     const unauthenticated = err instanceof ApiError && err.status === 401;
+    // The one failure that empties the cache. Everything in it was read under a
+    // session that is now over, and the next session is not entitled to it.
+    if (unauthenticated) cache.clear();
     replace(
       this.main,
       h(
