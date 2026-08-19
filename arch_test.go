@@ -56,6 +56,15 @@ var allowed = map[string][]string{
 	// package least equipped to hold one.
 	"store/column": nil,
 
+	// kura is the Go side of the Rust engine's C ABI and imports nothing of
+	// ours. It deals in document ids, bytes and vectors, and it is the one
+	// package in the repository that is not in the default build at all. An
+	// edge from it to store would put a cgo dependency underneath the interface
+	// every driver implements, which is the opposite of the arrangement: the
+	// engine is something a driver may reach for, not something the storage
+	// layer is built on.
+	"store/kura": nil,
+
 	"store/memstore":    {"", "acl", "doc", "store"},
 	"store/sqlitestore": {"", "acl", "doc", "store"},
 	"store/storetest":   {"", "acl", "doc", "store"},

@@ -135,3 +135,55 @@ jobs:
             --title "Nightly interface audit failed on $(date -u +%Y-%m-%d)" \
             --body "The nightly run enforces the Lighthouse floors that are advisory on a pull request, and one of them was missed on ${{ github.sha }}. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --label performance
+
+  # Fuzz the boundary with the Rust engine.
+  #
+  # A malformed posting list is bytes a caller was handed, and on this side of
+  # the boundary getting it wrong is a segmentation fault rather than a Go
+  # panic. A minute of this on a pull request is not long enough to find
+  # anything and ten minutes here is, so it runs on the schedule with the rest
+  # of the slow work.
+  #
+  # A crasher the fuzzer finds is written into testdata, which is kept as an
+  # artifact so it can be committed as a regression test.
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+      - name: cache the engine build
+        uses: actions/cache@v4
+        with:
+          path: |
+            third_party/kura-src/target
+            ~/.cargo/registry
+          key: kura-${{ runner.os }}-${{ hashFiles('scripts/kura.sh') }}
+      - name: build the engine
+        run: make kura
+      - name: fuzz the postings reader
+        id: fuzz
+        continue-on-error: true
+        run: |
+          CGO_ENABLED=1 go test -tags kura -run '^$' \
+            -fuzz FuzzPostingsSurvivesAnything -fuzztime 10m ./store/kura/
+      - name: keep the crasher
+        if: steps.fuzz.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashers
+          path: store/kura/testdata/fuzz/
+          if-no-files-found: warn
+      - name: file an issue when it found something
+        if: steps.fuzz.outcome == 'failure' && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "Fuzzing the engine boundary found an input on $(date -u +%Y-%m-%d)" \
+            --body "The nightly fuzz run against the Rust engine failed on ${{ github.sha }}. The input it found is in the fuzz-crashers artifact and belongs in store/kura/testdata as a regression test. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --label bug

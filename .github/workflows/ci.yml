@@ -138,6 +138,54 @@ jobs:
       - name: ui gate
         run: make ui-gate
 
+  # The Rust engine, which nothing else in this file builds.
+  #
+  # Everything above runs with CGO off and never links it, and that is the
+  # shipped binary. This job exists so the binding does not rot: the engine is a
+  # separate repository that moves on its own, and a change to its ABI should
+  # fail here rather than in somebody's build.
+  #
+  # It runs the race detector because a cgo boundary is where a pointer rule is
+  # broken, and the leak tests because a missing free is invisible to Go.
+  kura:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+      - name: cache the engine build
+        uses: actions/cache@v4
+        with:
+          path: |
+            third_party/kura-src/target
+            ~/.cargo/registry
+          key: kura-${{ runner.os }}-${{ hashFiles('scripts/kura.sh') }}
+      - name: build the engine
+        run: make kura
+      - name: build against it
+        run: make kura-build
+      - name: test against it
+        run: CGO_ENABLED=1 go test -race -count=1 -tags kura ./store/kura/
+      # Again without the race detector, because it keeps shadow memory for
+      # every address the program touches and grows the resident set as it
+      # does, which is the measurement the leak tests read. They sit out the
+      # pass above and run in this one.
+      - name: test against it again, for the leaks
+        run: CGO_ENABLED=1 go test -count=1 -tags kura ./store/kura/
+      - name: the default build still refuses
+        run: go test -count=1 ./store/kura/
+
   # The binary is meant to run on Windows too, and cross compiling catches the
   # path handling and syscall mistakes that only show up there.
   cross:

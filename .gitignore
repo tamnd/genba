@@ -15,6 +15,11 @@ coverage.out
 *.db-shm
 *.db-wal
 
+# The Rust engine: its source checkout, its header and its static library.
+# scripts/kura.sh puts them here. A checked in binary is a binary nobody can
+# review and a build nobody can reproduce, so none of it is committed.
+/third_party/
+
 # Frontend build tooling. web/dist is checked in on purpose: it is what the
 # binary embeds, so a clone builds a working server without a node toolchain.
 /web/node_modules/
