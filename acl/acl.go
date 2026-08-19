@@ -171,30 +171,13 @@ func (perm Permissions) isOwner(p *Principal) bool {
 	return perm.matchesUser(p, []Ref{perm.Owner})
 }
 
+// matchesUser and matchesGroup are the same set membership a storage driver
+// runs inside its own query, expressed over the key forms in ref.go so that
+// there is one definition of the rule rather than one per driver.
 func (perm Permissions) matchesUser(p *Principal, refs []Ref) bool {
-	for _, r := range refs {
-		if id, ok := p.IdentityIn(r.Source); ok && id == r.Value {
-			return true
-		}
-		if r.Source == "" && r.Value == p.Subject {
-			return true
-		}
-	}
-	return false
+	return matchesKey(p.UserKeys(), refs, Ref.UserKey)
 }
 
 func (perm Permissions) matchesGroup(p *Principal, refs []Ref) bool {
-	for _, r := range refs {
-		if p.Groups.Has(qualify(r)) {
-			return true
-		}
-	}
-	return false
-}
-
-func qualify(r Ref) string {
-	if r.Source == "" {
-		return r.Value
-	}
-	return r.Source + ":" + r.Value
+	return matchesKey(p.GroupKeys(), refs, Ref.GroupKey)
 }

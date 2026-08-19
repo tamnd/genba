@@ -57,9 +57,9 @@ func (h HeaderAuth) Authenticate(r *http.Request) (*acl.Principal, error) {
 		Tenant:  tenant,
 		Subject: subject,
 		Kind:    acl.KindUser,
-		Groups:  acl.GroupSet{Version: version, Members: splitList(r.Header.Get(HeaderGroups))},
+		Groups:  acl.GroupSet{Version: version, Members: splitCSV(r.Header.Get(HeaderGroups))},
 	}
-	for _, raw := range splitList(r.Header.Get(HeaderIdentities)) {
+	for _, raw := range splitCSV(r.Header.Get(HeaderIdentities)) {
 		source, value, ok := strings.Cut(raw, ":")
 		if !ok {
 			continue
@@ -67,6 +67,21 @@ func (h HeaderAuth) Authenticate(r *http.Request) (*acl.Principal, error) {
 		p.Identities = append(p.Identities, acl.Identity{Source: source, Value: value})
 	}
 	return p, nil
+}
+
+// splitCSV reads a comma separated header value, dropping empty entries.
+func splitCSV(v string) []string {
+	if v == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func orDefault(v, fallback string) string {

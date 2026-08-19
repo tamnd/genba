@@ -17,6 +17,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -108,7 +109,9 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleReady)
+	mux.Handle("GET /api/v1/me", s.authenticated(s.handleMe))
 	mux.Handle("GET /api/v1/search", s.authenticated(s.handleSearch))
+	mux.Handle("GET /api/v1/suggest", s.authenticated(s.handleSuggest))
 	mux.Handle("GET /api/v1/documents/{id}", s.authenticated(s.handleDocument))
 	mux.Handle("GET /api/v1/stats", s.authenticated(s.handleStats))
 	if s.assets != nil {
@@ -172,10 +175,32 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 }
 
 type searchResponse struct {
-	Query  string             `json:"query"`
-	Total  int                `json:"total"`
-	Hits   []searchHit        `json:"hits"`
-	Facets map[string][]facet `json:"facets"`
+	Query string `json:"query"`
+
+	// Text is what was left of the query after the operators were parsed out of
+	// it, so the interface can show which part of what somebody typed became a
+	// filter rather than a search term.
+	Text    string             `json:"text"`
+	Filters searchFilters      `json:"filters"`
+	Total   int                `json:"total"`
+	Partial bool               `json:"partial,omitempty"`
+	TookMS  float64            `json:"took_ms"`
+	Hits    []searchHit        `json:"hits"`
+	Facets  map[string][]facet `json:"facets"`
+}
+
+// searchFilters echoes the parsed query back. A shareable URL and a typed
+// operator have to end up in the same place, and the way to be sure of that is
+// for the server to say what it understood instead of the client guessing.
+type searchFilters struct {
+	Sources    []string `json:"sources,omitempty"`
+	Kinds      []string `json:"kinds,omitempty"`
+	Containers []string `json:"containers,omitempty"`
+	Authors    []string `json:"authors,omitempty"`
+	Owners     []string `json:"owners,omitempty"`
+	Since      string   `json:"since,omitempty"`
+	Until      string   `json:"until,omitempty"`
+	Sort       string   `json:"sort,omitempty"`
 }
 
 // facet is the wire shape of index.Facet. The extra type is worth it: it keeps
@@ -187,35 +212,33 @@ type facet struct {
 }
 
 type searchHit struct {
-	ID      string  `json:"id"`
-	Title   string  `json:"title"`
-	URL     string  `json:"url,omitempty"`
-	Source  string  `json:"source"`
-	Kind    string  `json:"kind"`
-	Snippet string  `json:"snippet,omitempty"`
-	Score   float64 `json:"score"`
+	ID         string    `json:"id"`
+	Title      string    `json:"title"`
+	URL        string    `json:"url,omitempty"`
+	Source     string    `json:"source"`
+	Kind       string    `json:"kind"`
+	Container  string    `json:"container,omitempty"`
+	Author     string    `json:"author,omitempty"`
+	ModifiedAt time.Time `json:"modified_at,omitzero"`
+	Snippet    string    `json:"snippet,omitempty"`
+
+	// Passages is the snippet split at the words that matched, so the interface
+	// marks exactly what the index matched rather than running a substring
+	// search of its own and highlighting the wrong halves of words.
+	Passages []passage `json:"passages,omitempty"`
+	Score    float64   `json:"score"`
+}
+
+type passage struct {
+	Text  string `json:"text"`
+	Match bool   `json:"match,omitempty"`
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Principal) {
-	q := r.URL.Query()
-	limit, err := intParam(q.Get("limit"))
+	query, err := parseQuery(r.URL.Query())
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "limit must be a number")
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
-	}
-	offset, err := intParam(q.Get("offset"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "offset must be a number")
-		return
-	}
-
-	query := index.Query{
-		Text:      q.Get("q"),
-		Sources:   splitList(q.Get("source")),
-		Kinds:     kinds(splitList(q.Get("kind"))),
-		Container: q.Get("container"),
-		Limit:     limit,
-		Offset:    offset,
 	}
 
 	res, err := s.searcher.Search(r.Context(), p, query)
@@ -225,19 +248,246 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Pri
 		return
 	}
 
-	out := searchResponse{Query: query.Text, Total: res.Total, Facets: facets(res.Facets), Hits: []searchHit{}}
+	out := searchResponse{
+		Query:   r.URL.Query().Get("q"),
+		Text:    query.Text,
+		Filters: filtersOf(query),
+		Total:   res.Total,
+		Partial: res.Truncated,
+		TookMS:  float64(res.Took.Microseconds()) / 1000,
+		Facets:  facets(res.Facets),
+		Hits:    []searchHit{},
+	}
 	for _, h := range res.Hits {
 		out.Hits = append(out.Hits, searchHit{
-			ID:      h.Document.ID,
-			Title:   h.Document.Title,
-			URL:     h.Document.URL,
-			Source:  h.Document.Source,
-			Kind:    string(h.Document.Kind),
-			Snippet: h.Snippet,
-			Score:   h.Score,
+			ID:         h.Document.ID,
+			Title:      h.Document.Title,
+			URL:        h.Document.URL,
+			Source:     h.Document.Source,
+			Kind:       string(h.Document.Kind),
+			Container:  h.Document.Container,
+			Author:     personName(h.Document.Author),
+			ModifiedAt: h.Document.ModifiedAt,
+			Snippet:    h.Snippet,
+			Passages:   passages(h.Passages),
+			Score:      h.Score,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// parseQuery builds a query from the URL.
+//
+// The q parameter goes through the operator grammar, and the repeated
+// parameters add to whatever that produced. Ticking a source in the sidebar and
+// typing app:slack therefore land in the same field, which is what lets the
+// interface keep the box and the sidebar in sync without a second grammar of
+// its own.
+func parseQuery(v url.Values) (index.Query, error) {
+	limit, err := intParam(v.Get("limit"))
+	if err != nil {
+		return index.Query{}, errors.New("limit must be a number")
+	}
+	offset, err := intParam(v.Get("offset"))
+	if err != nil {
+		return index.Query{}, errors.New("offset must be a number")
+	}
+
+	q := index.Parse(v.Get("q"))
+	q.Sources = append(q.Sources, listParam(v, "source")...)
+	q.Kinds = append(q.Kinds, kinds(listParam(v, "kind"))...)
+	q.Containers = append(q.Containers, listParam(v, "container")...)
+	q.Authors = append(q.Authors, listParam(v, "author")...)
+	q.Owners = append(q.Owners, listParam(v, "owner")...)
+	q.Limit, q.Offset = limit, offset
+
+	if since := v.Get("since"); since != "" {
+		t, err := time.Parse(time.RFC3339, since)
+		if err != nil {
+			return index.Query{}, errors.New("since must be an RFC 3339 timestamp")
+		}
+		q.Since = t
+	}
+	if until := v.Get("until"); until != "" {
+		t, err := time.Parse(time.RFC3339, until)
+		if err != nil {
+			return index.Query{}, errors.New("until must be an RFC 3339 timestamp")
+		}
+		q.Until = t
+	}
+	if sort := v.Get("sort"); sort == string(index.ByRecent) || sort == "recent" {
+		q.Sort = index.ByRecent
+	}
+	return q, nil
+}
+
+func filtersOf(q index.Query) searchFilters {
+	f := searchFilters{
+		Sources:    q.Sources,
+		Containers: q.Containers,
+		Authors:    q.Authors,
+		Owners:     q.Owners,
+		Sort:       string(q.Sort),
+	}
+	for _, k := range q.Kinds {
+		f.Kinds = append(f.Kinds, string(k))
+	}
+	if !q.Since.IsZero() {
+		f.Since = q.Since.UTC().Format(time.RFC3339)
+	}
+	if !q.Until.IsZero() {
+		f.Until = q.Until.UTC().Format(time.RFC3339)
+	}
+	return f
+}
+
+func passages(in []index.Passage) []passage {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]passage, 0, len(in))
+	for _, p := range in {
+		out = append(out, passage{Text: p.Text, Match: p.Match})
+	}
+	return out
+}
+
+func personName(p doc.Person) string {
+	switch {
+	case p.Name != "":
+		return p.Name
+	case p.Email != "":
+		return p.Email
+	default:
+		return p.Identity.Value
+	}
+}
+
+type meResponse struct {
+	Subject string   `json:"subject"`
+	Tenant  string   `json:"tenant"`
+	Roles   []string `json:"roles,omitempty"`
+
+	// Sources is what this principal can actually see something from, which is
+	// what the interface builds its source filter out of. It is per principal
+	// rather than a list of configured connectors, because telling somebody a
+	// connector exists that they have no documents in is a small leak of how
+	// the company is organised.
+	Sources []facet `json:"sources"`
+	Kinds   []facet `json:"kinds"`
+}
+
+// handleMe is what the interface loads before it can draw anything: who the
+// caller is and which filters are worth showing them.
+func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, p *acl.Principal) {
+	out := meResponse{Subject: p.Subject, Tenant: p.Tenant, Roles: p.Roles, Sources: []facet{}, Kinds: []facet{}}
+	res, err := s.searcher.Search(r.Context(), p, index.Query{Limit: 1})
+	if err != nil {
+		s.log.Error("bootstrap failed", "error", err, "tenant", p.Tenant)
+		writeError(w, http.StatusInternalServerError, "internal", "the session could not be loaded")
+		return
+	}
+	out.Sources = facetValues(res.Facets["source"])
+	out.Kinds = facetValues(res.Facets["kind"])
+	writeJSON(w, http.StatusOK, out)
+}
+
+type suggestResponse struct {
+	Query       string       `json:"query"`
+	TookMS      float64      `json:"took_ms"`
+	Suggestions []suggestion `json:"suggestions"`
+}
+
+// suggestion is one row of the typeahead. Kind says how the interface should
+// draw it and what happens on Enter.
+type suggestion struct {
+	Kind  string `json:"kind"` // "document", "operator" or "query"
+	Text  string `json:"text"`
+	Hint  string `json:"hint,omitempty"`
+	ID    string `json:"id,omitempty"`
+	URL   string `json:"url,omitempty"`
+	Value string `json:"value,omitempty"`
+}
+
+// SuggestLimit is how many rows the typeahead returns. It is small because the
+// list is read at a glance while somebody is still typing, and because the
+// budget for this endpoint is tens of milliseconds.
+const SuggestLimit = 8
+
+func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request, p *acl.Principal) {
+	start := time.Now()
+	raw := strings.TrimSpace(r.URL.Query().Get("q"))
+	out := suggestResponse{Query: raw, Suggestions: []suggestion{}}
+	if raw == "" {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+
+	// Operator completions come first and cost nothing, so a slow store cannot
+	// make the box feel broken while somebody is typing "app:".
+	out.Suggestions = append(out.Suggestions, operatorSuggestions(raw)...)
+
+	q := index.Parse(raw)
+	q.Limit = SuggestLimit
+	res, err := s.searcher.Search(r.Context(), p, q)
+	if err != nil {
+		s.log.Warn("suggest failed", "error", err, "tenant", p.Tenant)
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	for _, h := range res.Hits {
+		if len(out.Suggestions) >= SuggestLimit {
+			break
+		}
+		out.Suggestions = append(out.Suggestions, suggestion{
+			Kind: "document",
+			Text: h.Document.Title,
+			Hint: h.Document.Source,
+			ID:   h.Document.ID,
+			URL:  h.Document.URL,
+		})
+	}
+	out.TookMS = float64(time.Since(start).Microseconds()) / 1000
+	writeJSON(w, http.StatusOK, out)
+}
+
+// operators is the list the typeahead offers, which is also the documentation
+// most people will ever read about the query language.
+var operators = []struct{ Name, Hint string }{
+	{"app", "limit to a connected app"},
+	{"type", "limit to a document type"},
+	{"in", "limit to a space, folder or channel"},
+	{"from", "limit to an author"},
+	{"owner", "limit to an owner"},
+	{"updated", "limit by when it changed"},
+}
+
+func operatorSuggestions(raw string) []suggestion {
+	last := raw[strings.LastIndex(raw, " ")+1:]
+	if last == "" || strings.Contains(last, ":") {
+		return nil
+	}
+	var out []suggestion
+	for _, op := range operators {
+		if !strings.HasPrefix(op.Name, strings.ToLower(last)) {
+			continue
+		}
+		out = append(out, suggestion{
+			Kind:  "operator",
+			Text:  op.Name + ":",
+			Hint:  op.Hint,
+			Value: raw[:len(raw)-len(last)] + op.Name + ":",
+		})
+	}
+	return out
+}
+
+func facetValues(in []index.Facet) []facet {
+	out := make([]facet, 0, len(in))
+	for _, v := range in {
+		out = append(out, facet{Value: v.Value, Count: v.Count})
+	}
+	return out
 }
 
 func (s *Server) handleDocument(w http.ResponseWriter, r *http.Request, p *acl.Principal) {
@@ -317,15 +567,16 @@ func intParam(v string) (int, error) {
 	return strconv.Atoi(v)
 }
 
-func splitList(v string) []string {
-	if v == "" {
-		return nil
-	}
-	parts := strings.Split(v, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
+// listParam reads a filter that can appear more than once. Both ?source=a&
+// source=b and ?source=a,b work, because links get written by hand and by
+// code and neither form is wrong.
+func listParam(v url.Values, name string) []string {
+	var out []string
+	for _, raw := range v[name] {
+		for p := range strings.SplitSeq(raw, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				out = append(out, p)
+			}
 		}
 	}
 	return out

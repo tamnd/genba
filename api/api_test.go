@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -192,5 +193,127 @@ func TestAssetsAreServedWhenConfigured(t *testing.T) {
 	w := request(t, s.Handler(), http.MethodGet, "/", nil)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "doctype") {
 		t.Fatalf("status = %d, body = %q", w.Code, w.Body)
+	}
+}
+
+// The interface asks who it is talking to before it draws anything, and the
+// answer has to be scoped to that caller. A source list built from the whole
+// index would tell a stranger which connectors exist and how much is in them.
+func TestMeIsScopedToTheCaller(t *testing.T) {
+	type meBody struct {
+		Subject string `json:"subject"`
+		Tenant  string `json:"tenant"`
+		Sources []struct {
+			Value string `json:"value"`
+			Count int    `json:"count"`
+		} `json:"sources"`
+	}
+
+	h := newServer(t)
+
+	w := request(t, h, http.MethodGet, "/api/v1/me", engineer())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	me := decode[meBody](t, w)
+	if me.Subject != "u_mei" {
+		t.Errorf("subject = %q, want u_mei", me.Subject)
+	}
+	if me.Tenant != "acme" {
+		t.Errorf("tenant = %q, want acme", me.Tenant)
+	}
+	if len(me.Sources) != 1 || me.Sources[0].Value != "gdrive" {
+		t.Errorf("sources = %v, want only gdrive", me.Sources)
+	}
+
+	w = request(t, h, http.MethodGet, "/api/v1/me", map[string]string{api.HeaderSubject: "u_nobody"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if stranger := decode[meBody](t, w); len(stranger.Sources) != 0 {
+		t.Errorf("a caller who may read nothing was told about %v", stranger.Sources)
+	}
+}
+
+func TestMeNeedsACredential(t *testing.T) {
+	w := request(t, newServer(t), http.MethodGet, "/api/v1/me", nil)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", w.Code)
+	}
+}
+
+type suggestBody struct {
+	Suggestions []struct {
+		Kind  string `json:"kind"`
+		Text  string `json:"text"`
+		ID    string `json:"id"`
+		Value string `json:"value"`
+	} `json:"suggestions"`
+}
+
+func TestSuggestOffersDocumentsTheCallerMayRead(t *testing.T) {
+	h := newServer(t)
+
+	w := request(t, h, http.MethodGet, "/api/v1/suggest?q=payments", engineer())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	got := decode[suggestBody](t, w)
+	if len(got.Suggestions) == 0 {
+		t.Fatal("no suggestions for a term that matches a readable document")
+	}
+	for _, s := range got.Suggestions {
+		if s.ID == "d2" {
+			t.Fatalf("suggested %q, which the caller may not read", s.ID)
+		}
+	}
+
+	w = request(t, h, http.MethodGet, "/api/v1/suggest?q=payments", map[string]string{api.HeaderSubject: "u_nobody"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	for _, s := range decode[suggestBody](t, w).Suggestions {
+		if s.Kind != "operator" {
+			t.Fatalf("a caller who may read nothing was offered %q", s.Text)
+		}
+	}
+}
+
+// A half typed operator completes to the operator rather than searching for it,
+// which is the whole reason the box does not need a separate filter menu.
+func TestSuggestCompletesAnOperator(t *testing.T) {
+	w := request(t, newServer(t), http.MethodGet, "/api/v1/suggest?q=ap", engineer())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	for _, s := range decode[suggestBody](t, w).Suggestions {
+		if s.Kind == "operator" && strings.HasPrefix(s.Value, "app:") {
+			return
+		}
+	}
+	t.Fatal("typing the start of an operator offered no way to complete it")
+}
+
+// The operators in the box and the parameters in the URL are the same filters,
+// so a query typed as text has to narrow exactly like a ticked facet does.
+func TestSearchReadsOperatorsFromTheQuery(t *testing.T) {
+	h := engineerWithBothGroups()
+	srv := newServer(t)
+
+	typed := decode[searchBody](t, request(t, srv, http.MethodGet, "/api/v1/search?q="+url.QueryEscape("payments app:gdrive"), h))
+	ticked := decode[searchBody](t, request(t, srv, http.MethodGet, "/api/v1/search?q=payments&source=gdrive", h))
+
+	if typed.Total != ticked.Total {
+		t.Fatalf("the operator returned %d results and the parameter returned %d", typed.Total, ticked.Total)
+	}
+	if len(typed.Hits) != 1 || typed.Hits[0].ID != "d1" {
+		t.Fatalf("app:gdrive returned %v, want only the drive document", typed.Hits)
+	}
+}
+
+func engineerWithBothGroups() map[string]string {
+	return map[string]string{
+		api.HeaderSubject: "u_mei",
+		api.HeaderGroups:  "gdrive:eng@acme.com,gdrive:sales@acme.com",
 	}
 }

@@ -152,5 +152,10 @@ jobs:
       - name: go-licenses check
         run: |
           go install github.com/google/go-licenses@latest
+          # modernc.org/mathutil ships the BSD 3-Clause text verbatim but
+          # without the title line the classifier keys on, so it comes back as
+          # unknown. It is checked by hand and it is BSD 3-Clause. It arrived
+          # with the SQLite driver.
           go-licenses check ./... \
+            --ignore modernc.org/mathutil \
             --allowed_licenses=Apache-2.0,MIT,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0,Unlicense,BSD-3-Clause-Clear

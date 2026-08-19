@@ -1,43 +1,12 @@
 package index
 
-import (
-	"strings"
-	"unicode"
-)
+import "github.com/tamnd/genba/doc"
 
-// Tokenize splits text into lowercased terms.
-//
-// It keeps letters and digits, folds case, and breaks on everything else. That
-// is enough for English, and it does not mangle CJK because each ideograph
-// becomes its own term, which is a coarse but workable unigram index. A real
-// language aware analyzer belongs behind the Analyzer interface once we have a
-// second language to test against, not before.
-func Tokenize(text string) []string {
-	var (
-		terms []string
-		cur   strings.Builder
-	)
-	flush := func() {
-		if cur.Len() == 0 {
-			return
-		}
-		terms = append(terms, cur.String())
-		cur.Reset()
-	}
-	for _, r := range text {
-		switch {
-		case unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hiragana, r) || unicode.Is(unicode.Katakana, r):
-			flush()
-			terms = append(terms, string(r))
-		case unicode.IsLetter(r) || unicode.IsDigit(r):
-			cur.WriteRune(unicode.ToLower(r))
-		default:
-			flush()
-		}
-	}
-	flush()
-	return terms
-}
+// Tokenize splits text into lowercased terms. It is [doc.Tokenize], kept here
+// because ranking code reads better without the package qualifier on every
+// line, and because the analyzer belonging to the document model rather than to
+// the ranking is a fact about the layering, not something a caller has to know.
+func Tokenize(text string) []string { return doc.Tokenize(text) }
 
 // stopwords are dropped from a query but not from a document, so a search for
 // "the deploy runbook" is not diluted while a phrase in the body stays intact.
@@ -62,5 +31,21 @@ func queryTerms(q string) []string {
 	if len(kept) == 0 {
 		return all
 	}
-	return kept
+	return dedupe(kept)
+}
+
+// dedupe removes repeated terms, keeping the first occurrence. A term counted
+// twice in a query would be scored twice, which turns "test test" into a
+// different ranking from "test" for no reason a person would expect.
+func dedupe(terms []string) []string {
+	seen := make(map[string]bool, len(terms))
+	out := terms[:0]
+	for _, t := range terms {
+		if seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	return out
 }

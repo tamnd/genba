@@ -65,6 +65,13 @@ Point it at a directory you already have and it indexes it before it starts list
 genbad -tenant acme -corpus ~/src/some-repo -corpus-name repo
 ```
 
+An in memory index is gone when the process is, which gets old quickly once there is anything worth indexing.
+Give it a file instead and the same command keeps its work:
+
+```
+genbad -tenant acme -store sqlite -dsn ~/.genba/genba.db -corpus ~/src/some-repo -corpus-name repo
+```
+
 Then query it:
 
 ```
@@ -75,6 +82,48 @@ genba search payments failover runbook
 ```
 
 The browser interface is at http://127.0.0.1:8080 and is compiled into the binary, so there is no static directory to deploy alongside it.
+
+## The interface
+
+One box takes everything.
+Text, an operator, or the name of a document you already know, and the box works out which of those it was rather than making you pick a mode first.
+
+| Operator | Example | What it does |
+| --- | --- | --- |
+| `app:` or `source:` | `app:slack` | only documents from one connector |
+| `type:` or `kind:` | `type:ticket` | only one kind of document |
+| `in:` or `container:` | `in:incidents` | a space, folder, channel or repository |
+| `from:`, `by:` or `author:` | `from:mei` | written by a person |
+| `owner:` | `owner:mei@acme.com` | owned by a person |
+| `updated:` | `updated:week`, `updated:2026-01-01..2026-03-31` | changed inside a window |
+| `sort:` | `sort:recent` | newest first instead of most relevant |
+
+Repeating an operator widens and combining different ones narrows, which is the same rule the facet sidebar follows.
+Ticking a box in the sidebar and typing the operator produce the same query, so learning one is learning the other.
+Anything the grammar does not recognise is treated as text, because a colon in a sentence is far more common than a typo in an operator.
+
+Every filter, the sort, the page and the open document live in the address bar, so a search can be linked, bookmarked and reloaded, and the back button does what a back button should.
+
+`⌘K` or `/` focuses the box, `j` and `k` walk the results, `Enter` or `p` opens a preview, `o` opens the document in its source, `g` then `h` goes home, and `?` lists all of it.
+
+The identity switcher at the bottom of the rail sends a different subject, tenant and set of groups with every request.
+It is there because the permission model is the part of this system worth checking by hand, and the fastest way to check it is to run the same query as two different people and watch the results change.
+
+## HTTP API
+
+Everything the interface does is an HTTP call, and there is nothing it can reach that a client cannot.
+
+| Endpoint | What it returns |
+| --- | --- |
+| `GET /api/v1/search` | ranked hits, facet counts, the total and the server side timing |
+| `GET /api/v1/suggest` | operator completions and documents matching a prefix |
+| `GET /api/v1/documents/{id}` | one document, or the same error as one that does not exist |
+| `GET /api/v1/me` | the caller, and the sources and kinds that caller can actually see |
+| `GET /api/v1/stats` | how much is indexed and how much is quarantined |
+| `GET /healthz`, `GET /readyz` | liveness, and whether the store answers |
+
+`search` takes `q` for the text and the operators, and `source`, `kind`, `container`, `author` and `owner` as repeated or comma separated parameters, plus `since`, `until`, `sort`, `limit` and `offset`.
+The snippet comes back as marked passages rather than as offsets, so a client highlights what the analyzer matched without reimplementing the analyzer.
 
 By default every file in the corpus is readable by everybody in the tenant, which is the right rule for a public checkout and the wrong one for almost anything else.
 If the tree has OWNERS files in it, `-corpus-acl owners` reads them instead, and a query then returns different results depending on who is asking.
@@ -158,6 +207,7 @@ func main() {
 | `doc` | the canonical document model every connector normalises into |
 | `store` | the storage interface, plus `storetest`, the conformance suite |
 | `store/memstore` | the reference in memory driver |
+| `store/sqlitestore` | the SQLite driver, pure Go, FTS5 and the permission check in one query |
 | `index` | query parsing, retrieval and ranking |
 | `connector` | the ingestion contract, cursors and checkpoints |
 | `connector/fssource` | the reference connector, a directory tree with OWNERS files |
@@ -230,8 +280,15 @@ Four drivers are planned:
 - `memstore`, in memory, the reference implementation and what the tests run on.
 - `sqlitestore`, pure Go, for a single node install that wants to keep its data.
 - `pgstore`, PostgreSQL 18, for a deployment that already runs one.
+  Not written yet.
 - `kurastore`, which links [tamnd/kura](https://github.com/tamnd/kura), a storage engine written in Rust that holds columnar, vector and graph data in one file.
   It is compiled in with `-tags kura` and `CGO_ENABLED=1`, and everything else keeps working without it.
+
+A driver that can do better than a scan says so by implementing `store.Retriever`, and the searcher asks it for the match set instead of walking everything.
+`sqlitestore` does, so the permission check, the filters and the terms are all one SQL statement over an FTS5 index, and the rows the database returns are already the rows the caller may read.
+There is one definition of the match set and both paths are held to it.
+`store/storetest` runs a driver's `Retrieve` against its own `Scan` and fails any disagreement, and `index` runs the same searches through both drivers and requires the same ranked answer, so a driver cannot quietly drift from the analyzer.
+`sqlitestore` also counts the rows the database hands back, which is what its own tests assert on: a caller who may read nothing costs zero rows rather than five hundred rows filtered afterwards.
 
 ## Build
 
