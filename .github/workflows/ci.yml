@@ -177,6 +177,12 @@ jobs:
         run: make kura-build
       - name: test against it
         run: CGO_ENABLED=1 go test -race -count=1 -tags kura ./store/kura/
+      # Again without the race detector, because it keeps shadow memory for
+      # every address the program touches and grows the resident set as it
+      # does, which is the measurement the leak tests read. They sit out the
+      # pass above and run in this one.
+      - name: test against it again, for the leaks
+        run: CGO_ENABLED=1 go test -count=1 -tags kura ./store/kura/
       - name: the default build still refuses
         run: go test -count=1 ./store/kura/
 

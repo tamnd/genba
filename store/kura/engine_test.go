@@ -34,6 +34,9 @@ func TestABitmapDoesNotLeak(t *testing.T) {
 	if testing.Short() {
 		t.Skip("this one runs twenty thousand allocation cycles")
 	}
+	if raceDetector {
+		t.Skip("the race detector grows the resident set on its own, which is the measurement this makes")
+	}
 	const (
 		warmup = 2_000
 		cycles = 20_000
@@ -86,6 +89,9 @@ func TestABitmapDoesNotLeak(t *testing.T) {
 func TestPostingsDoNotLeak(t *testing.T) {
 	if testing.Short() {
 		t.Skip("this one runs twenty thousand encode and decode cycles")
+	}
+	if raceDetector {
+		t.Skip("the race detector grows the resident set on its own, which is the measurement this makes")
 	}
 	ids := make([]uint32, 512)
 	for i := range ids {
