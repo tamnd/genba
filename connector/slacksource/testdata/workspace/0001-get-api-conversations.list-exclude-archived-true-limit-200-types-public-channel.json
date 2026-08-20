@@ -1,0 +1,40 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://slack.com/api/conversations.list?exclude_archived=true\u0026limit=200\u0026types=public_channel%2Cprivate_channel"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "channels": [
+          {
+            "id": "C_GENERAL",
+            "is_archived": false,
+            "is_channel": true,
+            "is_private": false,
+            "name": "general",
+            "updated": 1780000000000
+          },
+          {
+            "id": "C_LINE_TWO",
+            "is_archived": false,
+            "is_channel": true,
+            "is_private": false,
+            "name": "line-two",
+            "updated": 1780000002000
+          }
+        ],
+        "ok": true,
+        "response_metadata": {
+          "next_cursor": "2"
+        }
+      }
+    }
+  }
+}

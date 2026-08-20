@@ -1,0 +1,31 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://slack.com/api/conversations.history?channel=C_SAFETY\u0026inclusive=true\u0026limit=200\u0026oldest=0"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "has_more": false,
+        "messages": [
+          {
+            "text": "guard\nThe guard on the press is being replaced on Friday morning.",
+            "ts": "1780000008.000000",
+            "type": "message",
+            "user": "U_MEI"
+          }
+        ],
+        "ok": true,
+        "response_metadata": {
+          "next_cursor": ""
+        }
+      }
+    }
+  }
+}

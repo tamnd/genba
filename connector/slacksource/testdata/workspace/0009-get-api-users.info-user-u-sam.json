@@ -1,0 +1,28 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://slack.com/api/users.info?user=U_SAM"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "ok": true,
+        "user": {
+          "id": "U_SAM",
+          "name": "sam",
+          "profile": {
+            "email": "sam@acme.com",
+            "real_name": "Sam Okafor"
+          },
+          "real_name": "Sam Okafor"
+        }
+      }
+    }
+  }
+}
