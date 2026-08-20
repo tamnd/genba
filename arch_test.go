@@ -130,6 +130,11 @@ var allowed = map[string][]string{
 	// place for the permission rule to live.
 	"connector/aclmap":   {"acl"},
 	"connector/fssource": {"acl", "connector", "connector/aclmap", "doc", "extract"},
+	// objectsource sits at the same level as fssource and names the same five
+	// packages. It talks to a network service and fssource does not, and none of
+	// that difference is allowed to show up as a dependency: an S3 client of our
+	// own is a file in the package rather than a layer under it.
+	"connector/objectsource": {"acl", "connector", "connector/aclmap", "doc", "extract"},
 	// ingest names acl because a permission change that arrives without the
 	// document is a map of access control lists and nothing else, and there is
 	// no way to carry one without saying what it is. It is the one type from

@@ -367,6 +367,18 @@ func Detect(data []byte, name string) string {
 	return "application/octet-stream"
 }
 
+// MediaByName is what a file's name claims it is, and empty when the name
+// claims nothing this package recognises.
+//
+// [Detect] is the better answer and this is not a substitute for it. It exists
+// for the callers that have to decide whether to read a file at all before they
+// have a single byte of it: a connector reading a bucket over the network
+// cannot sniff its way through a terabyte of archives to find out none of them
+// were documents.
+func MediaByName(name string) string {
+	return byExtension(strings.ToLower(path.Ext(name)))
+}
+
 // magic is one file signature.
 type magic struct {
 	prefix []byte
