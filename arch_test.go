@@ -80,6 +80,14 @@ var allowed = map[string][]string{
 	// it holds no extractor and defines no interface for one either.
 	"store/graph": {"store/column"},
 
+	// segdir owns which segments are on disk and which of them a reader can
+	// see, so it needs the segment container to read a sequence number out of a
+	// header and to check that a published file parses. It needs nothing else.
+	// It does not know what a document is, it does not know what a query is,
+	// and a directory of segments is the same problem whatever the segments
+	// turn out to hold.
+	"store/segdir": {"store/segment"},
+
 	// kura is the Go side of the Rust engine's C ABI and imports nothing of
 	// ours. It deals in document ids, bytes and vectors, and it is the one
 	// package in the repository that is not in the default build at all. An
