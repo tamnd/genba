@@ -376,6 +376,47 @@ Everything else is optional, and each piece buys one thing.
 `connector/objectsource` implements all but the deletion, over a network service, and is the one to read for the parts a local source never has to deal with: signing, paging, and a listing whose order has nothing to do with what changed.
 A bucket listing is the same shape of problem as a walk, and an object that is no longer in it is found by the sweep for the same reason.
 
+### A conversation is one document
+
+Chat, ticket trackers and wikis keep the same shape underneath their vocabulary.
+Something is said, and then people say things about it: a message and its replies, an issue and its comments, a page and the discussion at the bottom of it.
+The source stores those as separate rows because that is how they were written, one at a time, by different people on different days.
+
+An index that copies that shape answers badly.
+Ask it why the gearbox order was cancelled and it returns fourteen rows from the same conversation, ranked against each other, none of which is the answer on its own.
+The reply that says the supplier could not meet the date scores nothing at all for the word gearbox, because the word gearbox was in the message above it and was never repeated.
+The fourteen rows also crowd out the thirteen other conversations that should have been on the page.
+
+So a conversation is one document, and `connector/thread` is where it is assembled.
+It talks to nothing.
+A connector fetches the messages, resolves who wrote them and works out who may read the result, and hands the pieces over.
+
+```go
+d := thread.Conversation{
+	ID:        "chat:" + channel + ":" + ts,
+	Container: channel,
+	Root:      thread.Message{ID: ts, Author: author, At: when, Text: text},
+	Replies:   replies,
+}.Document(perms)
+```
+
+The permissions are an argument rather than a field, for the reason the rest of this document keeps coming back to: a signature that lets a caller forget the answer is a signature that invites a thread being indexed without one.
+
+Four decisions in there are worth knowing about.
+
+The author of each message goes into the body in front of what they said, which puts the name in the index as well as on the screen.
+That is the difference between being able to search for what Mei said about the gearbox and only being able to search for the gearbox.
+
+A repeated message is kept once.
+A paged reply listing at more than one source repeats the parent message on every page, so a connector that concatenates the pages hands the root over three times, and saying it three times in the body trebles its weight in the ranking as well.
+
+An edit moves the version.
+A message edited in place changes what the document says without any reply being added, so a version derived only from reply times leaves the index serving the old text until somebody happens to answer.
+
+A conversation too long for the body limit keeps its beginning and its end.
+The root stays because it is what the conversation is about, and the end stays because a thread long enough to be cut is usually one that took a while to work something out, and the working out is at the bottom.
+The document records how many messages were left out, and nothing is written in place of them, because a marker in a body is a phrase in the index that nobody at the source ever typed and it turns up in snippets.
+
 ### The conformance suite is the definition
 
 `connector/connectortest` is what a connector has to pass, and it rather than the interface is the definition of one.
