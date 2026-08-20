@@ -24,8 +24,15 @@
 // The cursor is the highest modification time the last run saw. A later run
 // walks the same tree and skips anything not newer, so the cost of a no change
 // sync is a stat of every file rather than a read of every file. That is the
-// honest limit of what a plain filesystem supports: without a change feed there
-// is no way to avoid the walk, only the read.
+// honest limit of what a plain filesystem supports on its own: without a change
+// feed there is no way to avoid the walk, only the read.
+//
+// A [Watcher] is how the walk goes too. The operating system already knows
+// which files were written, and a source built with [WithWatcher] asks it
+// instead of asking the tree, which turns the cost of a sync from a function of
+// how large the corpus is into a function of how much of it moved. A watcher
+// that cannot vouch for what it recorded says so, and that sync walks, so the
+// worst a watcher can do is cost what not having one costs.
 package fssource
 
 import (
@@ -38,9 +45,11 @@ import (
 	_ "image/jpeg" // registers the JPEG config decoder
 	_ "image/png"  // registers the PNG config decoder
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -143,6 +152,28 @@ type (
 	}
 )
 
+// Ruled is the optional capability of a [Policy] whose answers come out of
+// files in the tree it is being asked about.
+//
+// It exists for the watched sync and for nothing else. A watcher reports the
+// file that changed, and an OWNERS file that changed governs who may read every
+// document in the subtree below it, none of which the watcher will ever
+// mention. A sync that read only the reported paths would apply the edit to the
+// OWNERS file itself and to nothing it rules.
+//
+// So a policy says which paths are its rules, and a sync that finds one of them
+// among the changes walks the tree that round instead. That is the expensive
+// answer, and it is the right one: an OWNERS edit is rare, and getting it wrong
+// means a revocation that silently did not happen.
+//
+// [OSPolicy] needs none of this. Its rule for a file is the file's own mode,
+// and changing that raises an event on the file itself.
+type Ruled interface {
+	// IsRule reports whether a path, relative to the root and separated by
+	// forward slashes, is one of the policy's rule files.
+	IsRule(relPath string) bool
+}
+
 // Reloader is the optional capability of a [Policy] that caches.
 //
 // A source calls it once at the start of every walk. That is the contract the
@@ -176,6 +207,7 @@ type Source struct {
 	skipDir   func(name string) bool
 	includeIf func(name string) bool
 	skipped   func(path string, reason error)
+	watcher   *Watcher
 
 	counters counters
 }
@@ -253,6 +285,30 @@ func WithInclude(f func(name string) bool) Option {
 	}
 }
 
+// WithWatcher makes the source ask a watcher what changed instead of walking
+// the tree to find out.
+//
+// The watcher is built separately and owned by the caller, because building one
+// fails for reasons that are a property of the machine rather than of the
+// program, and a caller that cannot have one should carry on with a source that
+// walks rather than fail to start.
+//
+//	w, err := fssource.Watch(root)
+//	if err != nil {
+//		log.Warn("watching the tree, syncs will walk it instead", "err", err)
+//	}
+//	src, err := fssource.New(root, "docs", policy, fssource.WithWatcher(w))
+//
+// A nil watcher is allowed and means exactly what passing no option means, so
+// the error above does not need a second branch.
+//
+// The watcher has to be watching the same tree the source is reading, and
+// [New] refuses the pair if it is not. It also has to skip the same directories,
+// which is what [WithWatchSkipDir] is for.
+func WithWatcher(w *Watcher) Option {
+	return func(s *Source) { s.watcher = w }
+}
+
 // New returns a source reading root, naming itself name, and asking policy who
 // may read each file.
 //
@@ -292,6 +348,12 @@ func New(root, name string, policy Policy, opts ...Option) (*Source, error) {
 	for _, opt := range opts {
 		opt(s)
 	}
+	if s.watcher != nil && s.watcher.root != abs {
+		// A watcher on a different tree would report changes this source cannot
+		// place and, far worse, would report nothing about the tree it is
+		// actually reading while looking to the sync like a healthy record.
+		return nil, fmt.Errorf("fssource: the watcher is on %s and the source is on %s", s.watcher.root, abs)
+	}
 	return s, nil
 }
 
@@ -309,6 +371,11 @@ func (s *Source) Close() error { return nil }
 // including files that were skipped as unchanged, so that a run which finds
 // nothing new still moves the clock forward and a run interrupted halfway does
 // not lose the files it already passed.
+//
+// A source built with [WithWatcher] reads the paths the watcher recorded and
+// does not walk at all, whenever the watcher can vouch for its record. When it
+// cannot, this is what runs, which is why the two paths have to agree on which
+// files are in the corpus.
 func (s *Source) Sync(ctx context.Context, from connector.Cursor, emit func(context.Context, connector.Change) error) (connector.Cursor, error) {
 	since, err := parseCursor(from)
 	if err != nil {
@@ -322,6 +389,11 @@ func (s *Source) Sync(ctx context.Context, from connector.Cursor, emit func(cont
 	// have been applied and has not.
 	if r, ok := s.policy.(Reloader); ok {
 		r.Reload()
+	}
+
+	changed, gen, watching := s.watched()
+	if watching {
+		return s.syncWatched(ctx, from, since, changed, emit)
 	}
 
 	var highest time.Time
@@ -364,6 +436,153 @@ func (s *Source) Sync(ctx context.Context, from connector.Cursor, emit func(cont
 	})
 	if walkErr != nil {
 		return connector.Cursor{}, walkErr
+	}
+	if s.watcher != nil {
+		// The tree has now been read end to end, so anything the watcher records
+		// from here is the whole of what changed. A walk that failed does not get
+		// here, and the watcher stays untrusted, because a record that starts
+		// somewhere in the middle of a tree is not a record.
+		s.watcher.caughtUp(gen)
+	}
+
+	if highest.IsZero() {
+		return from, nil
+	}
+	return connector.Cursor{Value: version(highest), Time: highest}, nil
+}
+
+// watched returns the paths the watcher recorded, the generation that record
+// belongs to, and false when this sync has to walk the tree instead.
+func (s *Source) watched() (changed map[string]watchOps, gen int64, ok bool) {
+	if s.watcher == nil {
+		return nil, 0, false
+	}
+	changed, gen, reason := s.watcher.pending()
+	if reason != nil {
+		return nil, gen, false
+	}
+	if p, ruled := s.policy.(Ruled); ruled {
+		for rel := range changed {
+			if p.IsRule(rel) {
+				// Throwing the record away rather than walking with it in hand is
+				// deliberate. The walk covers every path in it, and the next sync
+				// then has to be told the tree is known again, which is what the
+				// generation this returns is for.
+				gen = s.watcher.lose(fmt.Errorf("fssource: %s is a permission rule and governs files no event will name", rel))
+				return nil, gen, false
+			}
+		}
+	}
+	return changed, gen, true
+}
+
+// syncWatched reads the paths the watcher recorded, and nothing else.
+//
+// This is the whole point of the watcher: the cost of a sync stops being a
+// function of how large the tree is and becomes a function of how much of it
+// moved. A corpus of two million files where thirty changed costs thirty stats
+// instead of two million.
+//
+// What it cannot do is see a file whose modification time went backwards under
+// it, so the high water mark starts at the cursor rather than at zero. A file
+// restored from a backup with its old time, which is what "cp -p" does, would
+// otherwise drag the cursor into the past and make the next walk re-read
+// everything written since then.
+func (s *Source) syncWatched(ctx context.Context, from connector.Cursor, since time.Time, changed map[string]watchOps, emit func(context.Context, connector.Change) error) (connector.Cursor, error) {
+	highest := since
+	// Sorted, so that a sync over the same set of changes does the same work in
+	// the same order twice, which is what makes a failure reproducible.
+	rels := slices.Sorted(maps.Keys(changed))
+
+	for _, rel := range rels {
+		if err := ctx.Err(); err != nil {
+			return connector.Cursor{}, err
+		}
+		full := filepath.Join(s.root, filepath.FromSlash(rel))
+
+		// The stat decides whether the file is there, not the event. A file
+		// written and then deleted, or deleted and then written again, produces
+		// both kinds of event and only one of them is still true, and the
+		// filesystem is the one that knows which.
+		s.counters.metadata.Add(1)
+		info, err := os.Lstat(full)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			// This is the case a walk can never report. There is nothing left to
+			// walk past, so a tree traversal finds a deleted file by not finding
+			// it, which is to say it needs a full reconciliation sweep. A watcher
+			// is told.
+			if !s.includeIf(path.Base(rel)) {
+				continue
+			}
+			if err := emit(ctx, connector.Change{
+				Document: doc.Document{ID: s.id(rel)},
+				Deleted:  true,
+			}); err != nil {
+				return connector.Cursor{}, err
+			}
+			continue
+		case err != nil:
+			s.skipped(full, err)
+			continue
+		case info.IsDir() || !info.Mode().IsRegular():
+			continue
+		case !s.includeIf(path.Base(rel)):
+			continue
+		}
+		if limit := s.limitFor(rel); info.Size() > limit {
+			s.skipped(full, errTooBig(info.Size(), limit))
+			continue
+		}
+
+		// A mode change and nothing else is a permission change, which is a write
+		// of one descriptor rather than a read of the file. On a filesystem this
+		// is the cheap half of the whole design, and the watcher is what makes it
+		// exact: a walk has to ask every file in the tree whether its rule moved,
+		// and here the operating system already said which one did.
+		//
+		// Nothing about this file goes into the cursor. Not its modification
+		// time, which was not read, and not the time its rule changed, which is
+		// later still on a policy that answers with the inode change time. Some
+		// backends report an ordinary write as an attribute change first and the
+		// write a moment later, so a sync landing between the two would move the
+		// cursor past content it never read, and a later fall back to walking
+		// would skip that file for good. Leaving the cursor where it is costs one
+		// permission change written twice.
+		if ops := changed[rel]; ops.chmod && !ops.write && !ops.remove {
+			perms, err := s.permissions(ctx, rel, info)
+			if err != nil {
+				perms = connector.Unresolved(s.name)
+				s.skipped(full, err)
+			}
+			if err := emit(ctx, connector.Change{
+				Document:        doc.Document{ID: s.id(rel), Permissions: perms},
+				PermissionsOnly: true,
+			}); err != nil {
+				return connector.Cursor{}, err
+			}
+			continue
+		}
+
+		mod := info.ModTime()
+		if mod.After(highest) {
+			highest = mod
+		}
+		if at, err := s.changedAt(ctx, rel, info); err == nil && at.After(highest) {
+			highest = at
+		}
+
+		document, err := s.read(ctx, full, rel, info)
+		if err != nil {
+			s.skipped(full, err)
+			continue
+		}
+		if err := emit(ctx, connector.Change{
+			Document: document,
+			Cursor:   connector.Cursor{Value: version(mod), Time: mod},
+		}); err != nil {
+			return connector.Cursor{}, err
+		}
 	}
 
 	if highest.IsZero() {

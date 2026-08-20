@@ -103,7 +103,19 @@ var (
 	_ Policy    = (*OwnersPolicy)(nil)
 	_ Versioned = (*OwnersPolicy)(nil)
 	_ Reloader  = (*OwnersPolicy)(nil)
+	_ Ruled     = (*OwnersPolicy)(nil)
 )
+
+// IsRule reports whether a path is an OWNERS file.
+//
+// A watched sync that sees one of these gives up on its record and walks the
+// tree that round, because this is the one edit whose effect is nowhere near
+// the file that changed. Rewriting the OWNERS file at the root of a repository
+// changes who may read every document in it, and the only event anybody raised
+// was about the OWNERS file.
+func (o *OwnersPolicy) IsRule(relPath string) bool {
+	return path.Base(relPath) == OwnersFile
+}
 
 // Reload drops the cache so that the next lookup reads the tree again.
 //

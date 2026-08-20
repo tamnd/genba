@@ -24,8 +24,9 @@ A crash between the two replays documents, which is harmless because storing the
 The other order loses documents and nothing downstream ever notices they are missing.
 
 For `fssource` the cursor is the highest modification time the last walk saw, and the saving is the read rather than the walk.
-A filesystem has no change feed, so there is no way to avoid statting every file, but there is every way to avoid opening them.
+A filesystem has no change feed of its own, so a sync that only knows how to walk cannot avoid statting every file, but there is every way to avoid opening them.
 That is what the counters measure.
+Asking the operating system to report changes instead removes the walk as well, and is the section after next.
 
 ```go
 before := src.Counters()
@@ -36,6 +37,59 @@ spent := src.Counters().Since(before)
 `Counters` is optional, and a connector that implements it reports four numbers: listings, metadata lookups, fetches and bytes.
 A second sync over an unchanged tree of eight files spends eight metadata lookups, zero fetches and zero bytes.
 That is the floor for a source without a change feed, and the test that says so is `TestASecondSyncOverAnUnchangedTreeReadsNothing`.
+
+### Not walking at all
+
+The walk is the floor for a filesystem asked nothing but "what is here".
+It is not the floor for a filesystem that was asked to say when something changes, and every operating system worth deploying on will do that.
+
+```go
+w, err := fssource.Watch(root)
+if err != nil {
+	log.Warn("watching the tree, syncs will walk it instead", "err", err)
+}
+src, err := fssource.New(root, "docs", policy, fssource.WithWatcher(w))
+```
+
+The watcher is built separately from the source and owned by the caller, because building one fails for reasons that belong to the machine rather than to the program.
+A tree over the inotify limit, a filesystem the backend does not support, a process near its descriptor limit.
+None of those are a reason for a server not to start, so `Watch` returns an error the caller logs, and a nil watcher means exactly what passing no watcher means.
+
+A watcher is an optimisation that is wrong rather than slow when it fails.
+A dropped event is a document that never gets reindexed and nothing anywhere reports it, which is the same shape of failure as a permission change that quietly went nowhere.
+So the record starts out untrusted, goes back to untrusted the moment anything is out of the ordinary, and a sync that finds it untrusted walks the tree.
+Untrusted covers the first sync, a queue that overflowed, any error the backend reported, more changed paths than a walk would have cost, and the watcher being closed.
+The worst a watcher can do is cost what not having one costs.
+
+Three things about it are worth writing down.
+
+A deletion is a change only a watcher can see.
+A walk finds a deleted file by not finding it, which is to say it does not find it, and until now the only thing that ever removed one from the index was the reconciliation sweep below.
+A watched sync emits the deletion directly, and the sweep goes back to being the thing that catches what everything else missed.
+
+Existence is decided by the stat and not by the event.
+A file that was written and then deleted produces both kinds of event and only one of them is still true, and the filesystem is the one that knows which.
+
+The last one is the reason there is an interface for it.
+
+```go
+type Ruled interface {
+	IsRule(relPath string) bool
+}
+```
+
+An edit to an OWNERS file changes who may read every document in the subtree below it.
+The only event anybody raises is about the OWNERS file, and a sync that read the reported paths and nothing else would apply the edit to the OWNERS file and to nothing it governs.
+So a policy says which paths are its rules, and a sync that finds one of them among the changes throws the record away and walks that round.
+That is the expensive answer and it is the right one, because the cheap answer is a revocation that appears to have been applied and has not.
+`OSPolicy` needs none of this, since its rule for a file is the file's own mode and changing that raises an event on the file itself.
+
+The thing that took the longest to get right is not in any of that.
+Some backends report an ordinary write as an attribute change first and the write itself a moment later, so a sync landing between the two sees a mode change and nothing else.
+That is the cheap path, a permission change with no read, and taking it is correct.
+What is not correct is moving the cursor, because the file's modification time is now newer than the cursor while its content has not been read, and the next sync that falls back to walking would skip it for ever.
+So the permission only path puts nothing into the cursor at all.
+It costs one permission change written twice and it is the difference between a watcher that saves work and one that loses documents.
 
 ### The same problem over a network
 
@@ -176,6 +230,10 @@ Twenty ids is what an operator actually uses, because it is enough to go and loo
 `genbad` runs a sweep after every sync and logs at warning level only when something drifted.
 An index that agrees with its source produces nothing in the log, so a line there means the incremental path missed something.
 
+On a server that is watching the tree, the sweep is the only part of a refresh that still walks, which makes it the whole cost.
+So it has its own interval, `-corpus-reconcile`, and the two settings are meant to be set apart: notice a change in a second, count both sides every few minutes.
+The default is unchanged and sweeps after every sync.
+
 ### What it costs to hold
 
 The sweep keeps an id and a version per source document in memory for its duration, which is tens of megabytes for a corpus of a few million.
@@ -192,6 +250,8 @@ Everything else is optional, and each piece buys one thing.
 | `Fetcher` | repair, so what reconciliation finds is fixed rather than only reported |
 | `Counted` | the numbers that say whether the incremental path is actually incremental |
 | `Change.PermissionsOnly` | a permission change costs a write instead of a recrawl |
+| `Change.Deleted` | a deletion reaches the index without waiting for a sweep |
 
-`connector/fssource` implements all four and is the one to read before writing another.
-`connector/objectsource` implements all four as well, over a network service, and is the one to read for the parts a local source never has to deal with: signing, paging, and a listing whose order has nothing to do with what changed.
+`connector/fssource` implements every one of them and is the one to read before writing another.
+`connector/objectsource` implements all but the deletion, over a network service, and is the one to read for the parts a local source never has to deal with: signing, paging, and a listing whose order has nothing to do with what changed.
+A bucket listing is the same shape of problem as a walk, and an object that is no longer in it is found by the sweep for the same reason.

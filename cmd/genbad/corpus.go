@@ -45,6 +45,25 @@ type corpusOptions struct {
 
 	// Refresh is how often to sync again. Zero syncs once at startup.
 	Refresh time.Duration
+
+	// Watch asks the operating system what changed instead of walking the tree
+	// to find out.
+	//
+	// It turns the cost of a refresh from a function of how large the corpus is
+	// into a function of how much of it moved, which is the difference between
+	// a minute and a millisecond on a checkout of any size. A machine that
+	// cannot give out that many watches gets a line in the log and a server
+	// that walks, which is what it would have done anyway.
+	Watch bool
+
+	// Reconcile is how often to sweep the index against the tree. Zero sweeps
+	// after every sync.
+	//
+	// It is a separate interval because the sweep walks. On a server that syncs
+	// once a minute that hardly matters, and on one watching a large tree it is
+	// the whole remaining cost, so the two want to be set apart: notice a change
+	// in a second, and count both sides every quarter of an hour.
+	Reconcile time.Duration
 }
 
 // The values -corpus-acl takes.
@@ -76,6 +95,15 @@ func (o corpusOptions) validate() error {
 	}
 	if o.Refresh < 0 {
 		return errors.New("corpus refresh is negative")
+	}
+	if o.Reconcile < 0 {
+		return errors.New("corpus reconcile interval is negative")
+	}
+	if o.Watch && o.Refresh <= 0 {
+		// A watcher records what changes between one sync and the next, and with
+		// no next sync it records nothing anybody reads while holding a watch on
+		// every directory in the tree.
+		return errors.New("corpus watch needs a corpus refresh interval, since a watcher only saves anything across syncs")
 	}
 	return nil
 }
@@ -139,7 +167,20 @@ func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant
 	if err != nil {
 		return nil, err
 	}
-	src, err := fssource.New(cfg.Dir, cfg.Name, policy)
+	// A watcher that cannot be built is a line in the log and nothing else. The
+	// machine is at its inotify limit, or the tree is on a filesystem the
+	// backend does not support, and none of that is a reason for the server not
+	// to start: a source with no watcher walks, which is what every server did
+	// before there was one.
+	var watcher *fssource.Watcher
+	if cfg.Watch {
+		watcher, err = fssource.Watch(cfg.Dir)
+		if err != nil {
+			log.Warn("watching the corpus, refreshes will walk the tree instead", "dir", cfg.Dir, "error", err)
+		}
+	}
+
+	src, err := fssource.New(cfg.Dir, cfg.Name, policy, fssource.WithWatcher(watcher))
 	if err != nil {
 		return nil, err
 	}
@@ -152,6 +193,7 @@ func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant
 		return nil, err
 	}
 
+	var swept time.Time
 	sync := func(ctx context.Context) {
 		var before, after runtime.MemStats
 		runtime.ReadMemStats(&before)
@@ -164,7 +206,7 @@ func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant
 		}
 		runtime.ReadMemStats(&after)
 
-		log.Info("corpus synced",
+		log.Info("corpus synced", append([]any{
 			"dir", cfg.Dir,
 			"source", cfg.Name,
 			"indexed", stats.Indexed,
@@ -177,17 +219,31 @@ func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant
 			// first is the number that decides how much a machine can serve,
 			// and the second is the one that shows up as garbage collection.
 			"heap_mb", megabytes(int64(after.HeapAlloc)),
-			"allocated_mb", megabytes(int64(after.TotalAlloc-before.TotalAlloc)),
-		)
+			"allocated_mb", megabytes(int64(after.TotalAlloc - before.TotalAlloc)),
+		}, watching(watcher)...)...)
 
-		reconcile(ctx, pipeline, src, tenant, log)
+		// The sweep walks the tree, so on a server that is watching it is the
+		// whole of what a refresh costs. Running it on its own interval is what
+		// lets a change be noticed in a second while both sides are still
+		// counted often enough to catch what the watcher missed.
+		if cfg.Reconcile <= 0 || time.Since(swept) >= cfg.Reconcile {
+			swept = time.Now()
+			reconcile(ctx, pipeline, src, tenant, log)
+		}
 		reportMapping(policy, log)
 	}
 
 	sync(ctx)
 
+	stop := func() {
+		if watcher != nil {
+			_ = watcher.Close()
+		}
+		_ = src.Close()
+	}
+
 	if cfg.Refresh <= 0 {
-		return func() { _ = src.Close() }, nil
+		return stop, nil
 	}
 
 	done := make(chan struct{})
@@ -206,8 +262,27 @@ func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant
 	}()
 	return func() {
 		<-done
-		_ = src.Close()
+		stop()
 	}, nil
+}
+
+// watching is what the watcher has to say, for the sync log line.
+//
+// Walks is the number worth reading. On a healthy watcher it is one, from the
+// first sync, and it does not move again. Anything more says the record could
+// not be trusted that often, and the reason says which way, so an operator can
+// tell "the tree is being rewritten faster than the backend will report" apart
+// from "somebody edited an OWNERS file".
+func watching(w *fssource.Watcher) []any {
+	if w == nil {
+		return nil
+	}
+	s := w.Stats()
+	out := []any{"watches", s.Watches, "events", s.Events, "walks", s.Walks}
+	if s.Reason != "" {
+		out = append(out, "walking_because", s.Reason)
+	}
+	return out
 }
 
 // aclCounter is a permission policy that counts what it mapped.
