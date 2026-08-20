@@ -1,0 +1,96 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 482 >>
+stream
+BT
+/F1 14 Tf
+72 720 Td
+<0001000200030004000500050004000500060007000800030007000400090006000A000B000C00090007> Tj
+0 -20 Td
+<000D000E00040006000F000B00050004000700060010000C00060009000E001000070006000A00100011000400060012001300040006000C000B00090006000F000E001200130012000F00090004001300070014> Tj
+0 -20 Td
+<0015000C0011001600060009000E00040006000D000B0017000C0010000F000B0005000400060002001200180006000700120016000700060019000E0012000900060009000E0004001600060012001300040014> Tj
+ET
+
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type0 /BaseFont /AAAAAA+Inter /Encoding /Identity-H /DescendantFonts [7 0 R] /ToUnicode 6 0 R >>
+endobj
+6 0 obj
+<< /Length 602 >>
+stream
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CMapName /Adobe-Identity-UCS def
+/CMapType 2 def
+1 begincodespacerange
+<0000> <FFFF>
+endcodespacerange
+25 beginbfchar
+<0001> <0045>
+<0002> <006D>
+<0003> <0062>
+<0004> <0065>
+<0005> <0064>
+<0006> <0020>
+<0007> <0073>
+<0008> <0075>
+<0009> <0074>
+<000A> <0066>
+<000B> <006F>
+<000C> <006E>
+<000D> <0054>
+<000E> <0068>
+<000F> <0063>
+<0010> <0069>
+<0011> <006C>
+<0012> <0061>
+<0013> <0072>
+<0014> <002E>
+<0015> <004F>
+<0016> <0079>
+<0017> <0055>
+<0018> <0070>
+<0019> <0077>
+endbfchar
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+
+endstream
+endobj
+7 0 obj
+<< /Type /Font /Subtype /CIDFontType2 /BaseFont /AAAAAA+Inter >>
+endobj
+8 0 obj
+<< /Producer (genba corpus generator) /Title (Embedded subset fonts) >>
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000184 00000 n 
+0000000247 00000 n 
+0000000780 00000 n 
+0000000917 00000 n 
+0000001570 00000 n 
+0000001650 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R /Info 8 0 R >>
+startxref
+1737
+%%EOF
