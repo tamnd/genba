@@ -313,6 +313,7 @@ func main() {
 | `store/segdir` | the directory of segments, the manifest and the crash recovery, [docs/durability.md](docs/durability.md) |
 | `index` | query parsing, retrieval and ranking |
 | `connector` | the ingestion contract, cursors and checkpoints |
+| `connector/connectortest` | the conformance suite that defines what a connector is |
 | `connector/fssource` | the reference connector, a directory tree with OWNERS files, walked or watched |
 | `connector/objectsource` | an S3 compatible bucket, signed and paged, [docs/ingestion.md](docs/ingestion.md) |
 | `connector/limit` | the rate limit, backoff and circuit breaker every connector shares, as a round tripper |
@@ -428,6 +429,13 @@ Everything after the first sync is incremental.
 A second run over an unchanged tree reads no files at all, an OWNERS edit costs one write per document rather than a recrawl of the subtree, and a reconciliation sweep after every sync catches what a change feed cannot report, starting with the file somebody deleted.
 The same holds over a network: a second sync of an unchanged bucket fetches no objects and reads no bytes, and rewriting the bucket's access control list costs one write per object rather than a fetch of the whole bucket.
 [docs/ingestion.md](docs/ingestion.md) has the details, including the optional capabilities a connector implements to get each of those and the rule that stops a timed out enumeration from emptying a working index.
+
+What a connector is gets decided by `connector/connectortest` rather than by the interface.
+The interface says what compiles, and the suite says what works: that a full sync finds everything, that resuming from a cursor loses nothing that came after it, that a second sync of a source nothing changed in reads nothing, that a deleted document stops being part of the source one way or the other, and that every document says who may read it.
+A connector that cannot work out an access control list and says so is quarantined and passes.
+A connector that indexes a document without one fails, which is the whole reason the suite exists.
+The optional capabilities are optional in the suite too, so a connector that cannot list its source skips those cases, and one that can is held to them.
+Running it is not optional either: a test at the root of the module finds the packages that declare a connector and fails any of them whose tests do not run the suite, because a conformance suite nobody runs is documentation.
 
 ## Storage
 

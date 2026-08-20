@@ -128,8 +128,15 @@ var allowed = map[string][]string{
 	// imports acl and nothing else of ours, and it must stay that way: a
 	// mapping layer that could reach a store or a document would be a second
 	// place for the permission rule to live.
-	"connector/aclmap":   {"acl"},
-	"connector/fssource": {"acl", "connector", "connector/aclmap", "doc", "extract"},
+	"connector/aclmap": {"acl"},
+	// connectortest sits above the connectors and beside none of them, the way
+	// storetest sits above the drivers. It names acl, connector and doc because
+	// those are the three things a change is made of, and it must never name a
+	// connector: a suite that imported the reference implementation would be a
+	// suite that could only be run by packages allowed to import it, and would
+	// slowly turn into a description of that one connector.
+	"connector/connectortest": {"acl", "connector", "doc"},
+	"connector/fssource":      {"acl", "connector", "connector/aclmap", "doc", "extract"},
 	// objectsource sits at the same level as fssource and names the same five
 	// packages. It talks to a network service and fssource does not, and none of
 	// that difference is allowed to show up as a dependency: an S3 client of our
