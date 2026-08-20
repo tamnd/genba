@@ -135,6 +135,12 @@ var allowed = map[string][]string{
 	// that difference is allowed to show up as a dependency: an S3 client of our
 	// own is a file in the package rather than a layer under it.
 	"connector/objectsource": {"acl", "connector", "connector/aclmap", "doc", "extract"},
+	// limit imports nothing of ours at all. It is a round tripper and a token
+	// bucket, and the only thing it knows about a crawl is that requests go out
+	// on an http.Client. A rate limiter that imported connector would be one that
+	// could only limit our connectors, and the reason it is a round tripper in the
+	// first place is that the limit belongs to the service rather than to us.
+	"connector/limit": nil,
 	// ingest names acl because a permission change that arrives without the
 	// document is a map of access control lists and nothing else, and there is
 	// no way to carry one without saying what it is. It is the one type from
@@ -150,7 +156,7 @@ var allowed = map[string][]string{
 	"benchcorpus/gen": {"benchcorpus", "store/sqlitestore"},
 
 	"cmd/genba":  {""},
-	"cmd/genbad": {"", "api", "config", "connector", "connector/aclmap", "connector/fssource", "connector/objectsource", "index", "ingest", "store", "store/memstore", "store/pgstore", "store/sqlitestore", "web"},
+	"cmd/genbad": {"", "api", "config", "connector", "connector/aclmap", "connector/fssource", "connector/limit", "connector/objectsource", "index", "ingest", "store", "store/memstore", "store/pgstore", "store/sqlitestore", "web"},
 }
 
 func TestDependencyDirection(t *testing.T) {

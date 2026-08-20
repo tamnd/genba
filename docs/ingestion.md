@@ -288,6 +288,7 @@ A bucket with no credentials at all is read unsigned, which is what a public buc
 `-bucket-acl bucket` reads the bucket's own access control list once per sync and gives that answer for every object in it, which is one request rather than a million.
 `-bucket-acl object` reads each object's own list, which is exact and costs a request per object per sync, so it is worth reaching for only when the objects really do differ.
 `-bucket-domain` is what a grant written against an email address is checked against, and a grant to an address outside it is quarantined rather than published.
+`-bucket-rate`, `-bucket-burst` and `-bucket-retries` are the ceiling the crawl keeps itself under, and the section below is about what they do and why there is no value meaning unlimited.
 
 A service that is not S3 itself almost certainly needs `-bucket-path-style`, which puts the bucket in the path rather than in the host name.
 MinIO on a laptop is the shortest way to try the whole thing:
@@ -304,6 +305,59 @@ genbad \
 Both feeds log the same numbers after every sync, under `corpus synced` and `bucket synced`.
 The directory adds what its watcher has to say, and the bucket adds the request counts, which are what a bill is made of.
 A listing count that climbs by one per sync is a healthy incremental run, and a fetch count that climbs with it on a bucket nobody is writing to means the cursor is not doing its job.
+
+## Staying inside a service's limits
+
+A crawler that ignores an API's limits gets the company's integration token revoked, and that is a worse outcome than a slow crawl by a wide margin.
+A slow crawl finishes late.
+A revoked token is an index that stops updating, a conversation with whoever owns the integration, and in most companies a week before anybody is allowed to try again.
+
+`connector/limit` is where that is dealt with, and it is an `http.RoundTripper` rather than something each connector calls.
+That is the layer the requests actually are at, so a connector built on `http.Client` gets all of it by being handed a different client and needs no code of its own:
+
+```go
+client := &http.Client{Transport: limit.NewTransport(limit.Limits{Rate: 8, Burst: 16})}
+src, err := objectsource.New(objectsource.NewClient(cfg, objectsource.WithHTTPClient(client)), name, policy)
+```
+
+The transport does four things around every request.
+
+It waits for a token, so the request rate stays under a ceiling.
+The bucket is a token bucket rather than a fixed delay because real work is lumpy: a page of a listing followed immediately by the four documents on it is a burst of five, and a quota is a rate over a window rather than a rule about one request at a time.
+It refills by arithmetic on the clock rather than by a goroutine, so a limiter that is never used costs nothing and a process holding a hundred of them holds no timers.
+
+It reads what the response says about the quota, off every response and not only off a refusal.
+A response saying none is left is the last request before the wall rather than the first one after it, and holding back there is the difference between a crawl that stays inside its quota and one that finds the edge by hitting it.
+Three header conventions are in use and there is no way to tell which one a service follows except by looking, so all three are read: `Retry-After`, the newer `RateLimit-Reset` and `RateLimit-Remaining`, and the older `X-RateLimit-Reset` and `X-RateLimit-Remaining`.
+A reset is a delta in seconds under one convention and a Unix timestamp under the other, and the two are told apart by size, because a delta large enough to be mistaken for a timestamp would be a window of three hundred years.
+Anything claiming a window more than an hour away is ignored, on the grounds that it is almost certainly a format nobody expected rather than a service that really wants to be left alone until the afternoon.
+
+It retries what is worth retrying.
+Too many requests and the five hundreds are, because both mean the same request might work in a moment.
+A four hundred is not: a request the service considers malformed is malformed on every attempt, and retrying it burns quota to arrive at the same answer more slowly.
+The wait doubles from `MinBackoff` towards `MaxBackoff` and is jittered between half and all of itself, which is what stops a fleet of crawlers that were all refused at the same moment from all coming back at the same moment.
+A source that named its own time is honoured exactly, with the jitter added on top rather than taken off it, because coming back one millisecond early is coming back before the window rolled over.
+Only a request with no body and an idempotent method is ever sent twice, because a round tripper is not allowed to modify the request it was handed and a POST that timed out may well have been carried out.
+
+It stops the source when it has been refusing everything.
+After `Failures` consecutive failures the circuit opens and every request fails with `limit.ErrOpen` until `Cooldown` has passed, at which point exactly one goes through to find out whether the source has recovered.
+A crawler that kept retrying a source which has been down for a minute is doing nothing except making the outage look like load.
+The count is of consecutive failures rather than of failures, because a crawl of any size has a few of those and a source that is actually broken has nothing else: one success anywhere in the run says the credentials are good, the network is up and the service is answering.
+Unauthorised counts towards it, because a revoked token is exactly the state this is here to notice.
+Forbidden deliberately does not, because at an object store it is the ordinary answer for one object out of a million that this account may not read, and a breaker that tripped on it would stop a healthy crawl over objects that were never part of the corpus.
+Too many requests does not either, because that is the service working exactly as designed and saying so.
+
+The defaults are cautious on purpose: five requests a second, a burst of ten, four retries, and a minute of cooldown.
+A default that is too slow costs a longer first sync and nothing else, and a default that is too fast costs the token.
+There is no value meaning unlimited, and an operator who wants one asks for a rate high enough that it never binds, which is a number in the log rather than a special case in the code.
+
+A limiter belongs to one source, because a quota does.
+Two connectors reading two different services have nothing to do with each other, and sharing a limiter between them would mean a slow wiki holding up a fast bucket.
+Two connectors reading the same service with the same credentials share a quota whether they like it or not, and those two should share one transport.
+
+What comes out of it lands in the sync line.
+The `bucket synced` line carries `retries`, `throttled`, `throttled_for` and `quota_pauses` alongside the request counts, because a crawl that is being throttled looks exactly like a crawl that is slow.
+`quota_pauses` is the one to watch: it means the ceiling is set above what the service is actually willing to give, and the crawl is finding that out by being told off rather than by staying under it.
 
 ## Writing a connector
 

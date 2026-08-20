@@ -192,6 +192,9 @@ The same server can read an S3 compatible bucket, either instead of a directory 
 | `-bucket-path-style` | `false` | put the bucket in the path rather than in the host name, which MinIO and Ceph need |
 | `-bucket-refresh` | `0` | how often to list the bucket again, zero for once at startup |
 | `-bucket-reconcile` | `0` | how often to sweep the index against the bucket, zero for after every sync |
+| `-bucket-rate` | `5` | requests per second the crawl keeps itself under |
+| `-bucket-burst` | `10` | how many requests may go out back to back before the rate binds |
+| `-bucket-retries` | `4` | how many times to try a refused request again, negative for never |
 
 Credentials come from `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`, and there is no flag for them.
 A secret in argv is readable by every process on the machine for as long as the server runs, and it ends up in the shell history of whoever started it.
@@ -212,6 +215,12 @@ genbad -tenant acme \
 
 A server given both a corpus and a bucket runs them as two feeds with two cursors rather than one merged crawl, so a bucket that is refusing requests does not stop the directory being reindexed.
 `docs/ingestion.md` has the worked examples for both, including MinIO on a laptop.
+
+Every request the bucket makes goes out through one rate limiter, and there is no value of `-bucket-rate` meaning unlimited.
+A crawler that ignores a service's limits gets the credentials revoked, and that is a worse outcome than a slow crawl by a wide margin: a slow crawl finishes late, and a revoked key is an index that stops updating until somebody has a conversation about it.
+Anybody who knows their quota can set a rate high enough that it never binds, which is a number in the log rather than a special case in the code.
+A refusal that says to come back later is waited out rather than failed, with the wait doubling up to half a minute and the source's own `Retry-After` honoured over anything computed, and a source that has been refusing everything stops the sync rather than being retried all afternoon.
+The `bucket synced` line carries `retries`, `throttled`, `throttled_for` and `quota_pauses`, because a crawl that is being throttled looks exactly like a crawl that is slow and the difference decides whether you go looking at the network or ask for more quota.
 
 ## Metrics
 
@@ -306,6 +315,7 @@ func main() {
 | `connector` | the ingestion contract, cursors and checkpoints |
 | `connector/fssource` | the reference connector, a directory tree with OWNERS files, walked or watched |
 | `connector/objectsource` | an S3 compatible bucket, signed and paged, [docs/ingestion.md](docs/ingestion.md) |
+| `connector/limit` | the rate limit, backoff and circuit breaker every connector shares, as a round tripper |
 | `extract` | text and structure out of PDF, Word, PowerPoint, Excel, HTML and Markdown, [docs/extraction.md](docs/extraction.md) |
 | `ingest` | the pipeline that runs a connector into a store |
 | `config` | runtime configuration and the rules for loading it |

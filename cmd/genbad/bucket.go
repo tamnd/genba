@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
+	"github.com/tamnd/genba/connector/limit"
 	"github.com/tamnd/genba/connector/objectsource"
 	"github.com/tamnd/genba/store"
 )
@@ -62,6 +64,22 @@ type bucketOptions struct {
 	// Reconcile is how often to sweep the index against the bucket. Zero sweeps
 	// after every sync.
 	Reconcile time.Duration
+
+	// Rate and Burst are the ceiling the crawl keeps itself under, in requests
+	// per second and in how many may go out back to back before the rate binds.
+	//
+	// There is no value meaning unlimited. A crawler that ignores a service's
+	// limits gets the credentials revoked, and that is a worse outcome than a
+	// slow crawl by a wide margin: a slow crawl finishes late, and a revoked key
+	// is an index that stops updating until somebody has a conversation about it.
+	// Anybody who knows their quota can set a rate high enough that it never
+	// binds, which is a number in the log rather than a special case.
+	Rate  float64
+	Burst int
+
+	// Retries is how many times a refused request is tried again before the sync
+	// gives up on it. Negative turns retrying off.
+	Retries int
 
 	// Access, Secret and Session are the credentials, and they are read from the
 	// environment rather than taken from a flag.
@@ -127,7 +145,15 @@ func (o bucketOptions) validate() error {
 	if o.Reconcile < 0 {
 		return errors.New("bucket reconcile interval is negative")
 	}
-	return nil
+	return o.limits().Validate()
+}
+
+// limits is the ceiling the bucket crawl runs under.
+//
+// Everything left at zero takes the package's default, which is deliberately
+// cautious, so a server started with nothing but -bucket is still limited.
+func (o bucketOptions) limits() limit.Limits {
+	return limit.Limits{Rate: o.Rate, Burst: o.Burst, MaxRetries: o.Retries}
 }
 
 // bucketPolicyFor builds the permission policy named by the flags.
@@ -178,6 +204,12 @@ func ingestBucket(ctx context.Context, st store.Store, cfg bucketOptions, tenant
 		return nil, errors.New("ingesting a bucket needs -tenant")
 	}
 
+	// Every request the bucket makes, for listings, for permissions and for the
+	// objects themselves, goes out through one transport, because the quota they
+	// are spending is one quota. Sharing it is the whole reason the limiter is a
+	// round tripper rather than something the connector calls.
+	limiter := limit.NewTransport(cfg.limits(), limit.WithLogger(log))
+
 	client, err := objectsource.NewClient(objectsource.Config{
 		Endpoint:        cfg.Endpoint,
 		Region:          cfg.Region,
@@ -186,7 +218,10 @@ func ingestBucket(ctx context.Context, st store.Store, cfg bucketOptions, tenant
 		SecretAccessKey: cfg.Secret,
 		SessionToken:    cfg.Session,
 		PathStyle:       cfg.PathStyle,
-	})
+	}, objectsource.WithHTTPClient(&http.Client{
+		Transport: limiter,
+		Timeout:   patience(cfg.limits()),
+	}))
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +255,7 @@ func ingestBucket(ctx context.Context, st store.Store, cfg bucketOptions, tenant
 		Refresh:   cfg.Refresh,
 		Reconcile: cfg.Reconcile,
 		Fields:    []any{"bucket", cfg.Bucket, "prefix", cfg.Prefix, "source", cfg.Name},
-		Report:    func() []any { return requesting(client) },
+		Report:    func() []any { return requesting(client, limiter) },
 		Policy:    policy,
 		Release:   func() { _ = src.Close() },
 	}, log)
@@ -233,12 +268,42 @@ func ingestBucket(ctx context.Context, st store.Store, cfg bucketOptions, tenant
 // count that climbs by one per sync is a healthy incremental run, and a fetch
 // count that climbs with it on a bucket nobody is writing to means the cursor
 // is not doing its job.
-func requesting(c *objectsource.Client) []any {
+func requesting(c *objectsource.Client, t *limit.Transport) []any {
 	n := c.Counters()
+	s := t.Stats()
 	return []any{
 		"lists", n.Lists,
 		"metadata", n.Metadata,
 		"fetches", n.Fetches,
 		"fetched_mb", megabytes(n.Bytes),
+		// A crawl that is being throttled looks exactly like a crawl that is
+		// slow, and the difference decides whether somebody goes looking at the
+		// network or asks for more quota. These four are the difference.
+		"retries", s.Retries,
+		"throttled", s.Limiter.Waits,
+		"throttled_for", s.Limiter.Waited.Round(time.Millisecond).String(),
+		"quota_pauses", s.Limiter.Pauses,
 	}
+}
+
+// patience bounds one request from the client's side.
+//
+// The timeout on an http.Client covers everything the round tripper does, and
+// this round tripper waits on purpose, so a timeout meant for one request would
+// cut a legitimate backoff short and turn a source asking to be left alone for
+// thirty seconds into a failed sync. The budget is the time the retries can
+// spend plus the time one request is allowed to take.
+func patience(l limit.Limits) time.Duration {
+	retries := l.MaxRetries
+	switch {
+	case retries == 0:
+		retries = limit.DefaultMaxRetries
+	case retries < 0:
+		retries = 0
+	}
+	backoff := l.MaxBackoff
+	if backoff <= 0 {
+		backoff = limit.DefaultMaxBackoff
+	}
+	return objectsource.DefaultRequestTimeout + time.Duration(retries)*backoff
 }
