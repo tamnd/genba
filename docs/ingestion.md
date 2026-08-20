@@ -375,3 +375,48 @@ Everything else is optional, and each piece buys one thing.
 `connector/fssource` implements every one of them and is the one to read before writing another.
 `connector/objectsource` implements all but the deletion, over a network service, and is the one to read for the parts a local source never has to deal with: signing, paging, and a listing whose order has nothing to do with what changed.
 A bucket listing is the same shape of problem as a walk, and an object that is no longer in it is found by the sweep for the same reason.
+
+### The conformance suite is the definition
+
+`connector/connectortest` is what a connector has to pass, and it rather than the interface is the definition of one.
+The interface says what compiles.
+The suite says what works, because most of what a connector has to get right is not expressible as a method signature: that a full sync finds everything, that resuming from a cursor loses nothing, that a second sync of a source nothing changed in reads nothing, and that every document says who may read it.
+
+Running it takes a fixture, which is the adapter between the suite and one source.
+The suite cannot write a file, put an object or post a message, and it should not know which of those it is doing, so a fixture is a connector plus a handful of functions that do those things to the system behind it.
+
+```go
+func TestConformance(t *testing.T) {
+	connectortest.Run(t, func(t *testing.T) connectortest.Fixture {
+		dir := t.TempDir()
+		src, err := fssource.New(dir, "files", fssource.PublicToTenant("files"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return connectortest.Fixture{
+			Connector: src,
+			ID:        func(name string) string { return "files:" + name },
+			Write:     func(t *testing.T, name, body string) { /* put it in the source */ },
+			Remove:    func(t *testing.T, name string) { /* take it out again */ },
+		}
+	})
+}
+```
+
+`Remove`, `Share` and `Unresolvable` are optional and a fixture that leaves one nil skips the cases that need it, which is how a source nothing is ever deleted from is not failed for a deletion it cannot do.
+The optional capabilities work the same way: a connector that does not implement `Enumerator` skips the listing cases, and one that does gets held to them.
+The suite is deliberately harder on a connector that claims more.
+
+`Write` has one responsibility worth knowing about before writing a fixture.
+It has to leave the source in a state a sync can settle on, which for a source that keeps time to the second means moving that clock on afterwards.
+Without it a sync taken straight after a write records a cursor the write is not yet behind, and every later sync reads the same document again, which the suite reports as an incremental sync that is not incremental.
+The fixture over object storage ticks the fake service's clock and the one over the filesystem stamps each file, and both are doing the same thing for the same reason.
+
+The one rule with no way out is permissions.
+Every document a connector emits has to say where its access control list came from, and a connector that could not work one out says so with `connector.Unresolved` rather than leaving the field empty.
+Both produce `acl.ModeUnknown` and both quarantine the document, and the difference is that one of them says at the call site that the question was considered.
+A change that arrives with an empty `Permissions.Source` is a connector that forgot, and it fails the suite.
+
+Running the suite is not optional either.
+`TestEveryConnectorRunsTheConformanceSuite` at the root of the module looks for the packages that declare a connector and fails for any of them whose tests do not call `connectortest.Run`.
+A conformance suite nobody runs is documentation, and documentation about permissions is the first thing skipped when a connector is written in a hurry against a source somebody needs indexed by Friday.
