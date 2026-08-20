@@ -50,6 +50,8 @@ func TestCorpusFlagsAreChecked(t *testing.T) {
 		{"an unknown acl", corpusOptions{Dir: "/tmp", Name: "files", ACL: "everyone"}, "everyone"},
 		{"a negative refresh", corpusOptions{Dir: "/tmp", Name: "files", ACL: aclTenant, Refresh: -time.Second}, "negative"},
 		{"a usable set", corpusOptions{Dir: "/tmp", Name: "files", ACL: aclOwners}, ""},
+		{"the os policy with nobody to name accounts", corpusOptions{Dir: "/tmp", Name: "files", ACL: aclOS}, "identity source"},
+		{"the os policy told where the names come from", corpusOptions{Dir: "/tmp", Name: "files", ACL: aclOS, Identity: "unix"}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
