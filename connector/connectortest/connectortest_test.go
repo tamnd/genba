@@ -392,6 +392,28 @@ func TestAChangeThatBreaksARuleIsCaught(t *testing.T) {
 	}
 }
 
+// TestEveryModeThePermissionModelHasIsAccepted is the other half of the mode
+// check, and it is the half that gets left out.
+//
+// The check exists to catch a connector that invented a number, and a check
+// written from a list somebody typed catches a connector using a mode that was
+// added after the list. That failure is worse than the one it was guarding
+// against: the connector is right, the descriptor is right, and the suite says
+// the mode does not exist. Ranging over the modes rather than naming them here
+// is what keeps the two lists from being two lists.
+func TestEveryModeThePermissionModelHasIsAccepted(t *testing.T) {
+	modes := []acl.Mode{acl.ModeUnknown, acl.ModeACL, acl.ModePublicToTenant, acl.ModeOwnerOnly}
+	for _, mode := range modes {
+		ch := connector.Change{Document: doc.Document{
+			ID:          "memory:a.md",
+			Permissions: acl.Permissions{Mode: mode, Source: "memory"},
+		}}
+		if got := problems(ch, "memory"); len(got) != 0 {
+			t.Errorf("mode %d was reported as %v", int(mode), got)
+		}
+	}
+}
+
 // A deletion is not asked for permissions. The document is gone and there is
 // nobody left to resolve a rule against, so requiring one would be requiring a
 // guess.
