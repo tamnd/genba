@@ -56,6 +56,15 @@ var allowed = map[string][]string{
 	// package least equipped to hold one.
 	"store/column": nil,
 
+	// vector is the embedding section and the scan over it, and the one thing it
+	// imports of ours is column, for the bitmap. That edge is the point rather
+	// than a convenience: the rows a principal may read arrive as a bitmap and
+	// the scan walks it, so a vector search cannot score a document it was not
+	// handed. Giving this package its own set type would mean converting between
+	// two of them on the hot path, and giving it any knowledge of an ACL would
+	// put the permission model in a second place again.
+	"store/vector": {"store/column"},
+
 	// kura is the Go side of the Rust engine's C ABI and imports nothing of
 	// ours. It deals in document ids, bytes and vectors, and it is the one
 	// package in the repository that is not in the default build at all. An

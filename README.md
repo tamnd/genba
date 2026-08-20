@@ -239,6 +239,9 @@ func main() {
 | `store/memstore` | the reference in memory driver |
 | `store/sqlitestore` | the SQLite driver, pure Go, FTS5 and the permission check in one query |
 | `store/pgstore` | the PostgreSQL 18 driver, migrations as SQL files and the permission check in one query |
+| `store/segment` | the on disk segment container, [docs/segment.md](docs/segment.md) |
+| `store/column` | one field across every row of a segment, and the scans over it, [docs/columns.md](docs/columns.md) |
+| `store/vector` | the embedding section of a segment and the search over it, [docs/vectors.md](docs/vectors.md) |
 | `index` | query parsing, retrieval and ranking |
 | `connector` | the ingestion contract, cursors and checkpoints |
 | `connector/fssource` | the reference connector, a directory tree with OWNERS files |
