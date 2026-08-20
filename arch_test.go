@@ -65,6 +65,21 @@ var allowed = map[string][]string{
 	// put the permission model in a second place again.
 	"store/vector": {"store/column"},
 
+	// graph is the entities and relationships of a segment, and it imports
+	// column for two reasons that are both the point. The entity keys and the
+	// edge kinds are columns, so looking an entity up by name is the same
+	// sorted dictionary search a source filter is. And the rows a principal may
+	// read arrive as the same bitmap the document scans use, which is what makes
+	// an entity's visibility derived from the documents that mention it rather
+	// than stored beside it. A second permission model here would be a second
+	// thing to keep in step with the first, and the failure when they drift is a
+	// name shown to somebody who was never meant to learn it.
+	//
+	// There is deliberately no edge to doc or connector. Extraction is a
+	// connector's job and this package has no opinion about how it is done, so
+	// it holds no extractor and defines no interface for one either.
+	"store/graph": {"store/column"},
+
 	// kura is the Go side of the Rust engine's C ABI and imports nothing of
 	// ours. It deals in document ids, bytes and vectors, and it is the one
 	// package in the repository that is not in the default build at all. An

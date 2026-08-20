@@ -242,6 +242,7 @@ func main() {
 | `store/segment` | the on disk segment container, [docs/segment.md](docs/segment.md) |
 | `store/column` | one field across every row of a segment, and the scans over it, [docs/columns.md](docs/columns.md) |
 | `store/vector` | the embedding section of a segment and the search over it, [docs/vectors.md](docs/vectors.md) |
+| `store/graph` | the entities and relationships of a segment and the walk over them, [docs/graph.md](docs/graph.md) |
 | `index` | query parsing, retrieval and ranking |
 | `connector` | the ingestion contract, cursors and checkpoints |
 | `connector/fssource` | the reference connector, a directory tree with OWNERS files |
