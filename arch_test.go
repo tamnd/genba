@@ -111,8 +111,16 @@ var allowed = map[string][]string{
 	// neither knows anything about ranking. In particular connector does not
 	// import store: a source that could reach the store directly could write a
 	// document without going through the checks the pipeline applies.
-	"connector":          {"acl", "doc"},
-	"connector/fssource": {"acl", "connector", "doc"},
+	"connector": {"acl", "doc"},
+
+	// aclmap is the one place a source's own permission vocabulary is turned
+	// into the model, and it sits beside the connectors rather than inside acl
+	// because it is about somebody else's product rather than about ours. It
+	// imports acl and nothing else of ours, and it must stay that way: a
+	// mapping layer that could reach a store or a document would be a second
+	// place for the permission rule to live.
+	"connector/aclmap":   {"acl"},
+	"connector/fssource": {"acl", "connector", "connector/aclmap", "doc"},
 	// ingest names acl because a permission change that arrives without the
 	// document is a map of access control lists and nothing else, and there is
 	// no way to carry one without saying what it is. It is the one type from
@@ -128,7 +136,7 @@ var allowed = map[string][]string{
 	"benchcorpus/gen": {"benchcorpus", "store/sqlitestore"},
 
 	"cmd/genba":  {""},
-	"cmd/genbad": {"", "api", "config", "connector", "connector/fssource", "index", "ingest", "store", "store/memstore", "store/pgstore", "store/sqlitestore", "web"},
+	"cmd/genbad": {"", "api", "config", "connector", "connector/aclmap", "connector/fssource", "index", "ingest", "store", "store/memstore", "store/pgstore", "store/sqlitestore", "web"},
 }
 
 func TestDependencyDirection(t *testing.T) {

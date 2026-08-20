@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tamnd/genba/acl"
+	"github.com/tamnd/genba/connector/aclmap"
 )
 
 // OwnersFile is the name of the file an [OwnersPolicy] reads.
@@ -42,6 +43,10 @@ type OwnersPolicy struct {
 	fallback acl.Permissions
 	hasFall  bool
 
+	// acls is the one place the vocabulary of this source is turned into the
+	// model, shared with every other connector.
+	acls *aclmap.Normalizer
+
 	mu     sync.RWMutex
 	byDir  map[string]*owners
 	parsed map[string]bool
@@ -68,10 +73,15 @@ func NewOwnersPolicy(root, source, identity string) (*OwnersPolicy, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fssource: owners policy: %w", err)
 	}
+	acls, err := aclmap.New(aclmap.Files(source, identity))
+	if err != nil {
+		return nil, fmt.Errorf("fssource: owners policy: %w", err)
+	}
 	return &OwnersPolicy{
 		root:     abs,
 		source:   source,
 		identity: identity,
+		acls:     acls,
 		byDir:    make(map[string]*owners),
 		parsed:   make(map[string]bool),
 	}, nil
@@ -158,7 +168,7 @@ func (o *OwnersPolicy) Permissions(ctx context.Context, relPath string) (acl.Per
 		return acl.Permissions{}, err
 	}
 	if own != nil {
-		return o.permissionsFrom(own), nil
+		return o.permissionsFrom(own)
 	}
 
 	if o.hasFall {
@@ -168,19 +178,35 @@ func (o *OwnersPolicy) Permissions(ctx context.Context, relPath string) (acl.Per
 }
 
 // permissionsFrom maps a parsed file onto a descriptor.
-func (o *OwnersPolicy) permissionsFrom(own *owners) acl.Permissions {
-	p := acl.Permissions{Mode: acl.ModeACL, Source: o.source}
+//
+// The mapping goes through [aclmap] rather than building a descriptor here, and
+// that is worth the indirection for a file this simple. What an OWNERS file
+// means is a small decision, and so is what a Drive share means, and so is what
+// an S3 grantee means. Each of them is easy on its own and the collection of
+// them is where a search engine leaks, so all of them live in one package with
+// one set of tests instead of one per connector.
+func (o *OwnersPolicy) permissionsFrom(own *owners) (acl.Permissions, error) {
+	grants := make([]aclmap.Grant, 0, len(own.approvers)+len(own.reviewers)+1)
+	if len(own.approvers) > 0 {
+		// The first approver is named twice on purpose: once as the owner and
+		// once as an ordinary reader. Being the owner of a directory is not a
+		// narrowing here, and dropping the second statement would take the file
+		// out of its own approver's results the moment somebody adds a second
+		// name to the list.
+		grants = append(grants, aclmap.Grant{Subject: aclmap.User, ID: own.approvers[0], Role: "owner", Owner: true})
+	}
 	for _, name := range own.approvers {
-		p.AllowUsers = append(p.AllowUsers, acl.Ref{Source: o.identity, Value: name})
+		grants = append(grants, aclmap.Grant{Subject: aclmap.User, ID: name, Role: "approver"})
 	}
 	for _, name := range own.reviewers {
-		p.AllowUsers = append(p.AllowUsers, acl.Ref{Source: o.identity, Value: name})
+		grants = append(grants, aclmap.Grant{Subject: aclmap.User, ID: name, Role: "reviewer"})
 	}
-	if len(own.approvers) > 0 {
-		p.Owner = acl.Ref{Source: o.identity, Value: own.approvers[0]}
-	}
-	return p
+	return o.acls.Normalize(grants)
 }
+
+// Counts returns what the mapping has seen, so that a deployment can watch the
+// numbers rather than find out from somebody who cannot find a document.
+func (o *OwnersPolicy) Counts() aclmap.Counts { return o.acls.Counts() }
 
 // at returns the parsed OWNERS file for a directory, or nil if there is none.
 // Results are cached because a large tree asks about the same directory once
