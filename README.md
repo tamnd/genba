@@ -162,6 +162,19 @@ The corpus flags have no environment variables, because a directory to index is 
 | `-corpus-identity` | `unix` | identity source the account names in the tree belong to, for `-corpus-acl os` |
 | `-corpus-domain` | empty | domain the accounts on this host belong to, for `-corpus-acl os`, empty to grant nothing on the world bit |
 | `-corpus-refresh` | `0` | how often to sync again, zero for once at startup |
+| `-corpus-watch` | `false` | ask the operating system what changed instead of walking the tree, needs `-corpus-refresh` |
+| `-corpus-reconcile` | `0` | how often to sweep the index against the tree, zero for after every sync |
+
+`-corpus-watch` is what makes a short refresh interval affordable on a large tree.
+Without it every refresh walks, which is a stat of every file to find the four that moved, and with it the cost of a refresh is a function of how much changed rather than of how large the corpus is.
+A machine that cannot give out that many watches logs a line and carries on walking, so it is safe to set and never a reason for the server not to start.
+
+`-corpus-reconcile` exists because of it.
+The sweep that finds deleted files walks the tree, so on a watched server it is the whole remaining cost of a refresh, and separating the two lets a change be noticed in a second while both sides are still counted every few minutes.
+
+```
+genbad -tenant acme -corpus ~/src/handbook -corpus-refresh 1s -corpus-watch -corpus-reconcile 5m
+```
 
 ## Metrics
 
@@ -254,7 +267,7 @@ func main() {
 | `store/segdir` | the directory of segments, the manifest and the crash recovery, [docs/durability.md](docs/durability.md) |
 | `index` | query parsing, retrieval and ranking |
 | `connector` | the ingestion contract, cursors and checkpoints |
-| `connector/fssource` | the reference connector, a directory tree with OWNERS files |
+| `connector/fssource` | the reference connector, a directory tree with OWNERS files, walked or watched |
 | `connector/objectsource` | an S3 compatible bucket, signed and paged, [docs/ingestion.md](docs/ingestion.md) |
 | `extract` | text and structure out of PDF, Word, PowerPoint, Excel, HTML and Markdown, [docs/extraction.md](docs/extraction.md) |
 | `ingest` | the pipeline that runs a connector into a store |
@@ -317,6 +330,10 @@ Permissions come from the policy rather than from the walk, because a directory 
 The mode bits describe the account the crawler runs as, not the people in the company.
 `OwnersPolicy` reads the OWNERS files that Kubernetes and a number of other large repositories keep, taking the nearest one going up the tree, which is a real access control list maintained by real people over a corpus anybody can check out.
 A source built with no policy at all quarantines everything, so having not thought about permissions yet is a visible state in the stats rather than an invisible one in the index.
+
+A source can also be given a watcher, which asks the operating system what changed and turns a refresh into a read of the handful of files that moved rather than a walk of the whole tree.
+The watcher is untrusted until a walk has vouched for it, and anything out of the ordinary sends it back to untrusted, so a dropped event costs one walk rather than a document that never gets reindexed.
+`docs/ingestion.md` has the details.
 
 `connector/objectsource` is the second one, and the first that talks to a network service, which is where most of what a real connector has to get right lives.
 It reads an S3 compatible bucket, which is one connector rather than eight because Amazon's own service, MinIO, Ceph, Cloudflare R2, Backblaze B2, Wasabi and DigitalOcean Spaces all answer to the same two calls signed the same way.

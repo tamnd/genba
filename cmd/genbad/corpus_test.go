@@ -49,6 +49,9 @@ func TestCorpusFlagsAreChecked(t *testing.T) {
 		{"a directory with no name", corpusOptions{Dir: "/tmp"}, "name is empty"},
 		{"an unknown acl", corpusOptions{Dir: "/tmp", Name: "files", ACL: "everyone"}, "everyone"},
 		{"a negative refresh", corpusOptions{Dir: "/tmp", Name: "files", ACL: aclTenant, Refresh: -time.Second}, "negative"},
+		{"a negative reconcile interval", corpusOptions{Dir: "/tmp", Name: "files", ACL: aclTenant, Reconcile: -time.Second}, "negative"},
+		{"watching with nothing to watch for", corpusOptions{Dir: "/tmp", Name: "files", ACL: aclTenant, Watch: true}, "refresh"},
+		{"watching between refreshes", corpusOptions{Dir: "/tmp", Name: "files", ACL: aclTenant, Watch: true, Refresh: time.Second}, ""},
 		{"a usable set", corpusOptions{Dir: "/tmp", Name: "files", ACL: aclOwners}, ""},
 		{"the os policy with nobody to name accounts", corpusOptions{Dir: "/tmp", Name: "files", ACL: aclOS}, "identity source"},
 		{"the os policy told where the names come from", corpusOptions{Dir: "/tmp", Name: "files", ACL: aclOS, Identity: "unix"}, ""},
@@ -242,6 +245,77 @@ func TestADeletedFileStopsComingBack(t *testing.T) {
 	// as one that works, right up until nothing can be found.
 	if got := searchAs(t, addr, "alice", "handbook"); got.Total == 0 {
 		t.Error("the sweep removed documents the tree still holds")
+	}
+}
+
+// A server told to watch the tree has to keep answering the same way a server
+// walking it does. The whole design of the watcher is that it falls back to
+// walking whenever it cannot vouch for what it recorded, so the only thing a
+// test at this level can usefully insist on is that the answers are right, on
+// a corpus that keeps changing under it.
+func TestAWatchedCorpusKeepsUpWithTheTree(t *testing.T) {
+	root := corpusTree(t)
+	addr := freeAddr(t)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		var out, errOut bytes.Buffer
+		done <- run(ctx, []string{
+			"-addr", addr,
+			"-tenant", "acme",
+			"-corpus", root,
+			"-corpus-name", "handbook",
+			"-corpus-refresh", "100ms",
+			"-corpus-watch",
+			"-log-level", "error",
+		}, env(nil), &out, &errOut)
+	}()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("the server did not shut down")
+		}
+	}()
+
+	waitForHealth(t, "http://"+addr+"/healthz")
+
+	if got := searchAs(t, addr, "alice", "deploying"); got.Total == 0 {
+		t.Fatal("the first sync did not index the tree")
+	}
+
+	// A file nobody had written when the server started.
+	if err := os.WriteFile(filepath.Join(root, "guides", "rollback.md"), []byte("# Rolling back\n\nPress the other button.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitForResults(t, addr, "rolling back", true)
+
+	// And one that was there and is not any more, which no watcher and no walk
+	// can find without the sweep counting both sides.
+	if err := os.Remove(filepath.Join(root, "guides", "deploy.md")); err != nil {
+		t.Fatal(err)
+	}
+	waitForResults(t, addr, "deploying", false)
+
+	if got := searchAs(t, addr, "alice", "handbook"); got.Total == 0 {
+		t.Error("the rest of the corpus went missing")
+	}
+}
+
+// waitForResults waits for a query to start or stop finding something.
+func waitForResults(t *testing.T, addr, query string, want bool) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		if got := searchAs(t, addr, "alice", query); (got.Total > 0) == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("after fifteen seconds a query for %q still does not find %v", query, want)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 

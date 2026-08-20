@@ -76,6 +76,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	fs.StringVar(&corpus.Identity, "corpus-identity", "unix", "identity source the account names in the tree belong to, for -corpus-acl os")
 	fs.StringVar(&corpus.Domain, "corpus-domain", "", "domain the accounts on this host belong to, for -corpus-acl os, empty for none")
 	fs.DurationVar(&corpus.Refresh, "corpus-refresh", 0, "how often to reindex the directory, zero for once")
+	fs.BoolVar(&corpus.Watch, "corpus-watch", false, "ask the operating system what changed instead of walking the tree, needs -corpus-refresh")
+	fs.DurationVar(&corpus.Reconcile, "corpus-reconcile", 0, "how often to sweep the index against the directory, zero for after every sync")
 
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	fs.Usage = func() {
