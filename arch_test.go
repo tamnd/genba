@@ -149,6 +149,12 @@ var allowed = map[string][]string{
 	// that difference is allowed to show up as a dependency: an S3 client of our
 	// own is a file in the package rather than a layer under it.
 	"connector/objectsource": {"acl", "connector", "connector/aclmap", "doc", "extract"},
+	// recorded imports nothing of ours either. It is a round tripper over a
+	// directory of files, it deals in requests and responses, and it has never
+	// heard of a document or a connector. Keeping it that way is what lets it be
+	// used by a connector's tests without the tests of this package needing a
+	// connector to exercise it.
+	"connector/recorded": nil,
 	// limit imports nothing of ours at all. It is a round tripper and a token
 	// bucket, and the only thing it knows about a crawl is that requests go out
 	// on an http.Client. A rate limiter that imported connector would be one that

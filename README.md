@@ -318,6 +318,7 @@ func main() {
 | `connector/objectsource` | an S3 compatible bucket, signed and paged, [docs/ingestion.md](docs/ingestion.md) |
 | `connector/thread` | a conversation and its replies assembled into one document |
 | `connector/limit` | the rate limit, backoff and circuit breaker every connector shares, as a round tripper |
+| `connector/recorded` | HTTP exchanges captured from a real service and replayed from a directory, so tests need no account |
 | `extract` | text and structure out of PDF, Word, PowerPoint, Excel, HTML and Markdown, [docs/extraction.md](docs/extraction.md) |
 | `ingest` | the pipeline that runs a connector into a store |
 | `config` | runtime configuration and the rules for loading it |

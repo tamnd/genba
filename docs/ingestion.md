@@ -461,3 +461,41 @@ A change that arrives with an empty `Permissions.Source` is a connector that for
 Running the suite is not optional either.
 `TestEveryConnectorRunsTheConformanceSuite` at the root of the module looks for the packages that declare a connector and fails for any of them whose tests do not call `connectortest.Run`.
 A conformance suite nobody runs is documentation, and documentation about permissions is the first thing skipped when a connector is written in a hurry against a source somebody needs indexed by Friday.
+
+### Testing against a recording of the real service
+
+A connector for somebody else's product is mostly a reading of that product's API, and the tests that matter are the ones that say what happens when it answers the way it really does.
+There are three ways to get that and two of them are bad.
+Hand written JSON says what somebody thought the API returns, which is how a connector ends up parsing a field that was renamed two years ago.
+A live account makes the suite depend on a network, a token, a workspace somebody has to keep populated and a rate limit, and the test then fails for four reasons that have nothing to do with the change under review.
+
+The third way is `connector/recorded`.
+It is an `http.RoundTripper` that talks to the real service once, writes down exactly what it said, and answers out of that afterwards.
+
+```go
+rec := recorded.Record(http.DefaultTransport)
+// ... drive the connector against the live service once ...
+if err := rec.Save("testdata/chat"); err != nil {
+	t.Fatal(err)
+}
+
+// ... and from then on, with no account and no network:
+rt, err := recorded.Replay("testdata/chat")
+```
+
+A recording is one JSON file per exchange in a numbered directory, because a crawl is twenty or thirty requests and a change to one of them should be a change to one file.
+A JSON body is nested into the file as JSON rather than escaped into a string, so the day the service renames a field the diff is one line and the review is the notice.
+The number in front is the order the requests were made in, since a listing sorted alphabetically would put the second page of results before the first.
+
+Two decisions in the matching are worth knowing about before recording anything.
+The scheme and the host are not part of what a request asked, so a fixture set describes an API rather than the workspace it was captured from and a test does not have to point its client at somebody's subdomain.
+The parameters that carry credentials are not part of it either, which is what lets a recording made with a token answer a test that has none.
+A form post is compared field by field for the same reason, because the order a client writes its fields in is not part of the question.
+
+Secrets never reach the file.
+The usual headers and query parameters are replaced with `REDACTED` before anything is written, and `recorded.WithScrubber` handles the ones that are in a body instead, such as a signed download URL or an invite link that comes back in a listing.
+This matters more than it sounds.
+A recording is committed, and a token committed once is a token leaked permanently, whatever the next commit does.
+
+A request nothing was recorded for is an error naming what was asked and what the recording holds, rather than an empty response the connector fails to parse fifty lines away from the cause.
+`Unused` reports the other direction, the recorded requests nothing asked for, which is how a fixture set left behind by a connector that stopped calling an endpoint gets noticed instead of being read as a description of what the connector does.
