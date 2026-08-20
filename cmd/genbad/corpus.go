@@ -29,8 +29,19 @@ type corpusOptions struct {
 	// Name is the source name the documents carry, and what a query filters on.
 	Name string
 
-	// ACL selects how permissions are decided, either "tenant" or "owners".
+	// ACL selects how permissions are decided: "tenant", "owners" or "os".
 	ACL string
+
+	// Identity names the identity source the account names in the tree belong
+	// to, and is what the "os" policy writes its references under. Getting it
+	// right is what lets somebody who signed in through the company directory
+	// match a list that came out of a password file.
+	Identity string
+
+	// Domain is the domain the accounts on this host belong to, and is what
+	// the "os" policy needs before a world readable file means anything. Empty
+	// leaves the world bit granting nothing, which is the safe reading.
+	Domain string
 
 	// Refresh is how often to sync again. Zero syncs once at startup.
 	Refresh time.Duration
@@ -40,6 +51,7 @@ type corpusOptions struct {
 const (
 	aclTenant = "tenant"
 	aclOwners = "owners"
+	aclOS     = "os"
 )
 
 func (o corpusOptions) validate() error {
@@ -51,8 +63,16 @@ func (o corpusOptions) validate() error {
 	}
 	switch o.ACL {
 	case aclTenant, aclOwners:
+	case aclOS:
+		if o.Identity == "" {
+			// Every reference the policy writes carries this name, and without
+			// one they would all be compared against the bare account name. A
+			// person called "alice" here would then match a person called
+			// "alice" at another company.
+			return fmt.Errorf("corpus acl %q needs an identity source", aclOS)
+		}
 	default:
-		return fmt.Errorf("unknown corpus acl %q, want %q or %q", o.ACL, aclTenant, aclOwners)
+		return fmt.Errorf("unknown corpus acl %q, want %q, %q or %q", o.ACL, aclTenant, aclOwners, aclOS)
 	}
 	if o.Refresh < 0 {
 		return errors.New("corpus refresh is negative")
@@ -67,12 +87,27 @@ func (o corpusOptions) validate() error {
 // quarantines it, which shows up in the log and in the stats. Giving it a
 // fallback here would turn "nobody has said" into "everybody may", which is the
 // one substitution this system is built to avoid.
+//
+// The os policy has the opposite thing worth saying about it. It is right for a
+// tree that is the file server and wrong for a copy of one, because a tree that
+// was rsynced here carries the permissions the copy has, which are this
+// process's own.
 func policyFor(o corpusOptions) (fssource.Policy, error) {
 	switch o.ACL {
 	case aclTenant:
 		return fssource.PublicToTenant(o.Name), nil
 	case aclOwners:
 		p, err := fssource.NewOwnersPolicy(o.Dir, o.Name, "github")
+		if err != nil {
+			return nil, err
+		}
+		return p, nil
+	case aclOS:
+		var domains []string
+		if o.Domain != "" {
+			domains = append(domains, o.Domain)
+		}
+		p, err := fssource.NewOSPolicy(o.Dir, o.Name, o.Identity, domains...)
 		if err != nil {
 			return nil, err
 		}

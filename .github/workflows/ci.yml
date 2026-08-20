@@ -48,6 +48,24 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: go tool cover -func=coverage.out | tail -1
 
+  # The connectors on Windows, because one of them reads the security
+  # descriptor of every file it indexes and there is no way to be sure that
+  # code is right by cross compiling it. Nothing else in the tree asks the
+  # operating system a question it can get wrong, so this stays narrow rather
+  # than becoming a third row of the matrix above.
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+      - name: test the connectors
+        run: go test -count=1 ./connector/...
+
   # The Postgres driver against a real PostgreSQL 18. There is no in process
   # Postgres, so its tests skip without a server, and a driver whose suite
   # skipped in CI would be a green tick over nothing. That is what the last step

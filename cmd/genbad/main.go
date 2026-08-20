@@ -72,7 +72,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	var corpus corpusOptions
 	fs.StringVar(&corpus.Dir, "corpus", "", "directory to index at startup")
 	fs.StringVar(&corpus.Name, "corpus-name", "files", "source name the indexed directory carries")
-	fs.StringVar(&corpus.ACL, "corpus-acl", aclTenant, "who may read the corpus: tenant or owners")
+	fs.StringVar(&corpus.ACL, "corpus-acl", aclTenant, "who may read the corpus: tenant, owners or os")
+	fs.StringVar(&corpus.Identity, "corpus-identity", "unix", "identity source the account names in the tree belong to, for -corpus-acl os")
+	fs.StringVar(&corpus.Domain, "corpus-domain", "", "domain the accounts on this host belong to, for -corpus-acl os, empty for none")
 	fs.DurationVar(&corpus.Refresh, "corpus-refresh", 0, "how often to reindex the directory, zero for once")
 
 	showVersion := fs.Bool("version", false, "print the version and exit")

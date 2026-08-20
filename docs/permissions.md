@@ -104,7 +104,7 @@ Keeping all of them in one file means the staleness is in one place, next to the
 
 ### Files
 
-A directory tree has no permission model of its own worth reading, so the roles are the ones a policy over the tree invents.
+A directory tree has two permission models, and which one to read is a question about the tree rather than about the files in it.
 
 | Role | Reads |
 | --- | --- |
@@ -112,10 +112,49 @@ A directory tree has no permission model of its own worth reading, so the roles 
 | `approver` | yes |
 | `reviewer` | yes |
 
+The roles above are the ones a policy over the tree invents, and `OwnersPolicy` is the one that uses them.
 The OWNERS convention that Kubernetes and a number of other large repositories keep names approvers and reviewers, and both are people who can read the subtree.
 There is no deny and no link sharing.
 A subtree narrows what its parent allowed by replacing the list rather than by refusing anybody.
 A path with no OWNERS file anywhere above it has no answer at all and is quarantined, which is the case worth getting right: the default for "no rule found" is not "no restriction".
+
+The other model is the one the operating system already keeps, and `OSPolicy` reads it.
+
+| What the file system has | How it is read |
+| --- | --- |
+| the owner, where the owner read bit is set | a `User` grant marked as the owner |
+| the group, where the group read bit is set | a `Group` grant |
+| the world read bit | a `Domain` grant, and nothing at all until a domain is named |
+| a POSIX access control list | read in place of the mode bits, with the mask applied |
+| a Windows access control entry that allows reading | a `User` or `Group` grant |
+| a Windows entry that denies reading | a `Deny`, which beats every grant |
+| Everyone and Authenticated Users on Windows | the same `Domain` grant as the world bit |
+
+This is the right policy for a tree that is the file server, because there the operating system is the access control system and there is nothing better above it.
+It is the wrong policy for a copy of one.
+A tree that was rsynced to the crawler carries the permissions the copy has, which are the crawler's own, and indexing those would hand the lot to whoever the crawler runs as.
+
+Three of those rows are worth expanding on.
+
+The read bits are read literally, so an owner who took away their own read bit is not granted the file.
+There is an argument the other way, since they could put the bit back, and being wrong this way costs somebody a file of their own they cannot find while being wrong the other way costs a file shown to somebody who was refused it.
+
+The world bit cannot be mapped without being told something first.
+It says every account on this host may read the file, and a host's accounts are not a tenant: on a laptop they are one person, on a login server they are the company, and on a machine with a guest account they are more than the company.
+So it grants nothing until a deployment names the domain those accounts belong to.
+
+The mask on a POSIX list is a ceiling rather than a decoration, and it is the reason the list is read at all.
+The group bits in the mode of a file that carries a list are the mask, not the group's own permission, so a group the mask has taken read away from still looks allowed in the mode.
+A mapping built on the mode alone would offer that file to a team who cannot open it.
+
+The gap is macOS and the BSDs.
+They keep extended access control lists of the NFSv4 shape, in a place a program can only reach through the C library, and they are not read.
+A file carrying one gets the answer its mode bits give, which is narrower than the truth where the list grants and wider than it where the list refuses.
+That second case is the one gap in this policy that goes the wrong way, and it is written down rather than left to be found: on those systems this is a good answer for an ordinary tree and not a safe one for a tree somebody has been managing with the access control list editor.
+
+Every identifier is resolved to an account name, and a file whose owner does not resolve is quarantined rather than indexed under a number.
+A numeric user id is not an identity.
+It means one person on one host and somebody else on the next, so a grant written in terms of one would either match nobody or match the wrong person.
 
 ### Object storage
 

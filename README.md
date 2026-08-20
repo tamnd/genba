@@ -129,6 +129,12 @@ By default every file in the corpus is readable by everybody in the tenant, whic
 If the tree has OWNERS files in it, `-corpus-acl owners` reads them instead, and a query then returns different results depending on who is asking.
 Paths that no OWNERS file governs are quarantined rather than published, and the count of them is on the sync log line.
 
+If the tree is the file server, `-corpus-acl os` reads the permissions the operating system already keeps on it: the owner, the group and the mode bits on Unix, the POSIX access control list where a file carries one, and the security descriptor on Windows.
+It needs `-corpus-identity` to say which identity source the account names belong to, so that somebody who signed in through the company directory matches a list that came out of a password file.
+A world readable file grants nothing until `-corpus-domain` names the domain the accounts on the host belong to, because a host's accounts are not a tenant.
+Point this at a copy of a file server rather than the file server and you get the permissions the copy has, which are the ones the crawler runs as, so do not.
+A `chmod` reaches the index on the next sync without the file being read again.
+
 ## Configuration
 
 Every setting has a flag and an environment variable.
@@ -152,7 +158,9 @@ The corpus flags have no environment variables, because a directory to index is 
 | --- | --- | --- |
 | `-corpus` | empty | directory to index at startup |
 | `-corpus-name` | `files` | source name the documents carry, and what `-source` filters on |
-| `-corpus-acl` | `tenant` | who may read it: `tenant` for everybody in the tenant, `owners` to read OWNERS files |
+| `-corpus-acl` | `tenant` | who may read it: `tenant` for everybody in the tenant, `owners` to read OWNERS files, `os` to read the file system's own permissions |
+| `-corpus-identity` | `unix` | identity source the account names in the tree belong to, for `-corpus-acl os` |
+| `-corpus-domain` | empty | domain the accounts on this host belong to, for `-corpus-acl os`, empty to grant nothing on the world bit |
 | `-corpus-refresh` | `0` | how often to sync again, zero for once at startup |
 
 ## Metrics

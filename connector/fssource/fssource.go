@@ -126,6 +126,23 @@ type Versioned interface {
 	ChangedAt(ctx context.Context, relPath string) (time.Time, error)
 }
 
+// statPolicy and statVersioned are the same two questions asked with the file
+// information the walk is already holding.
+//
+// They are unexported on purpose, so they are not a second interface anybody
+// outside has to implement. What they are is a way for a policy that reads the
+// file system itself to avoid a second stat of every file in the tree, which on
+// a corpus of a million files is a million system calls a sync spends finding
+// out something it was told a moment ago.
+type (
+	statPolicy interface {
+		permissionsFor(ctx context.Context, relPath string, info fs.FileInfo) (acl.Permissions, error)
+	}
+	statVersioned interface {
+		changedAtFor(ctx context.Context, relPath string, info fs.FileInfo) (time.Time, error)
+	}
+)
+
 // Reloader is the optional capability of a [Policy] that caches.
 //
 // A source calls it once at the start of every walk. That is the contract the
@@ -316,11 +333,22 @@ func (s *Source) Sync(ctx context.Context, from connector.Cursor, emit func(cont
 		// Not After rather than Before, so a file written in the same
 		// nanosecond as the cursor is not emitted twice on every later run.
 		if !since.IsZero() && !mod.After(since) {
-			at, err := s.refresh(ctx, rel, since, emit)
+			at, err := s.refresh(ctx, rel, info, since, emit)
 			if at.After(highest) {
 				highest = at
 			}
 			return err
+		}
+
+		// The cursor has to cover when the permissions last changed as well as
+		// when the content did, because the next run compares both against it. A
+		// file whose mode was last written after it was last edited would
+		// otherwise come back as a permission change on the very next sync,
+		// stating the same access control list it was just given, for every such
+		// file in the tree. An error here is the policy's problem and read below
+		// reports it.
+		if at, err := s.changedAt(ctx, rel, info); err == nil && at.After(highest) {
+			highest = at
 		}
 
 		full := filepath.Join(s.root, filepath.FromSlash(rel))
@@ -357,12 +385,8 @@ func (s *Source) Sync(ctx context.Context, from connector.Cursor, emit func(cont
 // What it costs is one policy lookup per unchanged file, which for the OWNERS
 // policy is a map read after the first file in each directory. What it saves is
 // reading the subtree.
-func (s *Source) refresh(ctx context.Context, rel string, since time.Time, emit func(context.Context, connector.Change) error) (time.Time, error) {
-	versioned, ok := s.policy.(Versioned)
-	if !ok {
-		return time.Time{}, nil
-	}
-	at, err := versioned.ChangedAt(ctx, rel)
+func (s *Source) refresh(ctx context.Context, rel string, info fs.FileInfo, since time.Time, emit func(context.Context, connector.Change) error) (time.Time, error) {
+	at, err := s.changedAt(ctx, rel, info)
 	if err != nil {
 		// A policy that cannot answer for one path is not a reason to abandon the
 		// tree, for the same reason a file that cannot be read is not. It is
@@ -375,7 +399,7 @@ func (s *Source) refresh(ctx context.Context, rel string, since time.Time, emit 
 		return at, nil
 	}
 
-	perms, err := s.policy.Permissions(ctx, rel)
+	perms, err := s.permissions(ctx, rel, info)
 	if err != nil {
 		// The rule that used to govern this file stopped resolving. Quarantining
 		// is the only safe reading: a document nobody can currently say who may
@@ -392,6 +416,34 @@ func (s *Source) refresh(ctx context.Context, rel string, since time.Time, emit 
 		// of walk cursor covers it, and a run interrupted before that repeats the
 		// refresh, which costs one write.
 	})
+}
+
+// permissions asks the policy who may read a file, handing over the file
+// information where the policy is one that wants it.
+//
+// A nil policy is not an oversight and not an error. It is the state a source
+// built without one is in, and the answer is that nothing resolved, which
+// quarantines every document rather than publishing the tree.
+func (s *Source) permissions(ctx context.Context, rel string, info fs.FileInfo) (acl.Permissions, error) {
+	if s.policy == nil {
+		return connector.Unresolved(s.name), nil
+	}
+	if p, ok := s.policy.(statPolicy); ok {
+		return p.permissionsFor(ctx, rel, info)
+	}
+	return s.policy.Permissions(ctx, rel)
+}
+
+// changedAt asks the policy when the rule governing a file last changed, and
+// returns the zero time for a policy that cannot say.
+func (s *Source) changedAt(ctx context.Context, rel string, info fs.FileInfo) (time.Time, error) {
+	if p, ok := s.policy.(statVersioned); ok {
+		return p.changedAtFor(ctx, rel, info)
+	}
+	if p, ok := s.policy.(Versioned); ok {
+		return p.ChangedAt(ctx, rel)
+	}
+	return time.Time{}, nil
 }
 
 // limitFor is the size limit that applies to one file name. An image gets the
@@ -426,15 +478,12 @@ func (s *Source) read(ctx context.Context, full, rel string, info fs.FileInfo) (
 		return doc.Document{}, errors.New("not text")
 	}
 
-	perms := connector.Unresolved(s.name)
-	if s.policy != nil {
-		got, err := s.policy.Permissions(ctx, rel)
-		if err == nil {
-			perms = got
-		}
-		// On an error the document keeps the unresolved descriptor and is
-		// quarantined by the pipeline. Failing to answer is not permission to
-		// publish.
+	perms, err := s.permissions(ctx, rel, info)
+	if err != nil {
+		// The document keeps the unresolved descriptor and is quarantined by the
+		// pipeline. Failing to answer is not permission to publish.
+		perms = connector.Unresolved(s.name)
+		s.skipped(full, err)
 	}
 
 	var (

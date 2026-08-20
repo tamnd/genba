@@ -87,8 +87,21 @@ type Reloader interface {
 
 Every file the walk skips as unchanged is asked about, so the answer has to be cheap.
 For `OwnersPolicy` it is a map read after the first file in each directory.
+For `OSPolicy` it is the inode change time, which the walk is already holding, so it costs nothing at all.
 `Reload` is called once at the start of every walk, and it is what stops a process that has been up for a week from answering with the OWNERS files as they were when it started.
 The cache lives for exactly one walk: long enough to cost one read per OWNERS file per sync instead of one per document, short enough that the next sync notices the edit.
+
+The inode change time is worth a sentence of its own, because it is the whole of how a `chmod` reaches the index.
+It moves when the mode, the owner or the access control list is written, and stays where it is when only the content is, which is exactly the event a sync comparing modification times cannot see.
+A revocation that takes effect the next time somebody happens to edit the file is not a revocation.
+
+Windows has no equivalent that can be read without opening every file, so `OSPolicy` answers with the zero time there and a permission change waits for the next full sync.
+That is stated rather than worked around, because the way to work around it is a stat that costs an open per file per sync.
+
+Asking twice is the other cost worth avoiding.
+A policy that reads the file system itself already has everything it needs in the `fs.FileInfo` the walk is carrying, and calling `Permissions` with a path would make it stat the file a second time.
+On a corpus of a million files that is a million system calls a sync spends finding out something it was told a moment ago, so the source hands the file information over where a policy can use it.
+That handover is deliberately not a public interface: it is one more thing every policy would have to implement, for a saving only the policies that read the file system get.
 
 ## What the sync could not have seen: reconciliation
 
