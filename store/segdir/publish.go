@@ -1,6 +1,7 @@
 package segdir
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -169,22 +170,29 @@ func bySequence(a, b Entry) int {
 // The flush is inside the same function as the write because the two belong
 // together: a caller that can write without flushing is a caller that will one
 // day forget, and the argument makes the choice visible at every call site.
-func writeFile(path string, b []byte, sync bool) error {
+//
+// The close is joined onto whatever else went wrong rather than dropped. A
+// close of a handle that was written to can fail on its own, and on a network
+// filesystem it is where a failed write is reported, so throwing that error
+// away is throwing away the news that the bytes are not there. Everything this
+// function writes goes on to be renamed into place, and renaming a file whose
+// close failed is exactly the half written segment the package exists to
+// prevent.
+func writeFile(path string, b []byte, sync bool) (err error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		err = errors.Join(err, f.Close())
+	}()
 	if _, err := f.Write(b); err != nil {
-		f.Close()
 		return err
 	}
 	if sync {
-		if err := f.Sync(); err != nil {
-			f.Close()
-			return err
-		}
+		return f.Sync()
 	}
-	return f.Close()
+	return nil
 }
 
 // crashPoint is where the crash tests kill the process.
