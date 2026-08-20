@@ -37,6 +37,20 @@ spent := src.Counters().Since(before)
 A second sync over an unchanged tree of eight files spends eight metadata lookups, zero fetches and zero bytes.
 That is the floor for a source without a change feed, and the test that says so is `TestASecondSyncOverAnUnchangedTreeReadsNothing`.
 
+### The same problem over a network
+
+`objectsource` makes the same trade against an S3 compatible bucket, and two things about it are different enough to be worth writing down.
+
+The listing is ordered by key rather than by when anything changed, so the modification times a run sees go up and down as it proceeds.
+A cursor holding the time of the change just written would tell the next run to skip everything older, and the objects further down the listing that had not been read yet would be skipped for ever.
+So the cursor a change carries holds the last key instead, and the high water mark is only written when the run finishes.
+That is also what makes an interrupted run resumable: the next one lists again with `start-after` set to the key it reached.
+
+The store's modification times have a second of resolution and a listing of a large bucket takes a great deal longer than that.
+An object written later in the same second as the newest one a run saw would be filed under a time the cursor had already passed.
+The cursor is therefore held one second behind the store's own clock, read from the `Date` header of the response rather than from this machine's clock, and that second is looked at once more on the next run.
+It costs re-reading a handful of objects after a write and it costs nothing on a bucket that has been quiet.
+
 ## Who may read it: permissions without a recrawl
 
 A permission change is not a content change, and a sync built only on modification times cannot see one at all.
@@ -102,6 +116,13 @@ Asking twice is the other cost worth avoiding.
 A policy that reads the file system itself already has everything it needs in the `fs.FileInfo` the walk is carrying, and calling `Permissions` with a path would make it stat the file a second time.
 On a corpus of a million files that is a million system calls a sync spends finding out something it was told a moment ago, so the source hands the file information over where a policy can use it.
 That handover is deliberately not a public interface: it is one more thing every policy would have to implement, for a saving only the policies that read the file system get.
+
+Object storage has no equivalent of the inode change time and no per object "the list changed at" anywhere.
+The only way to find out whether one object's list was rewritten is to read it, which is the request per object the incremental path exists to avoid.
+So `BucketPolicy` reads the bucket's list once per sync, fingerprints the statements in it rather than the bytes, and compares that with the last sync's.
+A bucket whose fingerprint moved gives every object under it a permission change without a single byte being fetched, and a bucket whose fingerprint did not costs one request for the whole sync.
+The fingerprint is built from the parsed statements because the order of grants is not promised by any of these services and some of them put a request id in the response, and a fingerprint that moved on its own would rewrite the permissions of the whole bucket on every sync.
+`ObjectPolicy` deliberately does not implement `Versioned` at all, which is the honest answer rather than an expensive one.
 
 ## What the sync could not have seen: reconciliation
 
@@ -173,3 +194,4 @@ Everything else is optional, and each piece buys one thing.
 | `Change.PermissionsOnly` | a permission change costs a write instead of a recrawl |
 
 `connector/fssource` implements all four and is the one to read before writing another.
+`connector/objectsource` implements all four as well, over a network service, and is the one to read for the parts a local source never has to deal with: signing, paging, and a listing whose order has nothing to do with what changed.

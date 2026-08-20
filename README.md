@@ -255,6 +255,7 @@ func main() {
 | `index` | query parsing, retrieval and ranking |
 | `connector` | the ingestion contract, cursors and checkpoints |
 | `connector/fssource` | the reference connector, a directory tree with OWNERS files |
+| `connector/objectsource` | an S3 compatible bucket, signed and paged, [docs/ingestion.md](docs/ingestion.md) |
 | `extract` | text and structure out of PDF, Word, PowerPoint, Excel, HTML and Markdown, [docs/extraction.md](docs/extraction.md) |
 | `ingest` | the pipeline that runs a connector into a store |
 | `config` | runtime configuration and the rules for loading it |
@@ -317,6 +318,34 @@ The mode bits describe the account the crawler runs as, not the people in the co
 `OwnersPolicy` reads the OWNERS files that Kubernetes and a number of other large repositories keep, taking the nearest one going up the tree, which is a real access control list maintained by real people over a corpus anybody can check out.
 A source built with no policy at all quarantines everything, so having not thought about permissions yet is a visible state in the stats rather than an invisible one in the index.
 
+`connector/objectsource` is the second one, and the first that talks to a network service, which is where most of what a real connector has to get right lives.
+It reads an S3 compatible bucket, which is one connector rather than eight because Amazon's own service, MinIO, Ceph, Cloudflare R2, Backblaze B2, Wasabi and DigitalOcean Spaces all answer to the same two calls signed the same way.
+
+```go
+client, err := objectsource.NewClient(objectsource.Config{
+	Endpoint:        "https://s3.eu-west-1.amazonaws.com",
+	Region:          "eu-west-1",
+	Bucket:          "acme-reports",
+	AccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
+	SecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
+})
+if err != nil {
+	log.Fatal(err)
+}
+policy, err := objectsource.NewBucketPolicy(client, "reports", "okta", "acme.com")
+if err != nil {
+	log.Fatal(err)
+}
+src, err := objectsource.New(client, "reports", policy, objectsource.WithPrefix("quarterly/"))
+if err != nil {
+	log.Fatal(err)
+}
+```
+
+The signing is signature version 4 written out in the package rather than taken from a vendor SDK, so the binary stays one file with no cloud provider dependency tree under it, and it is pinned against the published worked examples rather than against itself.
+`WithPrefix` narrows the listing rather than filtering it afterwards, so a source pointed at one folder of a bucket of a hundred million objects costs what that folder costs, and several sources can read the same bucket under different prefixes with different policies.
+Which of the two ways the bucket goes in the URL is a setting rather than a guess, because it is the one thing that genuinely differs between these services.
+
 What a source said about who may read a document is turned into the model in one place, `connector/aclmap`, rather than once per connector.
 Every system names permissions differently, and the same idea is a `reader` in one, `READ` in another, `VIEW` in a third and `BROWSE_PROJECTS` in a fourth.
 Mapping each of those is easy on its own, and the collection of them is where a search engine leaks, because every connector would otherwise decide on its own what a grant to a partner's domain means and what to do with a statement it does not understand.
@@ -333,6 +362,7 @@ Each budget bounds one file rather than the run: a zip bomb, a truncated archive
 
 Everything after the first sync is incremental.
 A second run over an unchanged tree reads no files at all, an OWNERS edit costs one write per document rather than a recrawl of the subtree, and a reconciliation sweep after every sync catches what a change feed cannot report, starting with the file somebody deleted.
+The same holds over a network: a second sync of an unchanged bucket fetches no objects and reads no bytes, and rewriting the bucket's access control list costs one write per object rather than a fetch of the whole bucket.
 [docs/ingestion.md](docs/ingestion.md) has the details, including the optional capabilities a connector implements to get each of those and the rule that stops a timed out enumeration from emptying a working index.
 
 ## Storage

@@ -175,6 +175,15 @@ The two group grantees are the ones that reach outside a company.
 `AllUsers` is the open internet and maps to a public document, reported as an `Anyone` grant.
 `AuthenticatedUsers` is every account holder at the provider, which is not this tenant and cannot be enumerated, so a connector reports it as a `Domain` grant to `authenticated-users` and it quarantines like any other foreign domain.
 
+`connector/objectsource` reports these, and it takes the list from one of two places.
+`BucketPolicy` reads the bucket's own list once per sync and gives every object the same answer, which is one request rather than one per object and is correct whenever the objects were written by one process and are read by one team.
+`ObjectPolicy` reads the list of each object, which is exact and costs a request per object per sync.
+Neither is the default, because there is no permissive default: a source built without a policy quarantines every document, so a bucket nobody has thought about yet is loud rather than public.
+
+A canonical user id is used as an identity only when it is all a grant carries.
+It names an account at the provider rather than a person and will not match anything somebody signs in with, so an email address is preferred and a display name after that.
+Owning an object is not reading it, and the owner is marked as one only where the list already gives that account `READ` or `FULL_CONTROL`.
+
 ### Drive
 
 The roles are Drive's own, and all six of them can read the file.
