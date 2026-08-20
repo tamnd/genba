@@ -143,6 +143,8 @@ func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant
 			"heap_mb", megabytes(int64(after.HeapAlloc)),
 			"allocated_mb", megabytes(int64(after.TotalAlloc-before.TotalAlloc)),
 		)
+
+		reconcile(ctx, pipeline, src, tenant, log)
 	}
 
 	sync(ctx)
@@ -169,6 +171,53 @@ func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant
 		<-done
 		_ = src.Close()
 	}, nil
+}
+
+// reconcile sweeps the index against the tree and repairs what the sync could
+// not have seen.
+//
+// It runs after every sync rather than on a schedule of its own, and the reason
+// is that a directory tree has no change feed. A sync walks the tree and emits
+// what is newer than the cursor, which means a file somebody deleted produces
+// no event at all: there is nothing left to walk past. Without this the deleted
+// document stays in the index and keeps being served, and the only thing that
+// would ever remove it is a restart.
+//
+// The cost is a second walk of the same tree, stat only, plus a two column scan
+// of the index. On a corpus where the sync itself is already a stat per file
+// that is roughly double the cheap half of the work and none of the expensive
+// half, which is the right trade for the alternative being an index that serves
+// documents that no longer exist.
+func reconcile(ctx context.Context, pipeline *ingest.Pipeline, src connector.Connector, tenant string, log *slog.Logger) {
+	rec, err := pipeline.Reconcile(ctx, genba.TenantID(tenant), src)
+	if err != nil {
+		// Not fatal, and not even unusual. A store that cannot list what it holds
+		// or a connector that cannot enumerate simply has no sweep, and the sync
+		// that just finished is still good.
+		log.Warn("corpus reconciliation skipped", "source", src.Source(), "error", err)
+		return
+	}
+	if rec.Drift() == 0 {
+		return
+	}
+	// Logged at warning level because drift is the interesting event. An index
+	// that agrees with its source produces nothing here, so a line in the log
+	// means the incremental path missed something and is worth going to look at.
+	log.Warn("corpus reconciled",
+		"source", rec.Source,
+		"source_items", rec.SourceItems,
+		"index_items", rec.IndexItems,
+		"missing", rec.Missing.Count,
+		"stale", rec.Stale.Count,
+		"extra", rec.Extra.Count,
+		"repaired", rec.Repaired,
+		"deleted", rec.Deleted,
+		"sample_missing", rec.Missing.IDs,
+		"sample_stale", rec.Stale.IDs,
+		"sample_extra", rec.Extra.IDs,
+		"requests", rec.Requests.Requests(),
+		"duration", rec.Duration.Round(time.Millisecond),
+	)
 }
 
 // megabytes converts a byte count for the log.

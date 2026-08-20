@@ -113,7 +113,11 @@ var allowed = map[string][]string{
 	// document without going through the checks the pipeline applies.
 	"connector":          {"acl", "doc"},
 	"connector/fssource": {"acl", "connector", "doc"},
-	"ingest":             {"", "connector", "doc", "store"},
+	// ingest names acl because a permission change that arrives without the
+	// document is a map of access control lists and nothing else, and there is
+	// no way to carry one without saying what it is. It is the one type from
+	// that package the pipeline handles directly.
+	"ingest": {"", "acl", "connector", "doc", "store"},
 
 	// The benchmark corpus sits above everything, like storetest does, because
 	// it exists to be measured against rather than to be built on. It is the one

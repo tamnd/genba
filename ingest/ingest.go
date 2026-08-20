@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/tamnd/genba"
+	"github.com/tamnd/genba/acl"
 	"github.com/tamnd/genba/connector"
 	"github.com/tamnd/genba/doc"
 	"github.com/tamnd/genba/store"
@@ -53,6 +54,13 @@ type Pipeline struct {
 	batchSize   int
 	clock       func() time.Time
 	log         *slog.Logger
+
+	// maint is the same store when the driver can do the two things a
+	// maintenance job needs and a query path must never have: list what is
+	// stored, and rewrite an access control list without the document. It is
+	// nil for a driver without them, and the two operations that need it say so
+	// rather than silently doing nothing.
+	maint store.Maintenance
 }
 
 // Option configures a pipeline.
@@ -106,6 +114,7 @@ func New(s store.Store, cp connector.Checkpoints, opts ...Option) (*Pipeline, er
 	for _, opt := range opts {
 		opt(p)
 	}
+	p.maint, _ = s.(store.Maintenance)
 	return p, nil
 }
 
@@ -122,6 +131,14 @@ type Stats struct {
 
 	// Deleted is the number removed because the source no longer has them.
 	Deleted int
+
+	// Repermissioned is the number whose access control list was rewritten
+	// without their content being fetched.
+	//
+	// It is the number that says whether the cheap path for a permission change
+	// is working. A run that reindexed ten thousand documents because somebody
+	// edited one group looks fine in Indexed and is a recrawl.
+	Repermissioned int
 
 	// Skipped is the number rejected before the store, because they carried no
 	// id and there is nothing to file them under.
@@ -244,6 +261,9 @@ type run struct {
 
 	batch   []doc.Document
 	deletes []string
+	// perms holds the permission changes in the current batch, keyed by id so
+	// that two edits to the same document in one run cost one write.
+	perms map[string]acl.Permissions
 	// pending is the resume point of the last change in the current batch. It
 	// is saved only once that batch is stored.
 	pending connector.Cursor
@@ -280,6 +300,21 @@ func (r *run) emit(ctx context.Context, ch connector.Change) error {
 		return r.maybeFlush(ctx)
 	}
 
+	if ch.PermissionsOnly {
+		if p.maint == nil {
+			// Refusing is the only honest answer. The change carries no content,
+			// so there is nothing to put, and treating it as a no operation would
+			// leave a revoked document readable while the log said the sync
+			// succeeded.
+			return fmt.Errorf("ingest: %s reported a permission change for %s and this store cannot apply one without the document", r.source, d.ID)
+		}
+		if r.perms == nil {
+			r.perms = make(map[string]acl.Permissions, p.batchSize)
+		}
+		r.perms[d.ID] = d.Permissions
+		return r.maybeFlush(ctx)
+	}
+
 	d.IndexedAt = p.clock()
 	r.stats.Bytes += int64(len(d.Body))
 
@@ -301,7 +336,7 @@ func (r *run) emit(ctx context.Context, ch connector.Change) error {
 }
 
 func (r *run) maybeFlush(ctx context.Context) error {
-	if len(r.batch)+len(r.deletes) < r.pipeline.batchSize {
+	if len(r.batch)+len(r.deletes)+len(r.perms) < r.pipeline.batchSize {
 		return nil
 	}
 	return r.flush(ctx)
@@ -314,7 +349,7 @@ func (r *run) maybeFlush(ctx context.Context) error {
 // between them replays documents, which is harmless. The other order loses
 // them, which is not.
 func (r *run) flush(ctx context.Context) error {
-	if len(r.batch) == 0 && len(r.deletes) == 0 {
+	if len(r.batch) == 0 && len(r.deletes) == 0 && len(r.perms) == 0 {
 		return nil
 	}
 	p := r.pipeline
@@ -329,12 +364,28 @@ func (r *run) flush(ctx context.Context) error {
 			return fmt.Errorf("ingest: delete %d documents from %s: %w", len(r.deletes), r.source, err)
 		}
 	}
+	if len(r.perms) > 0 {
+		n, err := p.maint.SetPermissions(ctx, r.tenant, r.perms)
+		if err != nil {
+			return fmt.Errorf("ingest: set permissions on %d documents from %s: %w", len(r.perms), r.source, err)
+		}
+		r.stats.Repermissioned += n
+		// The difference is documents the source has an access control list for
+		// and the index does not hold. That is drift, and it is the kind the
+		// incremental path cannot fix on its own, so it is worth saying out loud
+		// rather than leaving as a gap between two counters.
+		if missing := len(r.perms) - n; missing > 0 {
+			p.log.Warn("permission change for documents that are not indexed",
+				"source", r.source, "tenant", r.tenant, "count", missing)
+		}
+	}
 	r.stats.Batches++
 
 	// Reuse the backing arrays. A long sync flushes thousands of times and
 	// there is no reason for each one to allocate a new batch.
 	r.batch = r.batch[:0]
 	r.deletes = r.deletes[:0]
+	clear(r.perms)
 
 	if err := p.saveCursor(ctx, r.tenant, r.source, r.pending); err != nil {
 		return err
