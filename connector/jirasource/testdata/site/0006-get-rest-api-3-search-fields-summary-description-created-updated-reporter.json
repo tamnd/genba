@@ -1,0 +1,83 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://acme.atlassian.net/rest/api/3/search?fields=summary%2Cdescription%2Ccreated%2Cupdated%2Creporter%2Ccreator%2Cassignee%2Cstatus%2Cissuetype%2Cpriority%2Clabels%2Csecurity%2Ccomment\u0026jql=project+%3D+%22SAFETY%22+ORDER+BY+updated+ASC\u0026maxResults=100\u0026startAt=0",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "issues": [
+          {
+            "fields": {
+              "comment": {
+                "comments": [],
+                "maxResults": 2,
+                "startAt": 0,
+                "total": 0
+              },
+              "created": "2026-03-02T09:09:00.000+0000",
+              "creator": {
+                "accountId": "acc-mei",
+                "active": true,
+                "displayName": "Mei Tanaka",
+                "emailAddress": "mei@acme.com"
+              },
+              "description": {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "text": "The guard on the press is being replaced on Friday morning.",
+                        "type": "text"
+                      }
+                    ],
+                    "type": "paragraph"
+                  }
+                ],
+                "type": "doc",
+                "version": 1
+              },
+              "issuetype": {
+                "name": "Bug"
+              },
+              "priority": {
+                "name": "Medium"
+              },
+              "reporter": {
+                "accountId": "acc-mei",
+                "active": true,
+                "displayName": "Mei Tanaka",
+                "emailAddress": "mei@acme.com"
+              },
+              "security": {
+                "id": "10500",
+                "name": "Incident reports"
+              },
+              "status": {
+                "name": "To Do"
+              },
+              "summary": "Guard on the press",
+              "updated": "2026-03-02T09:10:00.000+0000"
+            },
+            "id": "iSAFETY-1",
+            "key": "SAFETY-1"
+          }
+        ],
+        "maxResults": 2,
+        "startAt": 0,
+        "total": 1
+      }
+    }
+  }
+}

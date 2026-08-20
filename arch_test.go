@@ -164,6 +164,11 @@ var allowed = map[string][]string{
 	// an adapter that knew where its documents were going would be a second
 	// place the pipeline is described.
 	"connector/slacksource": {"acl", "connector", "connector/limit", "connector/thread", "connector/threadsource", "doc"},
+	// jirasource is the same shape for tickets, and the list is the same list.
+	// The one thing it has that the chat adapter does not is a rule on a single
+	// document rather than on the container, which is what an issue security
+	// level is, and that is still acl and threadsource rather than anything new.
+	"connector/jirasource": {"acl", "connector", "connector/limit", "connector/thread", "connector/threadsource", "doc"},
 	// recorded imports nothing of ours either. It is a round tripper over a
 	// directory of files, it deals in requests and responses, and it has never
 	// heard of a document or a connector. Keeping it that way is what lets it be

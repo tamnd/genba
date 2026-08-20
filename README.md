@@ -319,6 +319,7 @@ func main() {
 | `connector/thread` | a conversation and its replies assembled into one document |
 | `connector/threadsource` | the crawl, cursor and permission refresh chat, ticket trackers and wikis share, [docs/ingestion.md](docs/ingestion.md) |
 | `connector/slacksource` | Slack, a thread at a time, with per method rate limits and a recorded workspace to test against |
+| `connector/jirasource` | Jira, an issue and its comments as one document, with security levels and a recorded site to test against |
 | `connector/limit` | the rate limit, backoff and circuit breaker every connector shares, as a round tripper |
 | `connector/recorded` | HTTP exchanges captured from a real service and replayed from a directory, so tests need no account |
 | `extract` | text and structure out of PDF, Word, PowerPoint, Excel, HTML and Markdown, [docs/extraction.md](docs/extraction.md) |
@@ -451,6 +452,13 @@ A reply older than the window is missed on purpose, and the version in the listi
 Nothing reports that somebody was removed from a private channel either, so membership is reapplied on a schedule as well as when Slack says the channel changed, because a revocation that lands whenever somebody next posts is not a revocation.
 Slack publishes a rate limit per method rather than per token and the published rates differ by a hundred times across the methods one crawl uses, so each tier gets its own bucket and a request is routed by the method it names.
 Direct messages are never asked for rather than asked for and filtered, joins and leaves and topic changes are not documents, and the whole thing is tested twice over: against a fake workspace for behaviour, and against a committed recording of a crawl for the wire format, so nobody needs an account to run the tests.
+
+`connector/jirasource` is the second product on the same interface, and it is interesting for the opposite reason.
+Jira has a real change feed, because an issue's `updated` field moves when anything about it moves and JQL will filter and order by it, so a sync is one query per project with no window to widen and nothing to guess at, and a ticket moved from one column to another with nobody writing a word is found the same way a comment is.
+The sweep is still there and it is only for deletion, because nothing in JQL reports an issue that was deleted or moved somewhere this token cannot follow.
+Permissions are the hard half instead: browse comes from the project's permission scheme, which grants it to some mixture of groups, named accounts and project roles, and a role is resolved to the people in it rather than left as the name of a thing.
+An issue security level replaces the project's answer rather than adding to it, which is the concrete case a conversation is allowed to override its container for, and a level this token cannot resolve quarantines the ticket instead of falling back to the project, because a security level is the one thing somebody set on purpose to keep other people out.
+A description is not text but a document tree, so it is rendered as Markdown rather than flattened, which keeps the stack trace in a code block and the table of readings a table, since a search result that shows somebody a flattened version of the thing they were looking for has answered the query and failed the person.
 
 What a connector is gets decided by `connector/connectortest` rather than by the interface.
 The interface says what compiles, and the suite says what works: that a full sync finds everything, that resuming from a cursor loses nothing that came after it, that a second sync of a source nothing changed in reads nothing, that a deleted document stops being part of the source one way or the other, and that every document says who may read it.
