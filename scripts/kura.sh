@@ -9,7 +9,12 @@
 set -eu
 
 REPO=${KURA_REPO:-https://github.com/tamnd/kura}
-REF=${KURA_REF:-main}
+# Pinned, because the engine is a separate repository and a build that tracks a
+# branch is not reproducible: two machines a day apart get two different
+# engines, and a commit over there turns CI red on whichever pull request here
+# happens to be open. Bumping this is a commit like any other, which is what
+# makes the tests run against the new engine before it lands rather than after.
+REF=${KURA_REF:-bab2997c0a373d04e48a16c89c68a30dc3039e6e}
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 SRC=${KURA_SRC:-$ROOT/third_party/kura-src}
 DEST=$ROOT/third_party/kura
@@ -20,13 +25,18 @@ if ! command -v cargo >/dev/null 2>&1; then
 	exit 1
 fi
 
-if [ -d "$SRC/.git" ]; then
-	git -C "$SRC" fetch --quiet origin "$REF"
-	git -C "$SRC" checkout --quiet FETCH_HEAD
-else
+# One path for both cases, because --branch takes a name and REF is a commit.
+# An empty clone followed by a fetch of the ref is what works for a commit, a
+# tag and a branch alike, so an override does not have to be any particular one
+# of those.
+if [ ! -d "$SRC/.git" ]; then
 	rm -rf "$SRC"
-	git clone --quiet --depth 1 --branch "$REF" "$REPO" "$SRC"
+	mkdir -p "$SRC"
+	git -C "$SRC" init --quiet
+	git -C "$SRC" remote add origin "$REPO"
 fi
+git -C "$SRC" fetch --quiet --depth 1 origin "$REF"
+git -C "$SRC" checkout --quiet --force FETCH_HEAD
 
 # On Windows, cargo defaults to the MSVC toolchain and cgo uses the mingw gcc
 # that comes with Go. A library from one does not link into the other, and the
