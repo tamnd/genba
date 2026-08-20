@@ -316,6 +316,7 @@ func main() {
 | `connector/connectortest` | the conformance suite that defines what a connector is |
 | `connector/fssource` | the reference connector, a directory tree with OWNERS files, walked or watched |
 | `connector/objectsource` | an S3 compatible bucket, signed and paged, [docs/ingestion.md](docs/ingestion.md) |
+| `connector/thread` | a conversation and its replies assembled into one document |
 | `connector/limit` | the rate limit, backoff and circuit breaker every connector shares, as a round tripper |
 | `extract` | text and structure out of PDF, Word, PowerPoint, Excel, HTML and Markdown, [docs/extraction.md](docs/extraction.md) |
 | `ingest` | the pipeline that runs a connector into a store |
@@ -429,6 +430,12 @@ Everything after the first sync is incremental.
 A second run over an unchanged tree reads no files at all, an OWNERS edit costs one write per document rather than a recrawl of the subtree, and a reconciliation sweep after every sync catches what a change feed cannot report, starting with the file somebody deleted.
 The same holds over a network: a second sync of an unchanged bucket fetches no objects and reads no bytes, and rewriting the bucket's access control list costs one write per object rather than a fetch of the whole bucket.
 [docs/ingestion.md](docs/ingestion.md) has the details, including the optional capabilities a connector implements to get each of those and the rule that stops a timed out enumeration from emptying a working index.
+
+Chat, ticket trackers and wikis all keep the same shape underneath the vocabulary, and `connector/thread` is the one place it is assembled.
+Something is said and then people say things about it: a message and its replies, an issue and its comments, a page and the discussion at the bottom of it.
+An index that copies the source's row per message shape answers badly, because a question about a cancelled order returns fourteen rows from the same conversation and none of them is the answer on its own, while the reply that holds the answer scores nothing for the word in the question because that word was in the message above it.
+So a conversation is one document that ranks as a whole, the author of each message goes into the body in front of what they said, a repeated message is kept once because a paged reply listing repeats the parent on every page, and a thread too long to fit keeps its beginning and its end and says how many messages it left out.
+Nothing is written in place of what was left out, because a marker in a body is a phrase in the index that nobody at the source ever typed.
 
 What a connector is gets decided by `connector/connectortest` rather than by the interface.
 The interface says what compiles, and the suite says what works: that a full sync finds everything, that resuming from a cursor loses nothing that came after it, that a second sync of a source nothing changed in reads nothing, that a deleted document stops being part of the source one way or the other, and that every document says who may read it.
