@@ -491,6 +491,46 @@ Direct messages and group messages are not asked for rather than asked for and f
 Joins, leaves, topic changes and pinned messages are not documents either, since indexing "somebody has joined the channel" is how a search for a person's name returns four hundred results they never wrote.
 Display names are looked up once per person per crawl and cached, and a lookup that fails still produces an author with the identity filled in and the name missing, because failing a whole channel over a display name is the wrong trade.
 
+### Jira, and what a product does tell you
+
+`connector/jirasource` is the second adapter on that interface, and putting it next to the first one is the point.
+Slack is a product with no change feed and a simple permission model, and Jira is the other way round on both counts, so the same four methods end up carrying almost none of the same weight.
+
+Jira has a change feed and it is a good one.
+An issue's `updated` field moves when anything about it moves, including a comment on it, a status transition and a field somebody edited, and JQL will filter and order by it.
+So `Threads` is one query per project, `project = "KEY" AND updated >= "..." ORDER BY updated ASC`, and there is no reply window, no reading history back to a cursor and nothing to guess at.
+The one wrinkle is that JQL compares times to the minute and rejects anything finer, so the query asks for the minute the cursor is in and the issues from the first half of that minute are dropped after they arrive.
+Rounding the query down rather than up is deliberate: the direction that costs a re-read of a few issues is the one that does not lose them.
+
+The sweep is still there, and it is only for deletion.
+Nothing in JQL reports an issue that was deleted, or one that was moved to a project this token cannot see, and both of those leave the index holding a ticket that no longer exists.
+So `List` walks the project by key and reports the `updated` field as the version, which is the same string `Threads` puts in `Revision`, because a listing and a read that disagree on the version make every sweep refetch the whole project.
+
+Permissions are where the work is.
+Browse comes from the project's permission scheme, which grants it to some mixture of groups, named accounts, project roles and, on a site with a service desk, everybody with a licence.
+A project role is Jira's indirection between a person and a permission and it is the one every real site uses, so it is resolved to the accounts and groups in it rather than left as the name of a thing, which would be an access control list naming nobody.
+A scheme this token cannot read is an administrator's endpoint on many sites, and that is a quarantine and a `WithSkipped` report rather than a guess in either direction.
+A scheme that grants browse to nobody is a quarantine too, because that is not a project everybody can read, it is a project we failed to understand.
+
+An issue security level is the concrete case `Thread.Access` exists for.
+A ticket with one is readable by that level's members and by nobody else, whatever the project says, so it replaces the project's rule rather than adding to it.
+Everything about resolving one is deliberately pessimistic: a level this token cannot read is a quarantine, an empty level is a quarantine, and a level granted to a project role is a quarantine as well, because resolving that correctly means knowing which project the issue is in and the endpoint that lists a level's members does not say.
+The answers are cached per level, including the failures, because a project with a security scheme puts the same handful of levels on thousands of issues and asking per issue turns one refusal into a thousand.
+
+Jira reports nothing about when a permission scheme changed, which is the same gap Slack has and it is handled the same way.
+The rule is reapplied on a schedule, once a day by default, quantised to the interval rather than measured from the last sync so that two servers reading the same site an hour apart agree about whether it moved.
+
+The rate limit is one bucket rather than the per method tiers Slack needs, because Atlassian publishes no per method rates: a site bills by the cost of what was asked for and tells a client it has spent too much with a 429 and a `Retry-After`.
+Obeying that header is `connector/limit`'s job and it is the same code every other connector here uses.
+Every call is a GET for the same reason it is in the Slack adapter, that a request carrying a body is never retried, and the fields a search asks for are written down rather than left as everything, because everything on a site with three hundred custom fields is a page of results the size of a small database.
+
+The last part is the description, which is not text.
+It arrives as an Atlassian document tree, and there are two ways to get it wrong.
+Concatenating every text node produces a wall with the heading run into the paragraph, and an index built on that cannot tell a phrase somebody wrote from a phrase made by two unrelated lines meeting.
+Throwing the structure away is worse, because a ticket's description is very often a stack trace, a snippet of configuration or a table of what was tried, and a search result that shows the reader a flattened version of the thing they were looking for has answered the query and failed the person.
+So it renders Markdown: headings stay headings, code blocks keep their fences and their language, lists stay lists and tables stay tables.
+A description that will not parse comes back empty rather than as an error, because a ticket with a summary, a reporter, a status and a comment thread is still worth indexing.
+
 ### The conformance suite is the definition
 
 `connector/connectortest` is what a connector has to pass, and it rather than the interface is the definition of one.
@@ -580,3 +620,6 @@ The fake is where behaviour is written, because it can be told to throttle, to r
 The recording is where the wire format is pinned, and it is the test that would go red the day Slack renamed a field.
 Two of its rules are worth copying: the repeated requests are dropped, since a crawl asks what the channels are once for the sync, once for the sweep and once for a fetch and three copies of the same answer is three files to review and no more coverage, and everything that differs per run is taken out, which means the address the fake was listening on and the headers saying how long the body was and what time it is.
 Leaving those in makes every refresh a diff on every file with the real change somewhere inside it.
+
+`connector/jirasource/testdata/site` is the same thing for tickets, ten files refreshed the same way, and it is worth looking at as the second example because the shape held.
+The same fake, the same `-update` flag, the same dedupe, the same settling, and the same three tests over it: that the crawl works, that the recording answers nothing the crawl does not ask, and that no credential is in the files.

@@ -1,0 +1,34 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://acme.atlassian.net/rest/api/3/project/SAFETY/permissionscheme?expand=permissions",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "id": 10100,
+        "name": "scheme",
+        "permissions": [
+          {
+            "holder": {
+              "parameter": "safety-officers",
+              "type": "group"
+            },
+            "permission": "BROWSE_PROJECTS"
+          }
+        ]
+      }
+    }
+  }
+}

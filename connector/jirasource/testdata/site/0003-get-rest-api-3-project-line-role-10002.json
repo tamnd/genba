@@ -1,0 +1,41 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://acme.atlassian.net/rest/api/3/project/LINE/role/10002",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "actors": [
+          {
+            "actorUser": {
+              "accountId": "acc-mei"
+            },
+            "displayName": "acc-mei",
+            "type": "atlassian-user-role-actor"
+          },
+          {
+            "actorGroup": {
+              "name": "engineering"
+            },
+            "displayName": "engineering",
+            "type": "atlassian-group-role-actor"
+          }
+        ],
+        "id": "10002",
+        "name": "Role"
+      }
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://acme.atlassian.net/rest/api/3/issuesecurityschemes/level/member?levelId=10500\u0026maxResults=100\u0026startAt=0",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "isLast": true,
+        "maxResults": 2,
+        "startAt": 0,
+        "total": 1,
+        "values": [
+          {
+            "holder": {
+              "type": "user",
+              "user": {
+                "accountId": "acc-lee"
+              }
+            },
+            "id": "macc-lee",
+            "issueSecurityLevelId": "10500"
+          }
+        ]
+      }
+    }
+  }
+}
