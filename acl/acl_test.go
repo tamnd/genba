@@ -147,6 +147,22 @@ func TestAllowsNilPrincipal(t *testing.T) {
 	}
 }
 
+func TestModeValid(t *testing.T) {
+	for _, mode := range []acl.Mode{acl.ModeUnknown, acl.ModeACL, acl.ModePublicToTenant, acl.ModeOwnerOnly} {
+		if !mode.Valid() {
+			t.Errorf("mode %d is one of ours and Valid said it is not", int(mode))
+		}
+	}
+	// Anything past the last mode is a number somebody made up, or a mode from
+	// a version of this package that is not the one this binary was built
+	// against. Neither is a rule this system knows how to apply.
+	for _, mode := range []acl.Mode{acl.Mode(4), acl.Mode(9), acl.Mode(255)} {
+		if mode.Valid() {
+			t.Errorf("mode %d is not one of ours and Valid said it is", int(mode))
+		}
+	}
+}
+
 func TestResolve(t *testing.T) {
 	perms := []acl.Permissions{
 		0: {Mode: acl.ModePublicToTenant},

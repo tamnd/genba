@@ -3,7 +3,6 @@ package connectortest
 import (
 	"fmt"
 
-	"github.com/tamnd/genba/acl"
 	"github.com/tamnd/genba/connector"
 )
 
@@ -63,9 +62,7 @@ func problems(ch connector.Change, source string) []string {
 		out = append(out, fmt.Sprintf("%s has permissions from source %q, and this connector is %q", d.ID, p.Source, source))
 	}
 
-	switch d.Permissions.Mode {
-	case acl.ModeUnknown, acl.ModeACL, acl.ModePublicToTenant:
-	default:
+	if !d.Permissions.Mode.Valid() {
 		out = append(out, fmt.Sprintf("%s reports permission mode %d, which is not one this system has", d.ID, int(d.Permissions.Mode)))
 	}
 	return out

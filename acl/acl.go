@@ -114,6 +114,26 @@ const (
 	ModeOwnerOnly
 )
 
+// Valid reports whether m is one of the modes above.
+//
+// A mode is a small integer and it arrives from places the compiler does not
+// check: a connector written against an older version of this package, a row
+// read back out of a store, a value decoded from a cursor. An unrecognised one
+// is not a mode this system knows how to apply, and the only safe reading of it
+// is that the descriptor did not resolve.
+//
+// The switch has no default clause on purpose. That is what makes the linter
+// fail here when a mode is added, which is a great deal better than the
+// alternative, where a new mode is quietly reported as not existing by every
+// check that was written before it.
+func (m Mode) Valid() bool {
+	switch m {
+	case ModeUnknown, ModeACL, ModePublicToTenant, ModeOwnerOnly:
+		return true
+	}
+	return false
+}
+
 // Sharing records how far a source said a document travels, beyond the people
 // its lists name.
 //
