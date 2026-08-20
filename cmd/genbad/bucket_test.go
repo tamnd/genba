@@ -40,6 +40,9 @@ func TestBucketFlagsAreChecked(t *testing.T) {
 		{"both of them", with(func(o *bucketOptions) { o.Access, o.Secret = "AKIA", "shhh" }), ""},
 		{"a negative refresh", with(func(o *bucketOptions) { o.Refresh = -time.Second }), "negative"},
 		{"a negative reconcile interval", with(func(o *bucketOptions) { o.Reconcile = -time.Second }), "negative"},
+		{"a negative rate", with(func(o *bucketOptions) { o.Rate = -1 }), "negative"},
+		{"a negative burst", with(func(o *bucketOptions) { o.Burst = -1 }), "negative"},
+		{"retrying turned off", with(func(o *bucketOptions) { o.Retries = -1 }), ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -202,6 +205,47 @@ func TestABucketThatRefusesDoesNotStopTheServer(t *testing.T) {
 	}
 }
 
+// The crawl keeps itself under the rate it was given, which is the difference
+// between a connector that is welcome to keep reading and one whose credentials
+// get revoked while nobody is watching.
+func TestTheBucketCrawlStaysUnderItsRate(t *testing.T) {
+	store := newBucket(t)
+	for _, key := range []string{"a.md", "b.md", "c.md", "d.md"} {
+		store.put(key, "# "+key+"\n\nSomething worth reading.\n")
+	}
+
+	addr := freeAddr(t)
+	began := time.Now()
+	stop := serve(t, addr,
+		"-bucket", theBucket,
+		"-bucket-endpoint", store.url,
+		"-bucket-path-style",
+		"-bucket-rate", "20",
+		"-bucket-burst", "1",
+	)
+	defer stop()
+
+	waitForHealth(t, "http://"+addr+"/healthz")
+	took := time.Since(began)
+
+	hits := store.hits()
+	if hits < 5 {
+		t.Fatalf("the crawl made %d requests, want at least a listing and the four objects", hits)
+	}
+	// One request went out on the burst and every one after it waited fifty
+	// milliseconds, so a crawl that finished sooner than that was not limited at
+	// all. Against an in process service the same work takes single figures of
+	// milliseconds unlimited, so there is no way for this to pass by accident.
+	want := time.Duration(hits-1) * 50 * time.Millisecond
+	if took < want {
+		t.Errorf("the crawl took %v for %d requests, want at least %v", took, hits, want)
+	}
+
+	if got := searchAs(t, addr, "alice", "something worth reading"); got.Total < 4 {
+		t.Errorf("total = %d, want the four objects to still be indexed", got.Total)
+	}
+}
+
 // serve starts the server with the given flags and returns the function that
 // stops it and waits for it to be gone.
 func serve(t *testing.T, addr string, args ...string) func() {
@@ -242,9 +286,10 @@ const theBucket = "corpus"
 type bucketFake struct {
 	url string
 
-	mu      sync.Mutex
-	objects map[string]string
-	clock   time.Time
+	mu       sync.Mutex
+	objects  map[string]string
+	clock    time.Time
+	requests int
 }
 
 func newBucket(t *testing.T) *bucketFake {
@@ -276,10 +321,19 @@ func (f *bucketFake) remove(key string) {
 	f.clock = f.clock.Add(time.Minute)
 }
 
+// hits is how many requests the fake has answered, which is what a rate is
+// measured against.
+func (f *bucketFake) hits() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.requests
+}
+
 func (f *bucketFake) handle(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	f.requests++
 	w.Header().Set("Date", f.clock.UTC().Format(http.TimeFormat))
 	key := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/"+theBucket), "/")
 	if unescaped, err := url.PathUnescape(key); err == nil {

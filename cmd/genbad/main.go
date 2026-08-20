@@ -22,6 +22,7 @@ import (
 	"github.com/tamnd/genba"
 	"github.com/tamnd/genba/api"
 	"github.com/tamnd/genba/config"
+	"github.com/tamnd/genba/connector/limit"
 	"github.com/tamnd/genba/index"
 	"github.com/tamnd/genba/store"
 	"github.com/tamnd/genba/store/memstore"
@@ -91,6 +92,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	fs.BoolVar(&bucket.PathStyle, "bucket-path-style", false, "put the bucket in the path rather than in the host name, which MinIO and Ceph need")
 	fs.DurationVar(&bucket.Refresh, "bucket-refresh", 0, "how often to list the bucket again, zero for once")
 	fs.DurationVar(&bucket.Reconcile, "bucket-reconcile", 0, "how often to sweep the index against the bucket, zero for after every sync")
+	fs.Float64Var(&bucket.Rate, "bucket-rate", limit.DefaultRate, "requests per second the crawl keeps itself under, there is no unlimited")
+	fs.IntVar(&bucket.Burst, "bucket-burst", limit.DefaultBurst, "how many requests may go out back to back before the rate binds")
+	fs.IntVar(&bucket.Retries, "bucket-retries", limit.DefaultMaxRetries, "how many times to try a refused request again, negative for never")
 
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	fs.Usage = func() {
