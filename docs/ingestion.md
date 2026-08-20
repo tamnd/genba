@@ -447,6 +447,7 @@ A container nobody has said anything about quarantines everything in it rather t
 Making a channel private touches no message in it, so a sync that only asked what changed would find nothing and the index would keep answering with the old rule.
 An adapter reports when the rule changed, and when that is newer than the cursor the source lists the container and emits a permission change per conversation in it, carrying the new rule and no body.
 That costs one write per thread rather than a refetch of the channel, and the run after it says nothing, because the rule has not changed again.
+A full sync refreshes nothing, because every conversation it emits already carries the rule its container has right now, and emitting a permission change alongside each one would double the first sync of a workspace to say the same thing twice.
 
 The cursor is a time plus an edge set, and the edge set is what makes it correct.
 Two conversations that changed in the same instant is the case a bare timestamp gets wrong in both directions: asking for what changed strictly after the cursor loses the second one for ever, and asking for what changed at or after it emits both again on every run until something else happens.

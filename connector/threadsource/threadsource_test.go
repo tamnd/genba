@@ -222,6 +222,34 @@ func TestMakingAChannelPrivateReachesTheIndexWithoutReadingIt(t *testing.T) {
 	}
 }
 
+// A full sync already emits every conversation with the rule its container has
+// right now, so emitting a permission change alongside each one would be saying
+// the same thing twice and doubling the first sync of a workspace.
+func TestAFullSyncDoesNotRefreshWhatItIsAlreadyEmitting(t *testing.T) {
+	f := newFake()
+	f.write("r1", "gearbox", "The gearbox on line two is making a noise.")
+	f.write("r1", "coolant", "Coolant pump replaced.")
+	// The room's rule was rewritten before anything ever read it, which is the
+	// ordinary state of a source being indexed for the first time.
+	f.share("r1")
+	src := newSource(t, f)
+
+	changes, next := run(t, src, connector.Cursor{})
+	if got := ids(changes); !slices.Equal(got, []string{"chat:coolant", "chat:gearbox"}) {
+		t.Fatalf("a first sync of two threads emitted %v", got)
+	}
+	for _, ch := range changes {
+		if ch.PermissionsOnly {
+			t.Errorf("%s was emitted as a permission change by the sync that first indexed it", ch.Document.ID)
+		}
+	}
+	// And the run after it says nothing, so the rule the first sync used was
+	// recorded rather than skipped.
+	if again, _ := run(t, src, next); len(again) != 0 {
+		t.Errorf("the sync after the first one emitted %v", ids(again))
+	}
+}
+
 func TestASecondSyncOfAWorkspaceNothingChangedInEmitsNothing(t *testing.T) {
 	f := newFake()
 	f.write("r1", "gearbox", "The gearbox on line two is making a noise.")

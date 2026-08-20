@@ -308,6 +308,12 @@ func (s *Source) Sync(ctx context.Context, from connector.Cursor, emit func(cont
 		highest = start.Since
 		edge    = slices.Clone(start.Edge)
 		latest  = start.Perms
+
+		// A full sync has nothing to refresh. Every conversation it emits
+		// carries the rule the container has right now, so emitting a
+		// permission change alongside it would be saying the same thing twice
+		// and doubling the size of the first sync of a workspace.
+		full = from.IsZero()
 	)
 	for _, c := range containers {
 		if err := ctx.Err(); err != nil {
@@ -333,7 +339,7 @@ func (s *Source) Sync(ctx context.Context, from connector.Cursor, emit func(cont
 			since = start.At
 		}
 
-		if c.AccessAt.After(start.Perms) {
+		if !full && c.AccessAt.After(start.Perms) {
 			if err := s.refresh(ctx, c, start, emit); err != nil {
 				return connector.Cursor{}, err
 			}
