@@ -464,6 +464,33 @@ src, err := threadsource.New(svc, "chat", threadsource.WithMaxBody(64<<10))
 `WithSkipped` is told about a conversation the source could not index, which so far means one that arrived with no id.
 An index quietly missing what nobody could read looks exactly like an index that is complete, and the difference only shows up when somebody cannot find a thread they remember.
 
+### Slack, and what a product does not tell you
+
+`connector/slacksource` is the first adapter on that interface, and what is interesting about it is not the four methods.
+It is everything Slack declines to report, because each of those gaps turns into a decision that has to be made somewhere.
+
+Slack has no "what changed since" endpoint.
+History is ordered by when a message was posted, and a reply to a thread moves nothing in the listing except that thread's `latest_reply`, so a thread posted last month and answered this morning is still in last month's position.
+So a sync reads history back to the older of the cursor and a reply window, and judges each thread on its newest message.
+A week is the default window and it is the whole of the tradeoff: a reply to a thread older than that is not something the sync can see, the version in the listing moves anyway because it is derived from the newest message in the thread, and the sweep is what repairs it.
+That is worse than a change feed and it is better than pretending, which would be reading all of history on every sync or claiming a reply is a new document.
+
+Slack does not report that somebody was removed from a private channel.
+A channel's `updated` field moves when it is renamed, archived or converted, and stays exactly where it was when a member is taken out, which is the one case that matters because it is a revocation.
+So membership is reapplied on a schedule as well, once a day by default, and the schedule is quantised to the interval rather than measured from the last sync so that two servers reading the same workspace an hour apart agree about whether the rule moved.
+That bounds how long a removed member keeps seeing a private channel's threads, and it costs one write per thread in the private channels once a day rather than a read of any of them.
+A channel this token cannot read at all is quarantined and reported through `WithSkipped`, and it is deliberately left off the schedule: reapplying a rule means listing the channel, this token cannot list it, and there is nothing in the index from it to reapply anything to.
+
+Slack publishes a rate limit per method rather than per token, and the published rates across the methods one crawl uses differ by a factor of a hundred.
+One bucket for all of them is either set to the slowest tier, in which case the crawl spends its budget waiting to look up display names, or set too fast for the slowest, in which case it is refused.
+So each tier gets a bucket and a request is routed to one by the method it names, all four wrapping `connector/limit` so the retries, the backoff and the circuit breaker are the ones every other connector uses.
+Every call is a GET rather than a POST for the same reason: a request carrying a body cannot be replayed by a transport that has already handed the body away, so a POST is never retried, and being throttled is not an unusual event on this API but the normal way Slack asks a crawler to slow down.
+
+The rest is about what is not a document.
+Direct messages and group messages are not asked for rather than asked for and filtered, because a filter is a thing that can be got wrong once and then be wrong for ever.
+Joins, leaves, topic changes and pinned messages are not documents either, since indexing "somebody has joined the channel" is how a search for a person's name returns four hundred results they never wrote.
+Display names are looked up once per person per crawl and cached, and a lookup that fails still produces an author with the identity filled in and the name missing, because failing a whole channel over a display name is the wrong trade.
+
 ### The conformance suite is the definition
 
 `connector/connectortest` is what a connector has to pass, and it rather than the interface is the definition of one.
@@ -546,3 +573,10 @@ A recording is committed, and a token committed once is a token leaked permanent
 
 A request nothing was recorded for is an error naming what was asked and what the recording holds, rather than an empty response the connector fails to parse fifty lines away from the cause.
 `Unused` reports the other direction, the recorded requests nothing asked for, which is how a fixture set left behind by a connector that stopped calling an endpoint gets noticed instead of being read as a description of what the connector does.
+
+`connector/slacksource/testdata/workspace` is what one looks like in practice, and it is worth reading before writing the next one.
+It is eleven files, refreshed with `go test ./connector/slacksource/ -run TestRecordTheFixtures -update`, and the recording and the fake sit side by side rather than one replacing the other.
+The fake is where behaviour is written, because it can be told to throttle, to refuse a channel or to lose a message between two syncs, and none of that is a thing a recording can be asked to do.
+The recording is where the wire format is pinned, and it is the test that would go red the day Slack renamed a field.
+Two of its rules are worth copying: the repeated requests are dropped, since a crawl asks what the channels are once for the sync, once for the sweep and once for a fetch and three copies of the same answer is three files to review and no more coverage, and everything that differs per run is taken out, which means the address the fake was listening on and the headers saying how long the body was and what time it is.
+Leaving those in makes every refresh a diff on every file with the real change somewhere inside it.

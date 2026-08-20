@@ -318,6 +318,7 @@ func main() {
 | `connector/objectsource` | an S3 compatible bucket, signed and paged, [docs/ingestion.md](docs/ingestion.md) |
 | `connector/thread` | a conversation and its replies assembled into one document |
 | `connector/threadsource` | the crawl, cursor and permission refresh chat, ticket trackers and wikis share, [docs/ingestion.md](docs/ingestion.md) |
+| `connector/slacksource` | Slack, a thread at a time, with per method rate limits and a recorded workspace to test against |
 | `connector/limit` | the rate limit, backoff and circuit breaker every connector shares, as a round tripper |
 | `connector/recorded` | HTTP exchanges captured from a real service and replayed from a directory, so tests need no account |
 | `extract` | text and structure out of PDF, Word, PowerPoint, Excel, HTML and Markdown, [docs/extraction.md](docs/extraction.md) |
@@ -443,6 +444,13 @@ Assembling one conversation is the easy half.
 `connector/threadsource` is the other half, and it is written once for all three products: the crawl over containers, the cursor that survives an interrupted run, the sweep that finds what a change feed never reports, and the permission refresh that runs when a channel is made private without a message in it being touched.
 A product adapter answers four questions about its API and gets a connector, which is why a channel somebody restricted this morning costs one write per thread in it rather than a recrawl, and why a thread and a channel that changed in the same second are both emitted exactly once.
 The rule comes from the container, a conversation may override it the way a ticket with a security level on it does, and a container nobody has said anything about quarantines what is in it rather than defaulting to readable.
+
+`connector/slacksource` is the first product on it, and most of what it does is deal with the things Slack does not tell you.
+There is no endpoint for what changed since a time, so a sync reads history back to the cursor and to a reply window as well, because a reply moves nothing but the parent's latest reply and a parent older than the cursor would otherwise never be looked at again.
+A reply older than the window is missed on purpose, and the version in the listing is what makes the sweep repair it, which is the honest version of a source with no change feed.
+Nothing reports that somebody was removed from a private channel either, so membership is reapplied on a schedule as well as when Slack says the channel changed, because a revocation that lands whenever somebody next posts is not a revocation.
+Slack publishes a rate limit per method rather than per token and the published rates differ by a hundred times across the methods one crawl uses, so each tier gets its own bucket and a request is routed by the method it names.
+Direct messages are never asked for rather than asked for and filtered, joins and leaves and topic changes are not documents, and the whole thing is tested twice over: against a fake workspace for behaviour, and against a committed recording of a crawl for the wire format, so nobody needs an account to run the tests.
 
 What a connector is gets decided by `connector/connectortest` rather than by the interface.
 The interface says what compiles, and the suite says what works: that a full sync finds everything, that resuming from a cursor loses nothing that came after it, that a second sync of a source nothing changed in reads nothing, that a deleted document stops being part of the source one way or the other, and that every document says who may read it.

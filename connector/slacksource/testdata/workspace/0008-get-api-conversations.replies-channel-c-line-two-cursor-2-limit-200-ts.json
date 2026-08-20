@@ -1,0 +1,41 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://slack.com/api/conversations.replies?channel=C_LINE_TWO\u0026cursor=2\u0026limit=200\u0026ts=1780000003.000000"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "has_more": false,
+        "messages": [
+          {
+            "latest_reply": "1780000005.000000",
+            "reply_count": 2,
+            "text": "gearbox\nThe gearbox on line two is making a noise under load.",
+            "thread_ts": "1780000003.000000",
+            "ts": "1780000003.000000",
+            "type": "message",
+            "user": "U_MEI"
+          },
+          {
+            "text": "I changed that one on Tuesday, so it should not be.",
+            "thread_ts": "1780000003.000000",
+            "ts": "1780000005.000000",
+            "type": "message",
+            "user": "U_LEE"
+          }
+        ],
+        "ok": true,
+        "response_metadata": {
+          "next_cursor": ""
+        }
+      }
+    }
+  }
+}

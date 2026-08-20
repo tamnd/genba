@@ -1,0 +1,31 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://slack.com/api/conversations.history?channel=C_GENERAL\u0026inclusive=true\u0026limit=200\u0026oldest=0"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "has_more": false,
+        "messages": [
+          {
+            "text": "welcome\nMorning all. Line two is down until the gearbox is looked at.",
+            "ts": "1780000001.000000",
+            "type": "message",
+            "user": "U_MEI"
+          }
+        ],
+        "ok": true,
+        "response_metadata": {
+          "next_cursor": ""
+        }
+      }
+    }
+  }
+}

@@ -156,6 +156,14 @@ var allowed = map[string][]string{
 	// container the product already told us about rather than from a file we were
 	// handed alongside it.
 	"connector/threadsource": {"acl", "connector", "connector/thread", "doc"},
+	// slacksource is a product adapter and sits one level below the crawl it
+	// plugs into, so it names threadsource. It also names limit, because Slack
+	// publishes a different rate per method and a client that respects that is
+	// part of the adapter rather than something a caller assembles. It does not
+	// name extract, ingest or store: what an adapter knows is one product, and
+	// an adapter that knew where its documents were going would be a second
+	// place the pipeline is described.
+	"connector/slacksource": {"acl", "connector", "connector/limit", "connector/thread", "connector/threadsource", "doc"},
 	// recorded imports nothing of ours either. It is a round tripper over a
 	// directory of files, it deals in requests and responses, and it has never
 	// heard of a document or a connector. Keeping it that way is what lets it be
