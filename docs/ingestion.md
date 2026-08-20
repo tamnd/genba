@@ -417,6 +417,53 @@ A conversation too long for the body limit keeps its beginning and its end.
 The root stays because it is what the conversation is about, and the end stays because a thread long enough to be cut is usually one that took a while to work something out, and the working out is at the bottom.
 The document records how many messages were left out, and nothing is written in place of them, because a marker in a body is a phrase in the index that nobody at the source ever typed and it turns up in snippets.
 
+### The crawl the three of them share
+
+Assembling one conversation is the easy half.
+The other half is the crawl around it, and writing that three times produces three connectors that drift apart on exactly the parts that must not drift: the cursor, the resume, the sweep and the permission refresh.
+So it is written once, in `connector/threadsource`, and a product adapter is left with the only thing that is genuinely different, which is how to ask its API.
+
+An adapter answers four questions.
+
+```go
+type Service interface {
+	Containers(ctx context.Context) ([]Container, error)
+	Threads(ctx context.Context, c Container, since time.Time, fn func(context.Context, Thread) error) error
+	List(ctx context.Context, c Container, fn func(connector.Item) bool) error
+	Read(ctx context.Context, id string) (Thread, error)
+}
+```
+
+A container is a channel, a project or a space, and it carries the access rule and the time that rule last changed.
+A thread is a `thread.Conversation` plus the container it is in, an optional rule of its own and the time it last changed.
+All four questions are required, and the last two are the ones worth arguing about: none of these products reports a deletion in a change feed, so a message removed, an issue deleted and a page archived all leave the index holding a document that nothing will ever take away, and the sweep is the only thing that removes it.
+`List` is what the sweep reads and `Read` is what turns it from a report into a repair.
+
+The rule comes from the container, because that is how all three products actually work.
+A private channel is private because of the channel, and a page in a restricted space is restricted because of the space.
+A conversation may override it, which is not an edge case: a ticket with a security level on it is readable by that level's members and nobody else, whatever the project says.
+A container nobody has said anything about quarantines everything in it rather than defaulting to readable, which is the same rule the rest of this document keeps coming back to.
+
+Making a channel private touches no message in it, so a sync that only asked what changed would find nothing and the index would keep answering with the old rule.
+An adapter reports when the rule changed, and when that is newer than the cursor the source lists the container and emits a permission change per conversation in it, carrying the new rule and no body.
+That costs one write per thread rather than a refetch of the channel, and the run after it says nothing, because the rule has not changed again.
+A full sync refreshes nothing, because every conversation it emits already carries the rule its container has right now, and emitting a permission change alongside each one would double the first sync of a workspace to say the same thing twice.
+
+The cursor is a time plus an edge set, and the edge set is what makes it correct.
+Two conversations that changed in the same instant is the case a bare timestamp gets wrong in both directions: asking for what changed strictly after the cursor loses the second one for ever, and asking for what changed at or after it emits both again on every run until something else happens.
+So the cursor asks for at or after and carries the ids already emitted at exactly that instant, capped at a few hundred, and a workspace busy enough to overflow the cap re-emits rather than loses.
+
+The cursor a change carries also records how far the run had got, as a container and a time inside it, while keeping the last completed run's boundary.
+That is what makes an interrupted crawl cheap to resume: the next run skips the containers it had already finished and picks up inside the one it was in.
+The boundary itself does not move mid-run, because advancing it would skip changes in the containers the run had not reached yet.
+
+```go
+src, err := threadsource.New(svc, "chat", threadsource.WithMaxBody(64<<10))
+```
+
+`WithSkipped` is told about a conversation the source could not index, which so far means one that arrived with no id.
+An index quietly missing what nobody could read looks exactly like an index that is complete, and the difference only shows up when somebody cannot find a thread they remember.
+
 ### The conformance suite is the definition
 
 `connector/connectortest` is what a connector has to pass, and it rather than the interface is the definition of one.

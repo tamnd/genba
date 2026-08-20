@@ -317,6 +317,7 @@ func main() {
 | `connector/fssource` | the reference connector, a directory tree with OWNERS files, walked or watched |
 | `connector/objectsource` | an S3 compatible bucket, signed and paged, [docs/ingestion.md](docs/ingestion.md) |
 | `connector/thread` | a conversation and its replies assembled into one document |
+| `connector/threadsource` | the crawl, cursor and permission refresh chat, ticket trackers and wikis share, [docs/ingestion.md](docs/ingestion.md) |
 | `connector/limit` | the rate limit, backoff and circuit breaker every connector shares, as a round tripper |
 | `connector/recorded` | HTTP exchanges captured from a real service and replayed from a directory, so tests need no account |
 | `extract` | text and structure out of PDF, Word, PowerPoint, Excel, HTML and Markdown, [docs/extraction.md](docs/extraction.md) |
@@ -437,6 +438,11 @@ Something is said and then people say things about it: a message and its replies
 An index that copies the source's row per message shape answers badly, because a question about a cancelled order returns fourteen rows from the same conversation and none of them is the answer on its own, while the reply that holds the answer scores nothing for the word in the question because that word was in the message above it.
 So a conversation is one document that ranks as a whole, the author of each message goes into the body in front of what they said, a repeated message is kept once because a paged reply listing repeats the parent on every page, and a thread too long to fit keeps its beginning and its end and says how many messages it left out.
 Nothing is written in place of what was left out, because a marker in a body is a phrase in the index that nobody at the source ever typed.
+
+Assembling one conversation is the easy half.
+`connector/threadsource` is the other half, and it is written once for all three products: the crawl over containers, the cursor that survives an interrupted run, the sweep that finds what a change feed never reports, and the permission refresh that runs when a channel is made private without a message in it being touched.
+A product adapter answers four questions about its API and gets a connector, which is why a channel somebody restricted this morning costs one write per thread in it rather than a recrawl, and why a thread and a channel that changed in the same second are both emitted exactly once.
+The rule comes from the container, a conversation may override it the way a ticket with a security level on it does, and a container nobody has said anything about quarantines what is in it rather than defaulting to readable.
 
 What a connector is gets decided by `connector/connectortest` rather than by the interface.
 The interface says what compiles, and the suite says what works: that a full sync finds everything, that resuming from a cursor loses nothing that came after it, that a second sync of a source nothing changed in reads nothing, that a deleted document stops being part of the source one way or the other, and that every document says who may read it.

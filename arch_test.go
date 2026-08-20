@@ -149,6 +149,13 @@ var allowed = map[string][]string{
 	// that difference is allowed to show up as a dependency: an S3 client of our
 	// own is a file in the package rather than a layer under it.
 	"connector/objectsource": {"acl", "connector", "connector/aclmap", "doc", "extract"},
+	// threadsource is the same level again, and it names thread rather than
+	// extract because a conversation arrives as messages instead of as bytes:
+	// there is nothing to pull text out of, only a shape to assemble. It does not
+	// name aclmap either, because the rule on a conversation comes from the
+	// container the product already told us about rather than from a file we were
+	// handed alongside it.
+	"connector/threadsource": {"acl", "connector", "connector/thread", "doc"},
 	// recorded imports nothing of ours either. It is a round tripper over a
 	// directory of files, it deals in requests and responses, and it has never
 	// heard of a document or a connector. Keeping it that way is what lets it be
