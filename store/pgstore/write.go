@@ -278,9 +278,9 @@ func replace(b *pgx.Batch, d doc.Document, a doc.Analysis) error {
 	b.Queue(`
 		INSERT INTO document (
 			id, tenant, source, kind, container_fold, author_keys, owner_keys,
-			modified_at, mode, owner_key, queryable,
+			modified_at, mode, owner_key, queryable, source_update,
 			title_tokens, body_tokens, container, author_name, terms
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::tsvector)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::tsvector)
 		ON CONFLICT (id) DO UPDATE SET
 			tenant         = excluded.tenant,
 			source         = excluded.source,
@@ -292,6 +292,7 @@ func replace(b *pgx.Batch, d doc.Document, a doc.Analysis) error {
 			mode           = excluded.mode,
 			owner_key      = excluded.owner_key,
 			queryable      = excluded.queryable,
+			source_update  = excluded.source_update,
 			title_tokens   = excluded.title_tokens,
 			body_tokens    = excluded.body_tokens,
 			container      = excluded.container,
@@ -299,7 +300,7 @@ func replace(b *pgx.Batch, d doc.Document, a doc.Analysis) error {
 			terms          = excluded.terms`,
 		d.ID, d.Tenant, d.Source, string(d.Kind),
 		store.Fold(d.Container), nonEmpty(store.PersonKeys(d.Author)), nonEmpty(store.PersonKeys(d.Owner)),
-		nullableNanos(d.ModifiedAt), int16(d.Permissions.Mode), ownerKey, d.Queryable(),
+		nullableNanos(d.ModifiedAt), int16(d.Permissions.Mode), ownerKey, d.Queryable(), d.SourceUpdate,
 		a.TitleTokens, a.BodyTokens, d.Container, d.Author.Display(), terms)
 
 	b.Queue(`

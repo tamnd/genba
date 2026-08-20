@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tamnd/genba/acl"
 )
@@ -50,6 +51,10 @@ type OwnersPolicy struct {
 type owners struct {
 	approvers []string
 	reviewers []string
+
+	// modTime is when the file was last written, which is the answer to
+	// [OwnersPolicy.ChangedAt] for everything the file governs.
+	modTime time.Time
 }
 
 // NewOwnersPolicy returns a policy reading OWNERS files under root.
@@ -84,7 +89,63 @@ func (o *OwnersPolicy) WithFallback(p acl.Permissions) *OwnersPolicy {
 	return o
 }
 
-var _ Policy = (*OwnersPolicy)(nil)
+var (
+	_ Policy    = (*OwnersPolicy)(nil)
+	_ Versioned = (*OwnersPolicy)(nil)
+	_ Reloader  = (*OwnersPolicy)(nil)
+)
+
+// Reload drops the cache so that the next lookup reads the tree again.
+//
+// A source calls this at the start of every walk. Without it a process that
+// stays up for a week answers with the OWNERS files as they were when it
+// started, and a revocation made on Tuesday is applied to nothing. Holding the
+// cache for the length of one walk is what keeps the cost at one read per
+// OWNERS file per sync instead of one per document.
+func (o *OwnersPolicy) Reload() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	clear(o.byDir)
+	clear(o.parsed)
+}
+
+// ChangedAt returns when the OWNERS file governing relPath was last written.
+//
+// A path no OWNERS file governs has no answer and returns the zero time, even
+// when a fallback is set, because a fallback is a constant and a constant never
+// changed.
+func (o *OwnersPolicy) ChangedAt(ctx context.Context, relPath string) (time.Time, error) {
+	if err := ctx.Err(); err != nil {
+		return time.Time{}, err
+	}
+	own, err := o.nearest(relPath)
+	if err != nil || own == nil {
+		return time.Time{}, err
+	}
+	return own.modTime, nil
+}
+
+// nearest walks up from a file's directory to the root and returns the first
+// OWNERS file it finds, or nil.
+//
+// Nearest wins, which is what the convention means and what makes a subtree
+// able to narrow what its parent allowed.
+func (o *OwnersPolicy) nearest(relPath string) (*owners, error) {
+	dir := path.Dir(relPath)
+	for {
+		own, err := o.at(dir)
+		if err != nil {
+			return nil, err
+		}
+		if own != nil {
+			return own, nil
+		}
+		if dir == "." || dir == "/" || dir == "" {
+			return nil, nil
+		}
+		dir = path.Dir(dir)
+	}
+}
 
 // Permissions returns the access control list governing relPath.
 func (o *OwnersPolicy) Permissions(ctx context.Context, relPath string) (acl.Permissions, error) {
@@ -92,22 +153,12 @@ func (o *OwnersPolicy) Permissions(ctx context.Context, relPath string) (acl.Per
 		return acl.Permissions{}, err
 	}
 
-	// Walk up from the file's directory to the root, taking the first OWNERS
-	// file found. Nearest wins, which is what the convention means and what
-	// makes a subtree able to narrow what its parent allowed.
-	dir := path.Dir(relPath)
-	for {
-		own, err := o.at(dir)
-		if err != nil {
-			return acl.Permissions{}, err
-		}
-		if own != nil {
-			return o.permissionsFrom(own), nil
-		}
-		if dir == "." || dir == "/" || dir == "" {
-			break
-		}
-		dir = path.Dir(dir)
+	own, err := o.nearest(relPath)
+	if err != nil {
+		return acl.Permissions{}, err
+	}
+	if own != nil {
+		return o.permissionsFrom(own), nil
 	}
 
 	if o.hasFall {
@@ -152,6 +203,14 @@ func (o *OwnersPolicy) at(dir string) (*owners, error) {
 		return nil, fmt.Errorf("fssource: read %s: %w", full, err)
 	default:
 		own = parseOwners(string(b))
+		// The stat is separate from the read on purpose. Reading first and then
+		// asking how old it is means the time belongs to the bytes that were
+		// parsed, where the other order can record a time for content that was
+		// replaced in between and leave the change invisible until the file is
+		// touched again.
+		if info, err := os.Stat(full); err == nil {
+			own.modTime = info.ModTime()
+		}
 	}
 
 	o.mu.Lock()

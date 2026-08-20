@@ -186,6 +186,63 @@ func TestOwnersDecideWhatAQueryReturns(t *testing.T) {
 	}
 }
 
+// A file somebody deleted has to stop coming back, and a walk of the tree can
+// never see one: there is nothing left to walk past. This is the sweep doing
+// the job the incremental path cannot do at all.
+func TestADeletedFileStopsComingBack(t *testing.T) {
+	root := corpusTree(t)
+	addr := freeAddr(t)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		var out, errOut bytes.Buffer
+		done <- run(ctx, []string{
+			"-addr", addr,
+			"-tenant", "acme",
+			"-corpus", root,
+			"-corpus-name", "handbook",
+			"-corpus-refresh", "100ms",
+			"-log-level", "error",
+		}, env(nil), &out, &errOut)
+	}()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("the server did not shut down")
+		}
+	}()
+
+	waitForHealth(t, "http://"+addr+"/healthz")
+
+	if got := searchAs(t, addr, "alice", "deploying"); got.Total == 0 {
+		t.Fatal("the file was not indexed in the first place")
+	}
+	if err := os.Remove(filepath.Join(root, "guides", "deploy.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if got := searchAs(t, addr, "alice", "deploying"); got.Total == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("a file deleted from the tree is still in the results")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	// And the rest of the corpus is still there, which is the part worth
+	// checking twice. A sweep that deletes too much looks the same in this test
+	// as one that works, right up until nothing can be found.
+	if got := searchAs(t, addr, "alice", "handbook"); got.Total == 0 {
+		t.Error("the sweep removed documents the tree still holds")
+	}
+}
+
 type hit struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`

@@ -275,9 +275,9 @@ func putOne(ctx context.Context, tx *sql.Tx, w *writer, d doc.Document) error {
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO document (
 			id, tenant, source, kind, container_fold, author_keys, owner_keys,
-			modified_at, mode, owner_key, queryable,
+			modified_at, mode, owner_key, queryable, source_update,
 			title_tokens, body_tokens, container, author_name
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			tenant = excluded.tenant,
 			source = excluded.source,
@@ -289,6 +289,7 @@ func putOne(ctx context.Context, tx *sql.Tx, w *writer, d doc.Document) error {
 			mode = excluded.mode,
 			owner_key = excluded.owner_key,
 			queryable = excluded.queryable,
+			source_update = excluded.source_update,
 			title_tokens = excluded.title_tokens,
 			body_tokens = excluded.body_tokens,
 			container = excluded.container,
@@ -296,7 +297,7 @@ func putOne(ctx context.Context, tx *sql.Tx, w *writer, d doc.Document) error {
 		RETURNING rowid`,
 		d.ID, d.Tenant, d.Source, string(d.Kind),
 		store.Fold(d.Container), jsonKeys(store.PersonKeys(d.Author)), jsonKeys(store.PersonKeys(d.Owner)),
-		nullableTime(d.ModifiedAt), int(d.Permissions.Mode), ownerKey, boolInt(d.Queryable()),
+		nullableTime(d.ModifiedAt), int(d.Permissions.Mode), ownerKey, boolInt(d.Queryable()), d.SourceUpdate,
 		a.TitleTokens, a.BodyTokens, d.Container, d.Author.Display(),
 	).Scan(&rowid)
 	if err != nil {

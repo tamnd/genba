@@ -182,6 +182,18 @@ var migrations = []step{
 	) WITHOUT ROWID`),
 	ddl(`INSERT INTO document_data (doc_id, data) SELECT id, data FROM document`),
 	ddl(`ALTER TABLE document DROP COLUMN data`),
+
+	// source_update is the source's own revision for the document, which is
+	// what a reconciliation compares against the revision the source reports
+	// now. It is a column rather than a field read out of the stored JSON
+	// because a reconciliation walks every document of a source and decoding a
+	// four kilobyte document to reach a forty byte string would turn a scan of
+	// an index into a read of the corpus, which is the mistake the split above
+	// was made to avoid.
+	ddl(`ALTER TABLE document ADD COLUMN source_update TEXT NOT NULL DEFAULT ''`),
+	ddl(`UPDATE document SET source_update = COALESCE(
+		(SELECT json_extract(dd.data, '$.SourceUpdate') FROM document_data dd WHERE dd.doc_id = document.id), '')`),
+	ddl(`CREATE INDEX document_tenant_source ON document (tenant, source)`),
 }
 
 // backfill recomputes the ranking statistics for every document already stored.

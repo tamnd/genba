@@ -308,6 +308,10 @@ The mode bits describe the account the crawler runs as, not the people in the co
 `OwnersPolicy` reads the OWNERS files that Kubernetes and a number of other large repositories keep, taking the nearest one going up the tree, which is a real access control list maintained by real people over a corpus anybody can check out.
 A source built with no policy at all quarantines everything, so having not thought about permissions yet is a visible state in the stats rather than an invisible one in the index.
 
+Everything after the first sync is incremental.
+A second run over an unchanged tree reads no files at all, an OWNERS edit costs one write per document rather than a recrawl of the subtree, and a reconciliation sweep after every sync catches what a change feed cannot report, starting with the file somebody deleted.
+[docs/ingestion.md](docs/ingestion.md) has the details, including the optional capabilities a connector implements to get each of those and the rule that stops a timed out enumeration from emptying a working index.
+
 ## Storage
 
 The interface in `store` is deliberately narrow, and a driver passes or fails one conformance suite.

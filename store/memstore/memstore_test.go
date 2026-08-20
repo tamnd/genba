@@ -14,6 +14,10 @@ func TestConformance(t *testing.T) {
 	storetest.Run(t, newStore)
 }
 
+func TestMaintenanceConformance(t *testing.T) {
+	storetest.RunMaintenance(t, newStore)
+}
+
 // memstore implements store.Statistician and neither of the other two, so most
 // of this suite skips. The cases that do run are the ones that matter here: the
 // corpus statistics are what the ranking is normalised against, and they have

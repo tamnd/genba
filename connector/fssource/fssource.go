@@ -43,6 +43,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -95,6 +96,46 @@ func PublicToTenant(source string) Policy {
 	})
 }
 
+// Versioned is the optional capability of a [Policy] that can say when its
+// answer for a path last changed.
+//
+// It is what turns a permission change into a write instead of a recrawl. A
+// sync that only compares modification times cannot see one at all: the file
+// did not change, the rule above it did. A policy that implements this is asked
+// about every file the walk decided to skip, and the ones whose rule moved get
+// a permissions only change.
+//
+// The answer has to be cheap. It is asked once per unchanged file, which on a
+// large tree is once per file, so anything that costs a read has to be cached
+// for the length of the walk.
+type Versioned interface {
+	// ChangedAt returns when the rule governing relPath last changed. A zero
+	// time means the policy has no rule for it, or has no idea, and nothing is
+	// refreshed on the strength of it.
+	ChangedAt(ctx context.Context, relPath string) (time.Time, error)
+}
+
+// Reloader is the optional capability of a [Policy] that caches.
+//
+// A source calls it once at the start of every walk. That is the contract the
+// caching in a policy is allowed to assume: answers may be held for the length
+// of one sync and must not be held across two, because the thing a later sync
+// exists to notice is exactly the edit that would invalidate them.
+type Reloader interface {
+	Reload()
+}
+
+// counters is what a source spent on the filesystem.
+//
+// The fields are atomic because [connector.Counted] promises a reading can be
+// taken while a sync is running, which is when an operator most wants one.
+type counters struct {
+	lists    atomic.Int64
+	metadata atomic.Int64
+	fetches  atomic.Int64
+	bytes    atomic.Int64
+}
+
 // Source reads documents out of a directory tree.
 type Source struct {
 	root   string
@@ -106,6 +147,8 @@ type Source struct {
 	skipDir   func(name string) bool
 	includeIf func(name string) bool
 	skipped   func(path string, reason error)
+
+	counters counters
 }
 
 // Option configures a source.
@@ -232,39 +275,17 @@ func (s *Source) Sync(ctx context.Context, from connector.Cursor, emit func(cont
 		return connector.Cursor{}, err
 	}
 
-	var highest time.Time
-	walkErr := filepath.WalkDir(s.root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			// A directory that disappeared under the walk, or one this process
-			// may not read, is a fact about the tree rather than a reason to
-			// abandon the sync.
-			if d != nil && d.IsDir() {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if p != s.root && s.skipDir(d.Name()) {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if !d.Type().IsRegular() || !s.includeIf(d.Name()) {
-			return nil
-		}
+	// A policy that caches its answers is told the walk is starting, so that an
+	// OWNERS file edited since the last run is read again. Without this a long
+	// running process would keep serving the access control list the tree had
+	// when it started, which is the failure mode where a revocation appears to
+	// have been applied and has not.
+	if r, ok := s.policy.(Reloader); ok {
+		r.Reload()
+	}
 
-		info, err := d.Info()
-		if err != nil {
-			s.skipped(p, err)
-			return nil
-		}
-		if limit := s.limitFor(d.Name()); info.Size() > limit {
-			s.skipped(p, fmt.Errorf("%d bytes is over the limit of %d", info.Size(), limit))
-			return nil
-		}
+	var highest time.Time
+	walkErr := s.walk(ctx, func(rel string, info fs.FileInfo) error {
 		mod := info.ModTime()
 		if mod.After(highest) {
 			highest = mod
@@ -272,24 +293,22 @@ func (s *Source) Sync(ctx context.Context, from connector.Cursor, emit func(cont
 		// Not After rather than Before, so a file written in the same
 		// nanosecond as the cursor is not emitted twice on every later run.
 		if !since.IsZero() && !mod.After(since) {
-			return nil
+			at, err := s.refresh(ctx, rel, since, emit)
+			if at.After(highest) {
+				highest = at
+			}
+			return err
 		}
 
-		rel, err := filepath.Rel(s.root, p)
+		full := filepath.Join(s.root, filepath.FromSlash(rel))
+		document, err := s.read(ctx, full, rel, info)
 		if err != nil {
-			s.skipped(p, err)
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
-
-		document, err := s.read(ctx, p, rel, info)
-		if err != nil {
-			s.skipped(p, err)
+			s.skipped(full, err)
 			return nil
 		}
 		return emit(ctx, connector.Change{
 			Document: document,
-			Cursor:   connector.Cursor{Value: mod.UTC().Format(time.RFC3339Nano), Time: mod},
+			Cursor:   connector.Cursor{Value: version(mod), Time: mod},
 		})
 	})
 	if walkErr != nil {
@@ -299,7 +318,57 @@ func (s *Source) Sync(ctx context.Context, from connector.Cursor, emit func(cont
 	if highest.IsZero() {
 		return from, nil
 	}
-	return connector.Cursor{Value: highest.UTC().Format(time.RFC3339Nano), Time: highest}, nil
+	return connector.Cursor{Value: version(highest), Time: highest}, nil
+}
+
+// refresh emits a permission change for a file whose content did not change but
+// whose access control list did, and returns when that rule last changed.
+//
+// This is the whole of "a permission change takes effect without a content
+// recrawl" on a filesystem. Access here does not live on the file, it lives in
+// the OWNERS file above it, and editing one of those changes who may read every
+// document in a subtree without touching a single one of them. A sync that only
+// looks at modification times sees nothing at all, and the index keeps serving
+// the old answer until somebody notices.
+//
+// What it costs is one policy lookup per unchanged file, which for the OWNERS
+// policy is a map read after the first file in each directory. What it saves is
+// reading the subtree.
+func (s *Source) refresh(ctx context.Context, rel string, since time.Time, emit func(context.Context, connector.Change) error) (time.Time, error) {
+	versioned, ok := s.policy.(Versioned)
+	if !ok {
+		return time.Time{}, nil
+	}
+	at, err := versioned.ChangedAt(ctx, rel)
+	if err != nil {
+		// A policy that cannot answer for one path is not a reason to abandon the
+		// tree, for the same reason a file that cannot be read is not. It is
+		// reported and the walk carries on, and the document keeps the access
+		// control list it already had until something can say otherwise.
+		s.skipped(rel, err)
+		return time.Time{}, nil
+	}
+	if at.IsZero() || !at.After(since) {
+		return at, nil
+	}
+
+	perms, err := s.policy.Permissions(ctx, rel)
+	if err != nil {
+		// The rule that used to govern this file stopped resolving. Quarantining
+		// is the only safe reading: a document nobody can currently say who may
+		// read is not a document to keep serving on last week's answer.
+		perms = connector.Unresolved(s.name)
+		s.skipped(rel, err)
+	}
+	return at, emit(ctx, connector.Change{
+		Document:        doc.Document{ID: s.id(rel), Permissions: perms},
+		PermissionsOnly: true,
+		// No cursor. The time this change is derived from belongs to a file
+		// somewhere else in the tree, quite possibly one the walk has not
+		// reached, so it is not a statement about how far this walk got. The end
+		// of walk cursor covers it, and a run interrupted before that repeats the
+		// refresh, which costs one write.
+	})
 }
 
 // limitFor is the size limit that applies to one file name. An image gets the
@@ -313,10 +382,12 @@ func (s *Source) limitFor(name string) int64 {
 
 // read turns one file into a document.
 func (s *Source) read(ctx context.Context, full, rel string, info fs.FileInfo) (doc.Document, error) {
+	s.counters.fetches.Add(1)
 	raw, err := os.ReadFile(full)
 	if err != nil {
 		return doc.Document{}, err
 	}
+	s.counters.bytes.Add(int64(len(raw)))
 
 	picture := isImage(rel)
 	// A file that is not valid UTF-8 and is not an image we recognise is a
@@ -361,7 +432,7 @@ func (s *Source) read(ctx context.Context, full, rel string, info fs.FileInfo) (
 		Container:    containerOf(rel),
 		ModifiedAt:   info.ModTime(),
 		CreatedAt:    info.ModTime(),
-		SourceUpdate: info.ModTime().UTC().Format(time.RFC3339Nano),
+		SourceUpdate: version(info.ModTime()),
 		Permissions:  perms,
 		Properties: map[string]string{
 			"path":        rel,
