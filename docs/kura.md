@@ -39,6 +39,21 @@ A checked in binary is a binary nobody can review and a build nobody can reprodu
 
 `KURA_REPO`, `KURA_REF` and `KURA_SRC` override where it comes from, which is what you want when testing a change to the engine alongside a change here.
 
+## The engine version is pinned
+
+`REF` in `scripts/kura.sh` is a commit, not a branch.
+
+A build that tracks a branch is not reproducible: two machines a day apart get two different engines, and the tests that pass on one are not evidence about the other.
+It is also a way for a commit in the engine repository to turn CI red on whichever pull request here happens to be open, which points the blame at the wrong change and teaches people to ignore a check.
+That is not hypothetical, it is [#83](https://github.com/tamnd/genba/issues/83).
+
+Bumping the engine is a commit here like any other.
+Change the line, run `make kura && make kura-test`, and open a pull request, which is what makes the tests run against the new engine before it lands rather than after.
+The CI cache key hashes `scripts/kura.sh`, so a bump cannot be served a build of the previous engine.
+
+The ABI is stable but the encodings behind it are not yet, so a bump is sometimes a change to `store/kura` as well.
+That is the review the pin exists to force.
+
 ## What the ABI covers
 
 | Area | What is there |
