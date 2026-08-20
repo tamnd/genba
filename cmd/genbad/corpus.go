@@ -5,14 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"runtime"
 	"time"
 
-	"github.com/tamnd/genba"
-	"github.com/tamnd/genba/connector"
-	"github.com/tamnd/genba/connector/aclmap"
 	"github.com/tamnd/genba/connector/fssource"
-	"github.com/tamnd/genba/ingest"
 	"github.com/tamnd/genba/store"
 )
 
@@ -185,85 +180,22 @@ func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant
 		return nil, err
 	}
 
-	// Checkpoints live in memory because the only storage driver that ships
-	// today does too. Restarting loses the index, so a cursor that survived the
-	// restart would skip everything the new empty index needs.
-	pipeline, err := ingest.New(st, connector.NewMemoryCheckpoints(), ingest.WithLogger(log))
-	if err != nil {
-		return nil, err
-	}
-
-	var swept time.Time
-	sync := func(ctx context.Context) {
-		var before, after runtime.MemStats
-		runtime.ReadMemStats(&before)
-
-		stats, err := pipeline.Run(ctx, genba.TenantID(tenant), src)
-		if err != nil {
-			log.Error("corpus sync failed", "dir", cfg.Dir, "error", err,
-				"indexed", stats.Indexed, "quarantined", stats.Quarantined)
-			return
-		}
-		runtime.ReadMemStats(&after)
-
-		log.Info("corpus synced", append([]any{
-			"dir", cfg.Dir,
-			"source", cfg.Name,
-			"indexed", stats.Indexed,
-			"quarantined", stats.Quarantined,
-			"bytes", stats.Bytes,
-			"duration", stats.Duration.Round(time.Millisecond),
-			"docs_per_second", int(stats.Rate()),
-			"mb_per_second", throughput(stats.Bytes, stats.Duration),
-			// What the corpus costs to hold, and what it cost to build. The
-			// first is the number that decides how much a machine can serve,
-			// and the second is the one that shows up as garbage collection.
-			"heap_mb", megabytes(int64(after.HeapAlloc)),
-			"allocated_mb", megabytes(int64(after.TotalAlloc - before.TotalAlloc)),
-		}, watching(watcher)...)...)
-
-		// The sweep walks the tree, so on a server that is watching it is the
-		// whole of what a refresh costs. Running it on its own interval is what
-		// lets a change be noticed in a second while both sides are still
-		// counted often enough to catch what the watcher missed.
-		if cfg.Reconcile <= 0 || time.Since(swept) >= cfg.Reconcile {
-			swept = time.Now()
-			reconcile(ctx, pipeline, src, tenant, log)
-		}
-		reportMapping(policy, log)
-	}
-
-	sync(ctx)
-
-	stop := func() {
-		if watcher != nil {
-			_ = watcher.Close()
-		}
-		_ = src.Close()
-	}
-
-	if cfg.Refresh <= 0 {
-		return stop, nil
-	}
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		t := time.NewTicker(cfg.Refresh)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				sync(ctx)
+	return runFeed(ctx, st, feed{
+		Kind:      "corpus",
+		Source:    src,
+		Tenant:    tenant,
+		Refresh:   cfg.Refresh,
+		Reconcile: cfg.Reconcile,
+		Fields:    []any{"dir", cfg.Dir, "source", cfg.Name},
+		Report:    func() []any { return watching(watcher) },
+		Policy:    policy,
+		Release: func() {
+			if watcher != nil {
+				_ = watcher.Close()
 			}
-		}
-	}()
-	return func() {
-		<-done
-		stop()
-	}, nil
+			_ = src.Close()
+		},
+	}, log)
 }
 
 // watching is what the watcher has to say, for the sync log line.
@@ -283,98 +215,4 @@ func watching(w *fssource.Watcher) []any {
 		out = append(out, "walking_because", s.Reason)
 	}
 	return out
-}
-
-// aclCounter is a permission policy that counts what it mapped.
-type aclCounter interface {
-	Counts() aclmap.Counts
-}
-
-// reportMapping says what the permission mapping could not represent.
-//
-// A document held back because its source said something the model cannot carry
-// is invisible from every other angle. It is not an error, the sync succeeded,
-// and the only symptom is somebody who cannot find a document they know exists.
-// So it is counted by reason, and the reasons want different actions: a foreign
-// domain is a decision about the tenant, an unmappable deny is usually a source
-// feature nobody has written the mapping for, and a malformed grant is a bug in
-// a connector.
-func reportMapping(policy fssource.Policy, log *slog.Logger) {
-	counter, ok := policy.(aclCounter)
-	if !ok {
-		return
-	}
-	c := counter.Counts()
-	if c.Quarantined() == 0 {
-		return
-	}
-	log.Warn("permissions that could not be mapped",
-		"mapped", c.Mapped,
-		"quarantined", c.Quarantined(),
-		"foreign_domain", c.ForeignDomain,
-		"unmappable_deny", c.UnmappableDeny,
-		"malformed", c.Malformed,
-		"ignored_roles", c.Ignored,
-	)
-}
-
-// reconcile sweeps the index against the tree and repairs what the sync could
-// not have seen.
-//
-// It runs after every sync rather than on a schedule of its own, and the reason
-// is that a directory tree has no change feed. A sync walks the tree and emits
-// what is newer than the cursor, which means a file somebody deleted produces
-// no event at all: there is nothing left to walk past. Without this the deleted
-// document stays in the index and keeps being served, and the only thing that
-// would ever remove it is a restart.
-//
-// The cost is a second walk of the same tree, stat only, plus a two column scan
-// of the index. On a corpus where the sync itself is already a stat per file
-// that is roughly double the cheap half of the work and none of the expensive
-// half, which is the right trade for the alternative being an index that serves
-// documents that no longer exist.
-func reconcile(ctx context.Context, pipeline *ingest.Pipeline, src connector.Connector, tenant string, log *slog.Logger) {
-	rec, err := pipeline.Reconcile(ctx, genba.TenantID(tenant), src)
-	if err != nil {
-		// Not fatal, and not even unusual. A store that cannot list what it holds
-		// or a connector that cannot enumerate simply has no sweep, and the sync
-		// that just finished is still good.
-		log.Warn("corpus reconciliation skipped", "source", src.Source(), "error", err)
-		return
-	}
-	if rec.Drift() == 0 {
-		return
-	}
-	// Logged at warning level because drift is the interesting event. An index
-	// that agrees with its source produces nothing here, so a line in the log
-	// means the incremental path missed something and is worth going to look at.
-	log.Warn("corpus reconciled",
-		"source", rec.Source,
-		"source_items", rec.SourceItems,
-		"index_items", rec.IndexItems,
-		"missing", rec.Missing.Count,
-		"stale", rec.Stale.Count,
-		"extra", rec.Extra.Count,
-		"repaired", rec.Repaired,
-		"deleted", rec.Deleted,
-		"sample_missing", rec.Missing.IDs,
-		"sample_stale", rec.Stale.IDs,
-		"sample_extra", rec.Extra.IDs,
-		"requests", rec.Requests.Requests(),
-		"duration", rec.Duration.Round(time.Millisecond),
-	)
-}
-
-// megabytes converts a byte count for the log.
-func megabytes(n int64) float64 {
-	return float64(n) / (1 << 20)
-}
-
-// throughput is megabytes a second, and zero for a run too short for the clock
-// to have moved, which would otherwise divide by zero and log an infinity.
-func throughput(bytes int64, d time.Duration) float64 {
-	if d <= 0 {
-		return 0
-	}
-	return megabytes(bytes) / d.Seconds()
 }

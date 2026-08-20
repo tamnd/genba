@@ -79,11 +79,28 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	fs.BoolVar(&corpus.Watch, "corpus-watch", false, "ask the operating system what changed instead of walking the tree, needs -corpus-refresh")
 	fs.DurationVar(&corpus.Reconcile, "corpus-reconcile", 0, "how often to sweep the index against the directory, zero for after every sync")
 
+	var bucket bucketOptions
+	fs.StringVar(&bucket.Bucket, "bucket", "", "S3 compatible bucket to index at startup")
+	fs.StringVar(&bucket.Endpoint, "bucket-endpoint", "", "base URL of the object storage service, for example https://s3.eu-west-1.amazonaws.com")
+	fs.StringVar(&bucket.Region, "bucket-region", "us-east-1", "region the bucket is in, which is part of what a signature authenticates")
+	fs.StringVar(&bucket.Prefix, "bucket-prefix", "", "read only the keys under this prefix, empty for the whole bucket")
+	fs.StringVar(&bucket.Name, "bucket-name", "objects", "source name the indexed objects carry")
+	fs.StringVar(&bucket.ACL, "bucket-acl", aclTenant, "who may read the objects: tenant, bucket or object")
+	fs.StringVar(&bucket.Identity, "bucket-identity", "", "identity source the names in the access control lists belong to, for -bucket-acl bucket or object")
+	fs.StringVar(&bucket.Domain, "bucket-domain", "", "mail domain that counts as this tenant in a grant written against an address, empty for none")
+	fs.BoolVar(&bucket.PathStyle, "bucket-path-style", false, "put the bucket in the path rather than in the host name, which MinIO and Ceph need")
+	fs.DurationVar(&bucket.Refresh, "bucket-refresh", 0, "how often to list the bucket again, zero for once")
+	fs.DurationVar(&bucket.Reconcile, "bucket-reconcile", 0, "how often to sweep the index against the bucket, zero for after every sync")
+
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "genbad runs the genba server.\n\nUsage:\n  genbad [flags]\n\nFlags:\n")
 		fs.PrintDefaults()
-		fmt.Fprintf(stderr, "\nEvery flag also has an environment variable, named GENBA_ plus the flag in upper case.\n")
+		fmt.Fprintf(stderr, "\nThe server flags also have environment variables, named GENBA_ plus the flag in upper case.\n")
+		fmt.Fprintf(stderr, "The corpus and bucket flags do not, because what to index is typed once rather than deployed.\n")
+		fmt.Fprintf(stderr, "Object storage credentials are the other way round and are read only from AWS_ACCESS_KEY_ID,\n")
+		fmt.Fprintf(stderr, "AWS_SECRET_ACCESS_KEY and AWS_SESSION_TOKEN, because a secret in argv is readable by every\n")
+		fmt.Fprintf(stderr, "process on the machine.\n")
 	}
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -96,6 +113,10 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return err
 	}
 	if err := corpus.validate(); err != nil {
+		return err
+	}
+	bucket.credentials(getenv)
+	if err := bucket.validate(); err != nil {
 		return err
 	}
 
@@ -111,13 +132,22 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		}
 	}()
 
-	// The first sync runs here, before the listener opens, so that the server is
-	// useful the moment it says it is up.
+	// The first sync of each source runs here, before the listener opens, so
+	// that the server is useful the moment it says it is up. A server pointed at
+	// both indexes both, and the two are separate feeds with separate cursors
+	// rather than one merged crawl, because a bucket that is refusing requests
+	// should not stop a directory being reindexed.
 	waitForCorpus, err := ingestCorpus(ctx, st, corpus, cfg.Tenant, log)
 	if err != nil {
 		return err
 	}
 	defer waitForCorpus()
+
+	waitForBucket, err := ingestBucket(ctx, st, bucket, cfg.Tenant, log)
+	if err != nil {
+		return err
+	}
+	defer waitForBucket()
 
 	opts := []api.Option{api.WithLogger(log)}
 	if h := web.Handler(); h != nil {
