@@ -259,6 +259,19 @@ func TestAnOwnersEditIsAPermissionChangeAndNotARecrawl(t *testing.T) {
 		"other/OWNERS":   "approvers:\n  - carol\n",
 		"other/notes.md": "# notes\n",
 	})
+	// The OWNERS files are backdated because they are not part of the corpus and
+	// so never contribute to the cursor, which is the highest modification time
+	// the walk saw. Written in the same instant as the documents they govern,
+	// whether one of them lands a microsecond either side of that cursor is down
+	// to the order a map was ranged over, and the second sync would refresh a
+	// subtree nobody edited for reasons that have nothing to do with the test.
+	old := time.Now().Add(-time.Hour)
+	for _, rel := range []string{"OWNERS", "other/OWNERS"} {
+		if err := os.Chtimes(filepath.Join(root, filepath.FromSlash(rel)), old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	policy, err := fssource.NewOwnersPolicy(root, "repo", "github")
 	if err != nil {
 		t.Fatal(err)

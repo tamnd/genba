@@ -308,6 +308,12 @@ The mode bits describe the account the crawler runs as, not the people in the co
 `OwnersPolicy` reads the OWNERS files that Kubernetes and a number of other large repositories keep, taking the nearest one going up the tree, which is a real access control list maintained by real people over a corpus anybody can check out.
 A source built with no policy at all quarantines everything, so having not thought about permissions yet is a visible state in the stats rather than an invisible one in the index.
 
+What a source said about who may read a document is turned into the model in one place, `connector/aclmap`, rather than once per connector.
+Every system names permissions differently, and the same idea is a `reader` in one, `READ` in another, `VIEW` in a third and `BROWSE_PROJECTS` in a fourth.
+Mapping each of those is easy on its own, and the collection of them is where a search engine leaks, because every connector would otherwise decide on its own what a grant to a partner's domain means and what to do with a statement it does not understand.
+So a refusal beats a grant everywhere, a link share is recorded rather than inferred from the absence of a restriction, and anything that cannot be represented faithfully is quarantined and counted by reason instead of approximated.
+[docs/permissions.md](docs/permissions.md) has the mapping table for each source and the reasoning behind the awkward cases.
+
 Everything after the first sync is incremental.
 A second run over an unchanged tree reads no files at all, an OWNERS edit costs one write per document rather than a recrawl of the subtree, and a reconciliation sweep after every sync catches what a change feed cannot report, starting with the file somebody deleted.
 [docs/ingestion.md](docs/ingestion.md) has the details, including the optional capabilities a connector implements to get each of those and the rule that stops a timed out enumeration from emptying a working index.

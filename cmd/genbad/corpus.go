@@ -10,6 +10,7 @@ import (
 
 	"github.com/tamnd/genba"
 	"github.com/tamnd/genba/connector"
+	"github.com/tamnd/genba/connector/aclmap"
 	"github.com/tamnd/genba/connector/fssource"
 	"github.com/tamnd/genba/ingest"
 	"github.com/tamnd/genba/store"
@@ -145,6 +146,7 @@ func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant
 		)
 
 		reconcile(ctx, pipeline, src, tenant, log)
+		reportMapping(policy, log)
 	}
 
 	sync(ctx)
@@ -171,6 +173,39 @@ func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant
 		<-done
 		_ = src.Close()
 	}, nil
+}
+
+// aclCounter is a permission policy that counts what it mapped.
+type aclCounter interface {
+	Counts() aclmap.Counts
+}
+
+// reportMapping says what the permission mapping could not represent.
+//
+// A document held back because its source said something the model cannot carry
+// is invisible from every other angle. It is not an error, the sync succeeded,
+// and the only symptom is somebody who cannot find a document they know exists.
+// So it is counted by reason, and the reasons want different actions: a foreign
+// domain is a decision about the tenant, an unmappable deny is usually a source
+// feature nobody has written the mapping for, and a malformed grant is a bug in
+// a connector.
+func reportMapping(policy fssource.Policy, log *slog.Logger) {
+	counter, ok := policy.(aclCounter)
+	if !ok {
+		return
+	}
+	c := counter.Counts()
+	if c.Quarantined() == 0 {
+		return
+	}
+	log.Warn("permissions that could not be mapped",
+		"mapped", c.Mapped,
+		"quarantined", c.Quarantined(),
+		"foreign_domain", c.ForeignDomain,
+		"unmappable_deny", c.UnmappableDeny,
+		"malformed", c.Malformed,
+		"ignored_roles", c.Ignored,
+	)
 }
 
 // reconcile sweeps the index against the tree and repairs what the sync could

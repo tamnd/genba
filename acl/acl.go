@@ -114,6 +114,56 @@ const (
 	ModeOwnerOnly
 )
 
+// Sharing records how far a source said a document travels, beyond the people
+// its lists name.
+//
+// It grants nothing. [Permissions.Allows] never reads it and no storage driver
+// filters on it, because by the time a descriptor is stored the effective grant
+// is already in the mode and the lists. What it is for is saying so out loud.
+//
+// A document that anybody can read because somebody turned on a link is a
+// different fact from a document that anybody can read because somebody named
+// them, and an index that records only the second cannot answer the question an
+// administrator actually asks, which is what did we share and with whom. The
+// absence of a restriction is not a record of a decision, so the decision is
+// recorded.
+type Sharing uint8
+
+// The sharing states.
+const (
+	// SharedNone is a document readable only through its lists. It is the
+	// default and it is what almost everything is.
+	SharedNone Sharing = iota
+
+	// SharedByLink is a document its source says anybody holding a link may
+	// read.
+	//
+	// Whether that counts as a grant in the index is a deployment's decision
+	// and not this package's, because the two readings are both defensible and
+	// they are not the same. Somebody who has the link was given it. Somebody
+	// searching was not, and turning a link share into a search result hands
+	// the document to everybody who never had one.
+	SharedByLink
+
+	// SharedPublic is a document its source says is readable outside the
+	// tenant entirely, such as one published on the internet.
+	SharedPublic
+)
+
+// String returns the name of the sharing state.
+func (s Sharing) String() string {
+	switch s {
+	case SharedNone:
+		return "none"
+	case SharedByLink:
+		return "link"
+	case SharedPublic:
+		return "public"
+	default:
+		return "unknown"
+	}
+}
+
 // Ref names a user or a group inside one source.
 type Ref struct {
 	Source string
@@ -129,6 +179,10 @@ type Permissions struct {
 	AllowGroups []Ref
 	DenyUsers   []Ref
 	DenyGroups  []Ref
+
+	// Sharing is how far the source said the document travels. It is a record
+	// rather than a rule, and the comment on [Sharing] says why.
+	Sharing Sharing
 
 	// Source is the connector the document came from.
 	Source string
