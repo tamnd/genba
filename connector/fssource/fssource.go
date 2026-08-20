@@ -50,6 +50,7 @@ import (
 	"github.com/tamnd/genba/acl"
 	"github.com/tamnd/genba/connector"
 	"github.com/tamnd/genba/doc"
+	"github.com/tamnd/genba/extract"
 )
 
 // DefaultMaxFileSize is the largest file read into a document body.
@@ -64,6 +65,16 @@ const DefaultMaxFileSize = 1 << 20
 // about different things. A one megabyte text file is almost certainly not
 // prose. A one megabyte screenshot is a screenshot.
 const DefaultMaxImageSize = 4 << 20
+
+// DefaultMaxDocumentSize is the largest PDF or Office file read for extraction.
+//
+// It is the third limit for the same reason there is a second one. A one
+// megabyte text file is almost certainly not prose and a one megabyte
+// screenshot is a screenshot, and an eight megabyte PDF is an ordinary report
+// with a chart in it. The bytes here are compressed and the text inside is a
+// fraction of them, so the number that actually bounds the work is
+// [extract.Options.MaxDecompressed] rather than this one.
+const DefaultMaxDocumentSize = 16 << 20
 
 // Policy decides who may read a file.
 //
@@ -144,6 +155,7 @@ type Source struct {
 
 	maxSize   int64
 	maxImage  int64
+	maxDoc    int64
 	skipDir   func(name string) bool
 	includeIf func(name string) bool
 	skipped   func(path string, reason error)
@@ -190,6 +202,16 @@ func WithMaxImageSize(n int64) Option {
 	return func(s *Source) {
 		if n > 0 {
 			s.maxImage = n
+		}
+	}
+}
+
+// WithMaxDocumentSize sets the largest PDF or Office file that will be read for
+// extraction. A value below one selects [DefaultMaxDocumentSize].
+func WithMaxDocumentSize(n int64) Option {
+	return func(s *Source) {
+		if n > 0 {
+			s.maxDoc = n
 		}
 	}
 }
@@ -245,6 +267,7 @@ func New(root, name string, policy Policy, opts ...Option) (*Source, error) {
 		policy:    policy,
 		maxSize:   DefaultMaxFileSize,
 		maxImage:  DefaultMaxImageSize,
+		maxDoc:    DefaultMaxDocumentSize,
 		skipDir:   defaultSkipDir,
 		includeIf: defaultInclude,
 		skipped:   func(string, error) {},
@@ -372,12 +395,17 @@ func (s *Source) refresh(ctx context.Context, rel string, since time.Time, emit 
 }
 
 // limitFor is the size limit that applies to one file name. An image gets the
-// image limit and everything else gets the body limit.
+// image limit, a file that has to be extracted gets the document limit, and
+// everything else gets the body limit.
 func (s *Source) limitFor(name string) int64 {
-	if isImage(name) {
+	switch {
+	case isImage(name):
 		return s.maxImage
+	case isExtractable(name):
+		return s.maxDoc
+	default:
+		return s.maxSize
 	}
-	return s.maxSize
 }
 
 // read turns one file into a document.
@@ -390,10 +418,11 @@ func (s *Source) read(ctx context.Context, full, rel string, info fs.FileInfo) (
 	s.counters.bytes.Add(int64(len(raw)))
 
 	picture := isImage(rel)
-	// A file that is not valid UTF-8 and is not an image we recognise is a
-	// binary this connector has no business pretending to have read. Extraction
-	// of real binary formats is a separate job with separate failure modes.
-	if !picture && !utf8.Valid(raw) {
+	document := isExtractable(rel)
+	// A file that is not valid UTF-8, is not an image we recognise and is not a
+	// format the extractor reads is a binary this connector has no business
+	// pretending to have read.
+	if !picture && !document && !utf8.Valid(raw) {
 		return doc.Document{}, errors.New("not text")
 	}
 
@@ -411,22 +440,63 @@ func (s *Source) read(ctx context.Context, full, rel string, info fs.FileInfo) (
 	var (
 		text    string
 		content *doc.Content
+		title   string
+		media   = mediaTypeOf(rel)
+		pages   int
+		partial bool
 	)
+	switch {
 	// An image has no body. Its file name is what a query can match, which is
 	// how somebody finds architecture.png by typing architecture, and the bytes
 	// are what the preview shows.
-	if picture {
+	case picture:
 		content = &doc.Content{Bytes: raw}
 		content.Width, content.Height = pixels(raw)
-	} else {
+
+	case document:
+		out, err := extract.Extract(ctx, bytes.NewReader(raw), rel)
+		if err != nil {
+			// One unreadable file is one document skipped and reported, the
+			// same as a file whose permission was revoked between the listing
+			// and the read. A hostile PDF does not cost the walk the hundred
+			// thousand files after it.
+			return doc.Document{}, err
+		}
+		text, title, pages, partial = out.Text, out.Title, out.Pages, out.Truncated
+		if out.Media != "" {
+			// What the bytes say beats what the extension says, because the
+			// extension is whatever somebody typed when they saved the file.
+			media = out.Media
+		}
+
+	default:
 		text = string(raw)
 	}
 
 	kind := kindOf(rel)
+	if title == "" {
+		title = titleOf(rel, text, kind)
+	}
+	props := map[string]string{
+		"path":        rel,
+		"extension":   strings.TrimPrefix(path.Ext(rel), "."),
+		doc.MediaType: media,
+		"size_bytes":  strconv.FormatInt(info.Size(), 10),
+	}
+	if pages > 0 {
+		props["pages"] = strconv.Itoa(pages)
+	}
+	if partial {
+		// The body is a prefix of the document rather than the whole of it, and
+		// a reader that cannot tell the difference will report a document as
+		// missing a phrase that is in it.
+		props["truncated"] = "true"
+	}
+
 	return doc.Document{
 		ID:           s.name + ":" + rel,
 		Kind:         kind,
-		Title:        titleOf(rel, text, kind),
+		Title:        title,
 		Body:         text,
 		URL:          "file://" + filepath.ToSlash(full),
 		Container:    containerOf(rel),
@@ -434,13 +504,8 @@ func (s *Source) read(ctx context.Context, full, rel string, info fs.FileInfo) (
 		CreatedAt:    info.ModTime(),
 		SourceUpdate: version(info.ModTime()),
 		Permissions:  perms,
-		Properties: map[string]string{
-			"path":        rel,
-			"extension":   strings.TrimPrefix(path.Ext(rel), "."),
-			doc.MediaType: mediaTypeOf(rel),
-			"size_bytes":  strconv.FormatInt(info.Size(), 10),
-		},
-		Content: content,
+		Properties:   props,
+		Content:      content,
 	}, nil
 }
 
@@ -572,6 +637,10 @@ var mediaTypes = map[string]string{
 	".toml":     "text/x-toml",
 	".json":     "application/json",
 	".proto":    "text/x-protobuf",
+	".pdf":      "application/pdf",
+	".docx":     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	".pptx":     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	".xlsx":     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 	".png":      "image/png",
 	".jpg":      "image/jpeg",
 	".jpeg":     "image/jpeg",
@@ -596,6 +665,21 @@ func isImage(name string) bool {
 	return strings.HasPrefix(mediaTypeOf(name), "image/")
 }
 
+// isExtractable reports whether a file name is a format whose text has to be
+// extracted rather than read.
+//
+// The name is what decides, not the bytes, because the decision is taken during
+// the walk from a directory entry and a size, before anything has been opened.
+// The extractor looks at the bytes afterwards and has the final say on what the
+// file actually is.
+func isExtractable(name string) bool {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".pdf", ".docx", ".pptx", ".xlsx":
+		return true
+	}
+	return false
+}
+
 // defaultSkipDir skips version control, dependency and build directories, which
 // hold far more files than the corpus and none of the content.
 func defaultSkipDir(name string) bool {
@@ -607,7 +691,8 @@ func defaultSkipDir(name string) bool {
 	return strings.HasPrefix(name, ".")
 }
 
-// defaultInclude reads text formats and the image formats a preview can show.
+// defaultInclude reads text formats, the documents the extractor understands
+// and the image formats a preview can show.
 func defaultInclude(name string) bool {
 	if strings.HasPrefix(name, ".") {
 		return false
@@ -619,6 +704,7 @@ func defaultInclude(name string) bool {
 	case ".md", ".markdown", ".rst", ".adoc", ".txt", ".html", ".css",
 		".go", ".rs", ".py", ".js", ".ts", ".tsx", ".jsx", ".c", ".h", ".cc", ".cpp",
 		".java", ".rb", ".sh", ".sql", ".yaml", ".yml", ".toml", ".json", ".proto",
+		".pdf", ".docx", ".pptx", ".xlsx",
 		".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg":
 		return true
 	}

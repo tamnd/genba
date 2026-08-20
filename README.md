@@ -247,6 +247,7 @@ func main() {
 | `index` | query parsing, retrieval and ranking |
 | `connector` | the ingestion contract, cursors and checkpoints |
 | `connector/fssource` | the reference connector, a directory tree with OWNERS files |
+| `extract` | text and structure out of PDF, Word, PowerPoint, Excel, HTML and Markdown, [docs/extraction.md](docs/extraction.md) |
 | `ingest` | the pipeline that runs a connector into a store |
 | `config` | runtime configuration and the rules for loading it |
 | `api` | the HTTP surface |
@@ -313,6 +314,14 @@ Every system names permissions differently, and the same idea is a `reader` in o
 Mapping each of those is easy on its own, and the collection of them is where a search engine leaks, because every connector would otherwise decide on its own what a grant to a partner's domain means and what to do with a statement it does not understand.
 So a refusal beats a grant everywhere, a link share is recorded rather than inferred from the absence of a restriction, and anything that cannot be represented faithfully is quarantined and counted by reason instead of approximated.
 [docs/permissions.md](docs/permissions.md) has the mapping table for each source and the reasoning behind the awkward cases.
+
+A connector hands the pipeline a body, and for the PDF attached to a ticket or the deck a quarter was reviewed from, the bytes are not it.
+`extract` turns those into text using the standard library and nothing else: no office suite, no headless browser and nothing to install alongside the binary.
+Every reader writes into one builder and produces one shape, a Markdown subset with headings, paragraphs, lists and tables, so a heading is the same three bytes whether it came from a Word style or an `h2` and the heading offsets cannot drift out of step with the text.
+A PDF is read through the font's own character map where the file has one, and a page that comes out as glyph codes rather than characters is treated as having no text instead of filling the index with terms nobody can type.
+A scan extracts as nothing for the same reason, and is still indexed by its name, its size and who may read it.
+Each budget bounds one file rather than the run: a zip bomb, a truncated archive and a PDF that expands past its limit each cost one document, and the failures are told apart so that a half copied `.docx` reads as recopy the file rather than as a format nobody supports.
+[docs/extraction.md](docs/extraction.md) has the details, including the corpus of generated files the readers are tested against and the two bugs those tests found.
 
 Everything after the first sync is incremental.
 A second run over an unchanged tree reads no files at all, an OWNERS edit costs one write per document rather than a recrawl of the subtree, and a reconciliation sweep after every sync catches what a change feed cannot report, starting with the file somebody deleted.

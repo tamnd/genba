@@ -113,6 +113,15 @@ var allowed = map[string][]string{
 	// document without going through the checks the pipeline applies.
 	"connector": {"acl", "doc"},
 
+	// extract turns a file into text and imports nothing of ours, not even doc.
+	// It is handed bytes and a name and hands back a document's text, headings
+	// and title, which is the whole of what it knows. An extractor that knew
+	// what a document was would be a package that has to change every time the
+	// model does, and one that knew what an access control list was would be a
+	// second place for the permission model to live, in the package most likely
+	// to be handed a hostile file.
+	"extract": nil,
+
 	// aclmap is the one place a source's own permission vocabulary is turned
 	// into the model, and it sits beside the connectors rather than inside acl
 	// because it is about somebody else's product rather than about ours. It
@@ -120,7 +129,7 @@ var allowed = map[string][]string{
 	// mapping layer that could reach a store or a document would be a second
 	// place for the permission rule to live.
 	"connector/aclmap":   {"acl"},
-	"connector/fssource": {"acl", "connector", "connector/aclmap", "doc"},
+	"connector/fssource": {"acl", "connector", "connector/aclmap", "doc", "extract"},
 	// ingest names acl because a permission change that arrives without the
 	// document is a map of access control lists and nothing else, and there is
 	// no way to carry one without saying what it is. It is the one type from
