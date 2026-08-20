@@ -239,6 +239,72 @@ The default is unchanged and sweeps after every sync.
 The sweep keeps an id and a version per source document in memory for its duration, which is tens of megabytes for a corpus of a few million.
 The alternative is sorting both sides on disk and merging them, which is the right answer an order of magnitude further up and is not worth its complexity yet.
 
+## Configuring a source
+
+`genbad` can be pointed at a directory, at a bucket, or at both at once.
+The two are separate feeds with separate cursors rather than one merged crawl, because a bucket that is refusing requests should not stop a directory being reindexed.
+
+A directory, watched, sweeping every five minutes:
+
+```
+genbad \
+  -tenant acme \
+  -corpus ~/src/handbook \
+  -corpus-name handbook \
+  -corpus-acl owners \
+  -corpus-refresh 1s \
+  -corpus-watch \
+  -corpus-reconcile 5m
+```
+
+`-corpus-acl owners` reads the OWNERS files in the tree, which is a real access control list maintained by real people.
+The other two are `tenant`, where everybody in the tenant may read everything, and `os`, which reads the mode bits and needs `-corpus-identity` to say which directory the account names belong to.
+
+A bucket, listed every thirty seconds, scoped to one prefix:
+
+```
+export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+
+genbad \
+  -tenant acme \
+  -bucket company-docs \
+  -bucket-endpoint https://s3.eu-west-1.amazonaws.com \
+  -bucket-region eu-west-1 \
+  -bucket-prefix handbook/ \
+  -bucket-name handbook \
+  -bucket-acl bucket \
+  -bucket-identity google \
+  -bucket-domain acme.com \
+  -bucket-refresh 30s \
+  -bucket-reconcile 15m
+```
+
+The credentials are read from the environment and there is no flag for them.
+A secret in argv is readable by every process on the machine for as long as the server runs, and it ends up in the shell history of whoever started it.
+The names are the ones every other tool in this space already uses, so a machine that can already reach the bucket needs nothing new set.
+A bucket with no credentials at all is read unsigned, which is what a public bucket wants and what nothing else does.
+
+`-bucket-acl bucket` reads the bucket's own access control list once per sync and gives that answer for every object in it, which is one request rather than a million.
+`-bucket-acl object` reads each object's own list, which is exact and costs a request per object per sync, so it is worth reaching for only when the objects really do differ.
+`-bucket-domain` is what a grant written against an email address is checked against, and a grant to an address outside it is quarantined rather than published.
+
+A service that is not S3 itself almost certainly needs `-bucket-path-style`, which puts the bucket in the path rather than in the host name.
+MinIO on a laptop is the shortest way to try the whole thing:
+
+```
+genbad \
+  -tenant acme \
+  -bucket corpus \
+  -bucket-endpoint http://127.0.0.1:9000 \
+  -bucket-path-style \
+  -bucket-refresh 5s
+```
+
+Both feeds log the same numbers after every sync, under `corpus synced` and `bucket synced`.
+The directory adds what its watcher has to say, and the bucket adds the request counts, which are what a bill is made of.
+A listing count that climbs by one per sync is a healthy incremental run, and a fetch count that climbs with it on a bucket nobody is writing to means the cursor is not doing its job.
+
 ## Writing a connector
 
 The required interface is still three methods, and a connector that implements only those works.

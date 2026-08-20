@@ -152,7 +152,8 @@ The environment variable is the flag in upper case with a `GENBA_` prefix, and a
 | `GENBA_WRITE_TIMEOUT` | `60s` | request write timeout |
 | `GENBA_SHUTDOWN_GRACE` | `15s` | how long a shutdown waits for in flight requests |
 
-The corpus flags have no environment variables, because a directory to index is a thing you type once while trying the binary out rather than a property of a deployment.
+The source flags have no environment variables, because a directory or a bucket to index is a thing you type once while trying the binary out rather than a property of a deployment.
+The one exception is the object storage credentials, which are read from the environment and have no flag at all.
 
 | Flag | Default | What it does |
 | --- | --- | --- |
@@ -175,6 +176,42 @@ The sweep that finds deleted files walks the tree, so on a watched server it is 
 ```
 genbad -tenant acme -corpus ~/src/handbook -corpus-refresh 1s -corpus-watch -corpus-reconcile 5m
 ```
+
+The same server can read an S3 compatible bucket, either instead of a directory or as well as one.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `-bucket` | empty | bucket to index at startup |
+| `-bucket-endpoint` | empty | base URL of the service, for example `https://s3.eu-west-1.amazonaws.com` |
+| `-bucket-region` | `us-east-1` | region the bucket is in, which is part of what a signature authenticates |
+| `-bucket-prefix` | empty | read only the keys under this prefix, empty for the whole bucket |
+| `-bucket-name` | `objects` | source name the documents carry, and what `-source` filters on |
+| `-bucket-acl` | `tenant` | who may read it: `tenant` for everybody in the tenant, `bucket` for the bucket's own access control list, `object` for each object's |
+| `-bucket-identity` | empty | identity source the names in the access control lists belong to, for `-bucket-acl bucket` or `object` |
+| `-bucket-domain` | empty | mail domain that counts as this tenant in a grant written against an address |
+| `-bucket-path-style` | `false` | put the bucket in the path rather than in the host name, which MinIO and Ceph need |
+| `-bucket-refresh` | `0` | how often to list the bucket again, zero for once at startup |
+| `-bucket-reconcile` | `0` | how often to sweep the index against the bucket, zero for after every sync |
+
+Credentials come from `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`, and there is no flag for them.
+A secret in argv is readable by every process on the machine for as long as the server runs, and it ends up in the shell history of whoever started it.
+A bucket with no credentials at all is read unsigned, which is what a public bucket wants and what nothing else does.
+
+```
+genbad -tenant acme \
+  -bucket company-docs \
+  -bucket-endpoint https://s3.eu-west-1.amazonaws.com \
+  -bucket-region eu-west-1 \
+  -bucket-prefix handbook/ \
+  -bucket-acl bucket \
+  -bucket-identity google \
+  -bucket-domain acme.com \
+  -bucket-refresh 30s \
+  -bucket-reconcile 15m
+```
+
+A server given both a corpus and a bucket runs them as two feeds with two cursors rather than one merged crawl, so a bucket that is refusing requests does not stop the directory being reindexed.
+`docs/ingestion.md` has the worked examples for both, including MinIO on a laptop.
 
 ## Metrics
 
