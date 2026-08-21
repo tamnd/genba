@@ -12,7 +12,7 @@
 // whole interaction is four commands, and the alternative is a dependency with
 // a browser download in it for a script that already has a browser.
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,18 +23,33 @@ const PATIENCE = 5_000;
 
 const CHROMES = [
   process.env.CHROME_PATH,
+  process.env.CHROME_BIN,
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
   "/Applications/Chromium.app/Contents/MacOS/Chromium",
   "/usr/bin/google-chrome",
   "/usr/bin/google-chrome-stable",
   "/opt/google/chrome/chrome",
+  "/usr/local/share/chrome-linux64/chrome",
   "/usr/bin/chromium",
   "/usr/bin/chromium-browser",
   "/snap/bin/chromium",
 ];
 
+const NAMES = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"];
+
+/** findChrome takes the first of the usual places, then asks the path. */
 function findChrome() {
-  return CHROMES.find((path) => path && existsSync(path));
+  const listed = CHROMES.find((path) => path && existsSync(path));
+  if (listed) return listed;
+  for (const name of NAMES) {
+    try {
+      const found = execFileSync("command", ["-v", name], { shell: true, encoding: "utf8" }).trim();
+      if (found && existsSync(found)) return found;
+    } catch {
+      // Not on the path, which is the answer rather than an error.
+    }
+  }
+  return "";
 }
 
 const chrome = findChrome();
@@ -54,6 +69,9 @@ const browser = spawn(
     "--headless=new",
     "--no-sandbox",
     "--disable-gpu",
+    // A container gives /dev/shm 64 megabytes and Chrome wants more than that
+    // for its renderer, which is how it dies on a runner and nowhere else.
+    "--disable-dev-shm-usage",
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-extensions",
@@ -63,8 +81,19 @@ const browser = spawn(
     `--user-data-dir=${profile}`,
     "about:blank",
   ],
-  { stdio: "ignore" },
+  // Chrome says why it will not start on stderr, and a walk that reports only
+  // that no port appeared sends whoever reads it to the wrong place.
+  { stdio: ["ignore", "ignore", "pipe"] },
 );
+
+let complaint = "";
+let stopped = null;
+browser.stderr.on("data", (chunk) => {
+  complaint += chunk;
+});
+browser.on("exit", (code, signal) => {
+  stopped = signal || code;
+});
 
 let failures = 0;
 try {
@@ -178,9 +207,19 @@ async function endpoint() {
       const [port, path] = readFileSync(file, "utf8").split("\n");
       if (port && path) return `ws://127.0.0.1:${port.trim()}${path.trim()}`;
     }
+    // A Chrome that has already stopped is never going to write the file, and
+    // waiting the rest of the deadline to say so only delays the reason.
+    if (stopped !== null) throw new Error(`Chrome exited (${stopped})${said()}`);
     await sleep(50);
   }
-  throw new Error("Chrome never reported a debugging port");
+  throw new Error(`Chrome never reported a debugging port${said()}`);
+}
+
+/** said renders whatever Chrome put on stderr, for the error to carry. */
+function said() {
+  const lines = complaint.trim();
+  if (!lines) return ", and said nothing about why";
+  return `. It said:\n${lines}`;
 }
 
 /**
