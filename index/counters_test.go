@@ -63,6 +63,13 @@ func rowBudget(pool, terms, hits int) int64 {
 	rows += facetRows
 	// The corpus row and one row per term of statistics.
 	rows += 1 + terms
+	// A search that found nothing looks for a spelling that would have found
+	// something, which reads four windows of the term table per word it does
+	// not recognise and then confirms the corrected query as the asker. That
+	// confirmation is a candidate cut for a single row.
+	if hits == 0 {
+		rows += terms*4*sqlitestore.NearWindow + 1
+	}
 	// And the page that is actually returned.
 	return int64(rows + hits)
 }

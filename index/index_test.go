@@ -50,31 +50,7 @@ func newSearcher(t *testing.T, fixtures []fixture, opts ...index.Option) *index.
 	st := memstore.New()
 	t.Cleanup(func() { _ = st.Close() })
 
-	docs := make([]doc.Document, 0, len(fixtures))
-	for _, f := range fixtures {
-		if f.source == "" {
-			f.source = "gdrive"
-		}
-		if f.kind == "" {
-			f.kind = doc.KindPage
-		}
-		var props map[string]string
-		if f.media != "" {
-			props = map[string]string{doc.MediaType: f.media}
-		}
-		docs = append(docs, doc.Document{
-			ID:          f.id,
-			Tenant:      "acme",
-			Source:      f.source,
-			Kind:        f.kind,
-			Title:       f.title,
-			Body:        f.body,
-			ModifiedAt:  f.modified,
-			Permissions: f.perm,
-			Properties:  props,
-		})
-	}
-	if err := st.Put(t.Context(), docs...); err != nil {
+	if err := st.Put(t.Context(), documents(fixtures)...); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 

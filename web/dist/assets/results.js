@@ -234,9 +234,10 @@ export class Results {
     this.query = query;
     this.res = res;
     // What the filters removed was measured against the previous query, so it
-    // is dropped here rather than carried. What the index holds is a fact about
-    // the corpus and survives.
-    this.context = { ...this.context, removed: null };
+    // is dropped here rather than carried. The spelling that would have worked
+    // belongs to this answer for the same reason. What the index holds is a
+    // fact about the corpus and survives.
+    this.context = { ...this.context, removed: null, correction: res.correction || null };
     this.hits = res.hits || [];
     // Kept because the paging keys have to know where the last page ends, and
     // the pager itself is rebuilt from the response every time.

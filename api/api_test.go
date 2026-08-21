@@ -103,9 +103,10 @@ func TestSearchWithoutACredentialIsRejected(t *testing.T) {
 }
 
 type searchBody struct {
-	Query string `json:"query"`
-	Total int    `json:"total"`
-	Hits  []struct {
+	Query      string `json:"query"`
+	Total      int    `json:"total"`
+	Correction string `json:"correction"`
+	Hits       []struct {
 		ID      string  `json:"id"`
 		Title   string  `json:"title"`
 		Snippet string  `json:"snippet"`
@@ -131,6 +132,32 @@ func TestSearchReturnsOnlyWhatTheCallerMayRead(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), "Globex") {
 		t.Fatal("the response leaked a document the caller may not read")
+	}
+}
+
+// A correction rides on the search that found nothing, so the interface has it
+// at the moment it has to draw an empty screen rather than a request later.
+func TestSearchOffersACorrectionOnTheAnswerThatFoundNothing(t *testing.T) {
+	h := newServer(t)
+
+	w := request(t, h, http.MethodGet, "/api/v1/search?q=paymnets", engineer())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body)
+	}
+	body := decode[searchBody](t, w)
+	if body.Total != 0 {
+		t.Fatalf("paymnets matched %d documents, so there is nothing to correct", body.Total)
+	}
+	if body.Correction != "payments" {
+		t.Fatalf("correction = %q, want payments", body.Correction)
+	}
+
+	// And a query that worked carries no correction at all, rather than an
+	// empty one, because a client that reads a field that is always there ends
+	// up drawing an empty offer.
+	w = request(t, h, http.MethodGet, "/api/v1/search?q=payments", engineer())
+	if strings.Contains(w.Body.String(), "correction") {
+		t.Fatalf("a search that found results carried a correction: %s", w.Body)
 	}
 }
 

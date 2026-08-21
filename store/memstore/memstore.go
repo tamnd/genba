@@ -13,6 +13,7 @@ import (
 	"maps"
 	"slices"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/tamnd/genba"
 	"github.com/tamnd/genba/acl"
@@ -55,6 +56,7 @@ func New() *Store {
 var (
 	_ store.ContentStore = (*Store)(nil)
 	_ store.Statistician = (*Store)(nil)
+	_ store.Speller      = (*Store)(nil)
 	_ store.Notifier     = (*Store)(nil)
 )
 
@@ -251,6 +253,50 @@ func (s *Store) Statistics(ctx context.Context, p *acl.Principal, terms []string
 		}
 	}
 	return c, nil
+}
+
+// Near returns terms in the tenant that are close to the one given.
+//
+// It builds the vocabulary by walking the corpus, which is O(n) on every call
+// and is what a reference implementation should do: the driver that keeps a
+// term table maintained is checked against this. It is only ever reached on a
+// query that matched nothing, so a corpus this driver is meant to hold pays for
+// it once at the end of a search that found no results anyway.
+//
+// The tenant is applied and the reader's permissions are not, which is the
+// whole contract of [store.Speller] and the reason its documentation says what
+// the caller still has to do.
+func (s *Store) Near(ctx context.Context, p *acl.Principal, term string, limit int) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if p == nil {
+		return nil, genba.ErrNoPrincipal
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return nil, genba.ErrClosed
+	}
+
+	// Only terms that could be within the bound, which keeps the map small on a
+	// corpus with a large vocabulary. A term more than that many characters
+	// longer or shorter cannot be reached in that many edits.
+	bound := store.MaxEdits(term)
+	typed := utf8.RuneCountInString(term)
+	docs := make(map[string]int)
+	for _, d := range s.docs {
+		if !d.Queryable() || d.Tenant != p.Tenant {
+			continue
+		}
+		for t := range d.Analyze().Terms {
+			if n := utf8.RuneCountInString(t); n < typed-bound || n > typed+bound {
+				continue
+			}
+			docs[t]++
+		}
+	}
+	return store.Nearest(term, docs, limit), nil
 }
 
 // Stats reports what the store holds.

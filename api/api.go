@@ -235,6 +235,12 @@ type searchResponse struct {
 	TookMS  float64            `json:"took_ms"`
 	Hits    []searchHit        `json:"hits"`
 	Facets  map[string][]facet `json:"facets"`
+
+	// Correction is a spelling of the query that would have found something. It
+	// is only ever present on a search that found nothing, and it has already
+	// been run as the person asking, so it is a query they can run rather than
+	// a word somebody else's documents contain.
+	Correction string `json:"correction,omitempty"`
 }
 
 // searchFilters echoes the parsed query back. A shareable URL and a typed
@@ -300,14 +306,15 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Pri
 	s.metrics.observeSearch(res.Took, res.Candidates, res.Total)
 
 	out := searchResponse{
-		Query:   r.URL.Query().Get("q"),
-		Text:    query.Text,
-		Filters: filtersOf(query),
-		Total:   res.Total,
-		Partial: res.Truncated,
-		TookMS:  float64(res.Took.Microseconds()) / 1000,
-		Facets:  facets(res.Facets),
-		Hits:    []searchHit{},
+		Query:      r.URL.Query().Get("q"),
+		Text:       query.Text,
+		Filters:    filtersOf(query),
+		Total:      res.Total,
+		Partial:    res.Truncated,
+		TookMS:     float64(res.Took.Microseconds()) / 1000,
+		Facets:     facets(res.Facets),
+		Hits:       []searchHit{},
+		Correction: res.Correction,
 	}
 	for _, h := range res.Hits {
 		hit := hitOf(h.Document)
