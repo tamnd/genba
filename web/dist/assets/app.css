@@ -2123,6 +2123,22 @@ h6.prose__h {
   font-size: var(--text-small);
 }
 
+/* The spelling that would have found something. It reads as a sentence with a
+   link in it, which is what it is, so the word is set in the colour a link is
+   set in and the button around it is given none of a button's furniture. */
+.state__suggest {
+  color: var(--text);
+}
+
+.state__correction {
+  color: var(--text-link);
+  font-weight: var(--weight-semibold);
+}
+
+.state__correction:hover {
+  text-decoration: underline;
+}
+
 /* The filters that are the reason a search came back with nothing, offered
    where somebody is looking rather than only above the list they are not. */
 .state__filters {

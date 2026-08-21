@@ -3,8 +3,9 @@
 // Everything the gate looks at elsewhere is the happy path, and most of what
 // decides whether somebody trusts a search product is not. This drives the
 // states: a search that is slow, a search that is very slow, a check that
-// failed behind an answer, a query that matched nothing because of a filter, an
-// index with nothing in it, and a document that is either missing or forbidden.
+// failed behind an answer, a query that matched nothing because of a filter or
+// because of a typo, an index with nothing in it, and a document that is either
+// missing or forbidden.
 //
 // Four of those need a request that does not answer, so this one holds the
 // search endpoint open from the browser side rather than asking the server for
@@ -190,6 +191,26 @@ async function run(session) {
     session,
     "clearing the filters from that page brings the results back",
     "Boolean(document.querySelector('.result'))",
+  );
+
+  // Nothing matched because of a typo, which is the one empty screen that has a
+  // way out that is not a filter. The word comes from the index of this
+  // repository rather than from a dictionary, and the server has already run it
+  // as this reader, so what is on screen is a search that works.
+  await visit(session, `${BASE}/?q=serach`, "Boolean(document.querySelector('.state__correction'))");
+  await check(
+    session,
+    "a search that found nothing because of a typo offers the spelling that works",
+    "document.querySelector('.state__correction').textContent === 'search'",
+  );
+
+  await evaluate(session, "document.querySelector('.state__correction').click(), true");
+  await settle(session, "Boolean(document.querySelector('.result'))");
+  await check(
+    session,
+    "and pressing it runs that search, box and address and all",
+    `document.querySelector('.omnibox__input').value === 'search' &&
+      location.search.includes('q=search') && document.querySelectorAll('.result').length > 0`,
   );
 
   // The security assertion, and the reason both messages live in one module.

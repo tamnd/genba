@@ -28,6 +28,13 @@ func TestRanking(t *testing.T) {
 	storetest.RunRanker(t, newStore)
 }
 
+// The vocabulary a correction is drawn from, which this driver builds by
+// walking the corpus. It is the answer the driver with a term table is checked
+// against.
+func TestSpelling(t *testing.T) {
+	storetest.RunSpeller(t, newStore)
+}
+
 func TestClosedStoreRefusesWork(t *testing.T) {
 	s := memstore.New()
 	if err := s.Close(); err != nil {

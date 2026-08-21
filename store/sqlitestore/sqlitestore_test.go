@@ -38,6 +38,10 @@ func TestRetrieverConformance(t *testing.T) {
 	storetest.RunRetriever(t, newStore)
 }
 
+func TestSpellerConformance(t *testing.T) {
+	storetest.RunSpeller(t, newStore)
+}
+
 func TestRankerConformance(t *testing.T) {
 	storetest.RunRanker(t, newStore)
 }

@@ -164,6 +164,16 @@ type Results struct {
 	// start moving together is the day the first phase stopped cutting.
 	Candidates int
 
+	// Correction is a spelling of the query that would have found something,
+	// and is empty when there is none or when the query found results of its
+	// own. It is a query rather than a word so that the interface has something
+	// to link to rather than a hint to assemble.
+	//
+	// It has already been run as the person asking, so offering it cannot tell
+	// them that a word exists in a document they may not read. See
+	// [Searcher.correct].
+	Correction string
+
 	// Took is how long the search ran for. It is reported rather than logged
 	// because the interface shows it, and a number a user can see is a number
 	// somebody will keep honest.
@@ -305,6 +315,11 @@ func (s *Searcher) Search(ctx context.Context, p *acl.Principal, q Query) (Resul
 		Candidates: len(found.cands),
 	}
 	if len(found.cands) == 0 {
+		// Nothing matched, which is the only place a correction is worth looking
+		// for and the only place one is allowed to appear.
+		if res.Correction, err = s.correct(ctx, p, q, req.Terms, found.corpus); err != nil {
+			return Results{}, err
+		}
 		res.Took = s.now().Sub(start)
 		return res, nil
 	}

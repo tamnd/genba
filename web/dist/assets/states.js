@@ -86,7 +86,7 @@ export function firstRun(command = "genbad -corpus ~/notes -corpus-name notes") 
  * that was never connected, and saying which is better than a shrug.
  */
 export function nothingMatched(query, onQuery, context = {}) {
-  const { removed = null, documents = null, sources = [], chips = [] } = context;
+  const { removed = null, documents = null, sources = [], chips = [], correction = null } = context;
 
   if (documents === 0) return firstRun();
 
@@ -118,6 +118,7 @@ export function nothingMatched(query, onQuery, context = {}) {
             `Your filters removed ${number(removed)} ${removed === 1 ? "result" : "results"}.`,
           )
         : h("p", { class: "state__body" }, "The filters below are the reason. Remove one, or clear them all."),
+      didYouMean(query, correction, onQuery),
       // The controls are the ones above the list rather than a second set that
       // reads the same query, because two sets of filter chips are two chances
       // to disagree about what is on.
@@ -139,6 +140,7 @@ export function nothingMatched(query, onQuery, context = {}) {
     { class: "state" },
     h("span", { class: "state__icon" }, svg(icon("search"), 40)),
     h("p", { class: "state__title" }, `Nothing found for ${quoted(query)}`),
+    didYouMean(query, correction, onQuery),
     h("p", { class: "state__body" }, "Try fewer words, or a word that would be written down rather than spoken."),
     sources.length
       ? h(
@@ -254,6 +256,34 @@ export function notPermitted(back) {
           h("button", { class: "button button--primary", type: "button", onClick: back.go }, back.title),
         )
       : null,
+  );
+}
+
+/**
+ * didYouMean is the spelling that would have worked, offered as something to
+ * press rather than as advice.
+ *
+ * The server only sends one after running it as this person and getting a
+ * result, so it is a query that leads somewhere rather than a guess. It goes
+ * above the sentence about trying fewer words, because a correction is the
+ * likelier answer and the advice is what is left when there is none.
+ */
+function didYouMean(query, correction, onQuery) {
+  if (!correction || correction === query.q) return null;
+  return h(
+    "p",
+    { class: "state__body state__suggest" },
+    "Did you mean ",
+    h(
+      "button",
+      {
+        class: "state__correction",
+        type: "button",
+        onClick: () => onQuery({ ...query, q: correction, offset: 0, cursor: -1 }),
+      },
+      correction,
+    ),
+    "?",
   );
 }
 

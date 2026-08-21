@@ -123,6 +123,12 @@ func TestRetrieverConformance(t *testing.T) {
 	storetest.RunRetriever(t, newStore)
 }
 
+// This driver has no [store.Speller], so every case here skips. The call is
+// left in so that the day it grows one, the suite is already pointed at it.
+func TestSpellerConformance(t *testing.T) {
+	storetest.RunSpeller(t, newStore)
+}
+
 func TestRankerConformance(t *testing.T) {
 	storetest.RunRanker(t, newStore)
 }

@@ -76,6 +76,13 @@ linters:
           - noctx
           - prealloc
 
+      # The correction is code about misspelled words, so it is full of them on
+      # purpose. Every one is a documented example or a test case, and there is
+      # no version of this that the spell checker is happy with.
+      - path: spell(_test)?\.go
+        linters:
+          - misspell
+
 formatters:
   enable:
     - gofmt
