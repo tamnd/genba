@@ -1,7 +1,7 @@
 // The results view: verticals, active filters, result rows and facets.
 
 import { h, replace, svg } from "genba/dom.js";
-import { label, number, duration, icon } from "genba/format.js";
+import { label, number, duration, icon, facetLabels } from "genba/format.js";
 import { shapeOf } from "genba/content.js";
 import { RowList } from "genba/rows.js";
 import { nothingMatched, slow, stopped } from "genba/states.js";
@@ -71,6 +71,12 @@ const FACETS = [
 
 const FACET_VISIBLE = 8;
 
+// The width at which the filter panel stops being a margin column and becomes a
+// sheet. It is the same number as the layout breakpoint in app.css, and it is
+// the line between a panel sitting beside the results and a dialog sitting over
+// them, which decides whether Tab is allowed to leave it.
+const SHEET = "(max-width: 960px)";
+
 export class Results {
   constructor({ onQuery, onOpen, onHover, onSay, onCursor }) {
     this.onQuery = onQuery;
@@ -108,26 +114,56 @@ export class Results {
     if (typeof ResizeObserver === "function") {
       new ResizeObserver(() => this.edges()).observe(this.tabs);
     }
-    this.facets = h("aside", { class: "facets", "aria-label": "Filters" });
+    this.facets = h("aside", {
+      class: "facets",
+      "aria-label": "Filters",
+      tabindex: "-1",
+      onKeydown: (e) => this.trapFilters(e),
+    });
+    // Behind the sheet and never behind the column, which is what closes it by
+    // clicking away from it on the one width where there is an away.
+    this.scrim = h("div", {
+      class: "scrim scrim--filters",
+      hidden: true,
+      onClick: () => this.showFilters(false),
+    });
 
-    // The facet column becomes a disclosure below the medium breakpoint, where
-    // there is no room for a margin column. The button is hidden by CSS above
-    // it rather than by a resize listener, so nothing recomputes on drag.
+    // The facet column becomes a sheet below the medium breakpoint, where there
+    // is no room for a margin column. The button is hidden by CSS above it
+    // rather than by a resize listener, so nothing recomputes on drag.
     this.toggle = h(
       "button",
       {
         class: "button button--ghost filterbar__toggle",
         type: "button",
         "aria-expanded": "false",
-        onClick: () => {
-          const open = this.facets.dataset.open === "true";
-          this.facets.dataset.open = String(!open);
-          this.toggle.setAttribute("aria-expanded", String(!open));
-        },
+        "aria-controls": "filters",
+        onClick: () => this.showFilters(true),
       },
       svg(icon("slider"), 18),
       "Filters",
     );
+    this.facets.id = "filters";
+    // The sheet's own way out. Below the breakpoint the button that opened it is
+    // behind the scrim, and a panel with no visible control to dismiss it is a
+    // panel somebody closes by reloading the page.
+    this.done = h(
+      "button",
+      {
+        class: "icon-button facets__done",
+        type: "button",
+        "aria-label": "Close filters",
+        onClick: () => this.showFilters(false),
+      },
+      svg(icon("close"), 20),
+    );
+
+    // A window dragged back across the breakpoint while the sheet is open turns
+    // it into the margin column, and a margin column that still claims to be a
+    // modal dialog makes the results beside it unreachable.
+    window.matchMedia(SHEET).addEventListener("change", () => {
+      if (!window.matchMedia(SHEET).matches) this.showFilters(false, { focus: false });
+    });
 
     this.filterbar = h("div", { class: "filterbar" }, this.tabs, this.toggle);
     this.progress = h("div", { class: "progress", hidden: true });
@@ -145,10 +181,71 @@ export class Results {
       h(
         "div",
         { class: "results" },
+        this.scrim,
         this.facets,
         h("div", { class: "results__main" }, this.head, this.list, this.aside),
       ),
     );
+  }
+
+  /**
+   * showFilters opens and closes the sheet, and is a no-op above the breakpoint
+   * where the panel is simply on the page.
+   *
+   * The two are the same panel, which is the point of it. A second copy of the
+   * filters for narrow windows is a second list of counts to keep in step with
+   * the first, and the way those go wrong is that one of them is a query old.
+   */
+  showFilters(open, opts = {}) {
+    const sheet = window.matchMedia(SHEET).matches;
+    this.facets.dataset.open = String(open);
+    this.toggle.setAttribute("aria-expanded", String(open));
+    this.scrim.hidden = !open;
+    // One surface. While the sheet is up, the button that opened it goes, and
+    // the sheet's own close button is the only filter control on the screen.
+    // Leaving it there is how the narrow layout ends up with a Filters button
+    // sitting next to an open panel of filters.
+    this.toggle.hidden = open && sheet;
+    if (open && sheet) {
+      // A dialog only while it is one. Above the breakpoint this is a
+      // complementary region beside the results and saying it is modal would
+      // take the results away from a screen reader.
+      this.facets.setAttribute("role", "dialog");
+      this.facets.setAttribute("aria-modal", "true");
+      this.facets.focus();
+      return;
+    }
+    this.facets.removeAttribute("role");
+    this.facets.removeAttribute("aria-modal");
+    if (!open && opts.focus !== false && this.toggle.offsetParent !== null) {
+      this.toggle.focus();
+    }
+  }
+
+  /**
+   * trapFilters keeps Tab inside the sheet while the sheet is what is on
+   * screen, and lets it out where the panel is a column beside the results.
+   */
+  trapFilters(e) {
+    if (this.facets.dataset.open !== "true" || !window.matchMedia(SHEET).matches) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      this.showFilters(false);
+      return;
+    }
+    if (e.key !== "Tab") return;
+    const focusable = this.facets.querySelectorAll("button:not([disabled])");
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
   }
 
   /**
@@ -453,6 +550,10 @@ export class Results {
       const values = (res.facets && res.facets[field]) || [];
       if (!values.length) return null;
       const expanded = this.expanded.has(field);
+      // Over the whole facet rather than over the eight that are showing, so
+      // that a label does not change under somebody the moment they press Show
+      // all and a ninth value collides with one already on screen.
+      const named = facetLabels(values.map((v) => v.value));
       const shown = expanded ? values : values.slice(0, FACET_VISIBLE);
       return h(
         "section",
@@ -461,8 +562,14 @@ export class Results {
         h(
           "ul",
           {},
-          shown.map((v) => {
-            const on = (query[key] || []).includes(v.value);
+          shown.map((v, i) => {
+            // The server says which values the query narrows to, because it made
+            // that comparison already to answer the query and a person typing
+            // from:mei@acme.com has not typed the display name the row carries.
+            // The query is still consulted, so a facet arriving without the flag
+            // still draws its ticks.
+            const on = v.selected === true || (query[key] || []).includes(v.value);
+            const { label: text, context } = named[i];
             return h(
               "li",
               {},
@@ -482,8 +589,16 @@ export class Results {
                 ),
                 h(
                   "span",
-                  { class: "facet__label", title: v.value },
-                  titled ? label(v.value) : v.value,
+                  { class: "facet__text", title: v.value },
+                  h(
+                    "span",
+                    { class: "facet__label" },
+                    titled ? label(text) : text,
+                  ),
+                  // Isolated, so that the right to left trick that elides the
+                  // front of the line does not reorder the slashes inside it.
+                  context &&
+                    h("span", { class: "facet__context" }, h("bdi", {}, context)),
                 ),
                 h(
                   "span",
@@ -513,7 +628,14 @@ export class Results {
 
     replace(
       this.facets,
-      groups.length ? h("h2", { class: "facets__title" }, "Filters") : null,
+      groups.length
+        ? h(
+            "div",
+            { class: "facets__head" },
+            h("h2", { class: "facets__title" }, "Filters"),
+            this.done,
+          )
+        : null,
       groups.length ? groups : null,
     );
   }
@@ -521,18 +643,17 @@ export class Results {
   /**
    * focusFilters is the f key.
    *
-   * The first filter where the panel is on screen, and the disclosure that
-   * opens the panel where it is not, because below the medium breakpoint the
-   * facets are behind a button and focusing something inside a collapsed panel
-   * is focusing nothing.
+   * The first filter where the panel is on screen, and below the breakpoint the
+   * sheet, opened, because the panel is behind a button there and focusing
+   * something inside a closed one is focusing nothing.
    */
   focusFilters() {
-    const first = this.facets.querySelector("button");
+    const first = this.facets.querySelector(".facet__item");
     if (first && first.offsetParent !== null) {
       first.focus();
       return;
     }
-    if (this.toggle.offsetParent !== null) this.toggle.focus();
+    if (this.toggle.offsetParent !== null) this.showFilters(true);
   }
 }
 

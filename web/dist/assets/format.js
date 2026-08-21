@@ -115,6 +115,70 @@ export function label(value) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+/**
+ * facetLabels is what a filter row shows for each value in one facet.
+ *
+ * A facet value is an identity. It goes in the URL, it goes in the request and
+ * it is what the count was counted against, so it is never changed. What it is
+ * not is something to read: a container on a file corpus is an absolute path,
+ * and a column of them truncated on the right is a column of identical rows
+ * ending in an ellipsis, distinguished only by the part that was cut off.
+ *
+ * So a value has three forms. The value itself, a label, which is the last
+ * segment, because the end of a path is the part that identifies it, and a
+ * context, which is everything in front of it and is elided from the left when
+ * it does not fit.
+ *
+ * Where two values in the same facet would produce the same label, both grow a
+ * segment, and they keep growing until they differ. Four folders called en-US
+ * under four different books are four rows that all read en-US, which is worse
+ * than a truncated path because it reads as a bug rather than as a truncation.
+ * Growing is per collision rather than per facet, so one pair of deep duplicates
+ * does not lengthen every other row in the list.
+ *
+ * It is done here rather than on the server because it is a display decision,
+ * and the server has no idea how wide the window is.
+ */
+export function facetLabels(values) {
+  const parts = values.map((v) => String(v || "").split("/").filter(Boolean));
+  const depth = parts.map(() => 1);
+  // Terminates because a round only ever deepens a value that has a segment
+  // left to give, and a value that has run out is left where it is: two paths
+  // that differ only above their common root end up identical and readable,
+  // which is the truthful answer rather than a loop.
+  for (;;) {
+    const groups = new Map();
+    parts.forEach((segments, i) => {
+      const key = segments.slice(segments.length - depth[i]).join("/");
+      const group = groups.get(key);
+      if (group) group.push(i);
+      else groups.set(key, [i]);
+    });
+    let grew = false;
+    for (const group of groups.values()) {
+      if (group.length < 2) continue;
+      for (const i of group) {
+        if (depth[i] >= parts[i].length) continue;
+        depth[i]++;
+        grew = true;
+      }
+    }
+    if (!grew) break;
+  }
+  return values.map((value, i) => {
+    const segments = parts[i];
+    if (!segments.length) return { value, label: String(value || ""), context: "" };
+    const at = Math.max(segments.length - depth[i], 0);
+    return {
+      value,
+      label: segments.slice(at).join("/"),
+      // Spaced, because this is being read rather than pasted, and a spaced
+      // separator is where a long one is allowed to wrap or to be cut.
+      context: segments.slice(0, at).join(" / "),
+    };
+  });
+}
+
 const RELATIVE = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 const ABSOLUTE = new Intl.DateTimeFormat(undefined, {
   year: "numeric",
