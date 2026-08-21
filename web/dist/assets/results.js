@@ -75,14 +75,16 @@ const FACETS = [
 const FACET_VISIBLE = 8;
 
 export class Results {
-  constructor({ onQuery, onOpen, onHover, onSay }) {
+  constructor({ onQuery, onOpen, onHover, onSay, onCursor }) {
     this.onQuery = onQuery;
     this.onOpen = onOpen;
     this.onHover = onHover || (() => {});
     this.onSay = onSay || (() => {});
+    this.onCursor = onCursor || (() => {});
     this.expanded = new Set();
     this.selected = -1;
     this.hits = [];
+    this.total = 0;
     // Empty until the session says what the corpus holds, so the strip is never
     // painted with tabs that are about to be taken away.
     this.verticals = [];
@@ -187,9 +189,19 @@ export class Results {
     this.list.setAttribute("aria-busy", String(Boolean(on)));
   }
 
+  /**
+   * render draws one answer, cursor and all.
+   *
+   * The cursor is restored from the query rather than reset, because this
+   * function runs again on every repaint and on the way back from a preview,
+   * and a cursor that only lived in this object would be lost both times.
+   */
   render(query, res) {
     this.hits = res.hits || [];
-    this.selected = -1;
+    // Kept because the paging keys have to know where the last page ends, and
+    // the pager itself is rebuilt from the response every time.
+    this.total = res.total || 0;
+    this.selected = query.cursor >= 0 && query.cursor < this.hits.length ? query.cursor : -1;
     this.renderTabs(query, res);
     this.renderChips(query);
     this.renderHead(query, res);
@@ -366,11 +378,48 @@ export class Results {
 
     const view = this.viewFor(query);
     this.list.dataset.view = view;
+    // Every row on screen is about to be replaced, and one of them may be the
+    // element focus is on. Losing focus to the body in the middle of a
+    // background revalidation is how a keyboard interface quietly stops.
+    const held = this.list.contains(document.activeElement);
     replace(
       this.list,
       this.hits.map((hit, i) => (view === "grid" ? this.cell(hit, i) : this.row(hit, i))),
     );
+    // The row is the tab stop, so nothing inside a row is one. A list of twenty
+    // rows with a title and three buttons each is eighty tab stops between the
+    // search box and the pager, which is the thing the roving tabindex exists
+    // to prevent. Everything in here has a key of its own instead: Enter
+    // previews, o opens at the source and y copies the link.
+    for (const control of this.list.querySelectorAll("a[href], button")) control.tabIndex = -1;
+    this.mark();
+    // Focus is only ever put back, never taken. A repaint while somebody is
+    // typing in the search box must not pull the caret out of it.
+    if (held) this.focusCursor({ scroll: false });
     replace(this.aside, pager(query, res, this.onQuery));
+  }
+
+  /**
+   * seat is what every row and every cell carries so the list is one tab stop.
+   *
+   * A list where each of twenty rows is a tab stop takes forty presses to get
+   * past, which is the case the roving tabindex pattern exists for. Exactly one
+   * of them is reachable with Tab and the arrow keys move which one that is.
+   *
+   * Roving tabindex here rather than aria-activedescendant, which is what the
+   * omnibox uses, because a row is genuinely focusable and a browser scrolls a
+   * focused element into view on its own.
+   */
+  seat(i) {
+    return {
+      role: "listitem",
+      tabindex: "-1",
+      dataset: { index: String(i) },
+      // Tabbing in lands on whichever row holds the zero, and clicking a row
+      // focuses it. Either way the cursor is now there, so j and k carry on
+      // from what somebody is looking at rather than from where they left off.
+      onFocus: () => this.at(i),
+    };
   }
 
   /**
@@ -387,8 +436,7 @@ export class Results {
       "article",
       {
         class: "cell",
-        role: "listitem",
-        dataset: { index: String(i) },
+        ...this.seat(i),
         onMouseenter: () => this.onHover(hit.id),
         onMouseleave: () => this.onHover(null),
         onClick: (e) => {
@@ -437,8 +485,7 @@ export class Results {
       "article",
       {
         class: "result",
-        role: "listitem",
-        dataset: { index: String(i) },
+        ...this.seat(i),
         // A pointer resting on a row is a good guess at the next preview, and
         // the shell is what decides how long resting means and how many of
         // those guesses may be in the air at once.
@@ -529,7 +576,10 @@ export class Results {
             h(
               "button",
               {
-                class: "icon-button",
+                // The class is how the y key finds this button, so that a
+                // copy from the keyboard draws the same tick as a copy from
+                // the pointer rather than happening invisibly.
+                class: "icon-button icon-button--copy",
                 type: "button",
                 title: "Copy path",
                 "aria-label": "Copy path",
@@ -598,24 +648,86 @@ export class Results {
     );
   }
 
-  /** move walks the selection with j and k, and scrolls it into view. */
+  /** move walks the cursor with j and k, or with the arrow keys. */
   move(delta) {
     if (!this.hits.length) return;
     const next = Math.min(Math.max(this.selected + delta, 0), this.hits.length - 1);
     this.select(next);
   }
 
+  /** edge is Home and End: the first row and the last row on this page. */
+  edge(which) {
+    if (!this.hits.length) return;
+    this.select(which === "first" ? 0 : this.hits.length - 1);
+  }
+
+  /** select moves the cursor to a row and puts focus on it. */
   select(i) {
-    // Both layouts, by the attribute they share rather than by class, so j and
-    // k walk a grid exactly as they walk a list.
-    const rows = this.list.querySelectorAll("[data-index]");
-    rows.forEach((row, n) => row.setAttribute("data-active", String(n === i)));
+    this.at(i);
+    // Focus rather than scrollIntoView: the browser brings a focused element
+    // into view on its own, and a row that is highlighted but not focused is a
+    // row a screen reader is not reading.
+    this.focusCursor();
+  }
+
+  /**
+   * focusCursor puts focus on the row the cursor is on, if there is one.
+   *
+   * It is also the way back from the preview. The drawer keeps a reference to
+   * whatever had focus when it opened, and by the time it closes that row has
+   * been rebuilt by a repaint, so the element it remembers is not in the
+   * document any more. The cursor is, and it names the same row.
+   */
+  focusCursor(opts = {}) {
+    if (this.selected < 0) return;
+    const row = this.list.querySelector(`[data-index="${this.selected}"]`);
+    if (row) row.focus({ preventScroll: opts.scroll === false });
+  }
+
+  /** at records where the cursor is without touching focus. */
+  at(i) {
+    if (this.selected === i) return;
     this.selected = i;
-    if (rows[i]) rows[i].scrollIntoView({ block: "nearest" });
+    this.mark();
+    this.onCursor(i);
+  }
+
+  /**
+   * mark writes the cursor into the list.
+   *
+   * Both layouts, by the attribute they share rather than by class, so j and k
+   * walk a grid exactly as they walk a list. Exactly one row holds the zero,
+   * and where there is no cursor yet that is the first row, so the first Tab
+   * into the list arrives at the top of it rather than nowhere.
+   */
+  mark() {
+    const rows = this.list.querySelectorAll("[data-index]");
+    const roving = this.selected < 0 ? 0 : this.selected;
+    rows.forEach((row, n) => {
+      row.setAttribute("data-active", String(n === this.selected));
+      row.tabIndex = n === roving ? 0 : -1;
+    });
   }
 
   current() {
     return this.hits[this.selected];
+  }
+
+  /**
+   * focusFilters is the f key.
+   *
+   * The first filter where the panel is on screen, and the disclosure that
+   * opens the panel where it is not, because below the medium breakpoint the
+   * facets are behind a button and focusing something inside a collapsed panel
+   * is focusing nothing.
+   */
+  focusFilters() {
+    const first = this.facets.querySelector("button");
+    if (first && first.offsetParent !== null) {
+      first.focus();
+      return;
+    }
+    if (this.toggle.offsetParent !== null) this.toggle.focus();
   }
 }
 

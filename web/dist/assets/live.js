@@ -46,6 +46,22 @@ export class Live {
     document.addEventListener("visibilitychange", () => this.visibility());
     window.addEventListener("online", () => this.connection(true));
     window.addEventListener("offline", () => this.connection(false));
+    // A page the browser puts in its back forward cache is frozen with its
+    // connections still open, and a browser allows six of them to one origin.
+    // Six pages back through the history, each holding a stream, is a live page
+    // that cannot fetch anything at all: the request queues behind connections
+    // belonging to documents nobody is looking at. That is how a grid of
+    // thumbnails came to wait forty seconds for an endpoint answering in two
+    // milliseconds. So the stream is dropped on the way out and opened again if
+    // this page is the one that comes back.
+    window.addEventListener("pagehide", () => this.stop());
+    window.addEventListener("pageshow", (e) => {
+      if (!e.persisted) return;
+      this.retry = RETRY;
+      this.listen();
+      // However long this page spent frozen, it heard nothing during it.
+      this.onRefresh("visible");
+    });
     this.tick();
     this.listen();
   }
@@ -81,6 +97,19 @@ export class Live {
     this.retry = RETRY;
     this.onRefresh("online");
     this.listen();
+  }
+
+  /**
+   * stop drops the stream without arranging for another one.
+   *
+   * The stream is cleared before the abort so that the handler below sees a
+   * page that no longer wants one, rather than a drop worth reconnecting from.
+   */
+  stop() {
+    const controller = this.stream;
+    if (!controller) return;
+    this.stream = null;
+    controller.abort();
   }
 
   /**

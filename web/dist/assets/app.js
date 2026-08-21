@@ -9,6 +9,7 @@ import { h, replace, svg } from "./dom.js";
 import { api, identity, setIdentity, ApiError } from "./api.js";
 import { cache } from "./cache.js";
 import { Live } from "./live.js";
+import { copies, copy } from "./clipboard.js";
 import * as urlState from "./state.js";
 import { followable, icon, initials, label, number, sourceColor, when } from "./format.js";
 import { Omnibox, modifierLabel, shortcutLabel } from "./omnibox.js";
@@ -73,13 +74,19 @@ class App {
       onOpen: (id) => this.open(id),
       onHover: (id) => this.guessDocument(id),
       onSay: (text) => this.say(text),
+      onCursor: (i) => this.rememberCursor(i),
     });
     this.home = new Home({
       onQuery: (q) => this.go({ ...urlState.read(""), ...q }),
       onOpen: (id) => this.open(id),
     });
     this.drawer = new Drawer({
-      onClose: () => this.go({ ...this.query, open: "" }, { replace: true }),
+      onClose: () => {
+        this.go({ ...this.query, open: "" }, { replace: true });
+        // Back to the row it was opened from rather than to the top of the
+        // page, which is the whole reason the cursor is in the URL.
+        this.results.focusCursor();
+      },
       onSay: (text) => this.say(text),
     });
     this.page = new Page({
@@ -356,11 +363,33 @@ class App {
 
   /** go pushes a new query into the URL and renders it. */
   go(query, opts = {}) {
-    const url = urlState.write(query);
+    const next = { ...query };
+    // A different question gets a fresh cursor, and the same question keeps
+    // the one it had. Opening a preview is the second case, which is what
+    // makes the way back from a preview land on the row it opened from.
+    if (!urlState.same(urlState.params(next, VERTICALS), urlState.params(this.query, VERTICALS))) {
+      next.cursor = -1;
+    }
+    const url = urlState.write(next);
     if (opts.replace) history.replaceState(null, "", url);
     else history.pushState(null, "", url);
     this.query = urlState.read();
     this.sync();
+  }
+
+  /**
+   * rememberCursor writes the row somebody is on into the address bar.
+   *
+   * Replace rather than push, because twenty presses of j are one journey and
+   * not twenty, and back from a result should leave the results rather than
+   * walk up the page a row at a time. Nothing is fetched and nothing is
+   * rendered: the cursor is not part of the request, so the answer on screen is
+   * already the answer to this URL.
+   */
+  rememberCursor(i) {
+    if (this.query.cursor === i) return;
+    this.query = { ...this.query, cursor: i };
+    history.replaceState(null, "", urlState.write(this.query));
   }
 
   /** sync renders whatever the URL currently says. */
@@ -689,10 +718,17 @@ class App {
       ["Focus search", [shortcutLabel()]],
       ["Next result", ["j"]],
       ["Previous result", ["k"]],
+      ["First result", ["Home"]],
+      ["Last result", ["End"]],
       ["Open preview", ["Enter"]],
       ["Open as a page, in a new tab", [modifierLabel(), "Enter"]],
       ["Open in source", ["o"]],
+      ["Copy a link to this result", ["y"]],
+      ["Previous page", ["["]],
+      ["Next page", ["]"]],
+      ["Filters", ["f"]],
       ["Go home", ["g", "h"]],
+      ["Recent", ["g", "s"]],
       ["Close", ["Esc"]],
       ["This list", ["?"]],
     ];
@@ -735,6 +771,46 @@ class App {
     );
     document.body.appendChild(dialog);
     dialog.querySelector(".dialog__panel").focus();
+  }
+
+  /**
+   * page is the bracket keys: the page before this one and the page after.
+   *
+   * It reports whether it did anything, so that a bracket typed on the last
+   * page is a bracket rather than a key that was quietly swallowed.
+   */
+  page(delta) {
+    const limit = this.query.limit || 20;
+    const offset = (this.query.offset || 0) + delta * limit;
+    if (offset < 0 || offset >= this.results.total) return false;
+    this.go({ ...this.query, offset, open: "" });
+    return true;
+  }
+
+  /**
+   * copyLink is the y key: a link to the result under the cursor.
+   *
+   * The link is this product's address for the document rather than the
+   * source's, which is the same choice the title makes and for the same reason:
+   * a connector's URL is whatever it found, and for a file that is a file://
+   * URL that nobody can follow from a message.
+   */
+  copyLink() {
+    const hit = this.results.current();
+    if (!hit) return false;
+    const link = new URL(urlState.documentPath(hit.id), location.origin).href;
+    const row = this.results.list.querySelector(`[data-index="${this.results.selected}"]`);
+    const button = row && row.querySelector(".icon-button--copy");
+    // The tick where there is a control to draw it on, so the keyboard and the
+    // pointer produce the same answer, and the spoken sentence either way.
+    if (button) copies(button, link, (text) => this.say(text));
+    else copy(link, (text) => this.say(text));
+    return true;
+  }
+
+  /** inList reports whether focus is on a row of the result list. */
+  inList() {
+    return this.results.list.contains(document.activeElement);
   }
 
   bindKeys() {
@@ -792,6 +868,26 @@ class App {
           e.preventDefault();
           this.results.move(-1);
           break;
+        // The arrow keys move inside the list and only inside it. A page has
+        // one scrollbar and somebody reading a preview with the arrow keys is
+        // scrolling it, so these are answered where the pattern says they are:
+        // when focus is in the widget they belong to.
+        case "ArrowDown":
+          if (!this.inList()) return;
+          e.preventDefault();
+          this.results.move(1);
+          break;
+        case "ArrowUp":
+          if (!this.inList()) return;
+          e.preventDefault();
+          this.results.move(-1);
+          break;
+        case "Home":
+        case "End":
+          if (this.drawer.open || !this.results.hits.length) return;
+          e.preventDefault();
+          this.results.edge(e.key === "Home" ? "first" : "last");
+          break;
         case "Enter":
         case "p": {
           const hit = this.results.current();
@@ -810,6 +906,20 @@ class App {
           window.open(hit.url, "_blank", "noreferrer");
           break;
         }
+        case "[":
+        case "]":
+          if (this.page(e.key === "]" ? 1 : -1)) e.preventDefault();
+          break;
+        case "f":
+          // Not from inside the preview, which is modal. Moving focus behind a
+          // modal is the one way out of a focus trap that nobody asked for.
+          if (this.drawer.open) return;
+          e.preventDefault();
+          this.results.focusFilters();
+          break;
+        case "y":
+          if (this.copyLink()) e.preventDefault();
+          break;
         case "?":
           e.preventDefault();
           this.shortcuts();
