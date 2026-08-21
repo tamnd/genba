@@ -97,6 +97,25 @@ async function get(path, params, opts = {}) {
 }
 
 /**
+ * recordOpen tells the server that this document was read.
+ *
+ * keepalive, because this fires on the way to somewhere else and a plain fetch
+ * is cancelled when the page that started it goes away, which is exactly the
+ * navigation being recorded. Nothing waits for the answer and nothing reports a
+ * failure: a lost entry in a recency list is not worth interrupting a read for,
+ * and the read itself has already happened by the time this is called.
+ */
+function recordOpen(id) {
+  if (!id) return;
+  fetch(BASE + "/recent", {
+    method: "POST",
+    headers: { ...headers(), "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+    keepalive: true,
+  }).catch(() => {});
+}
+
+/**
  * events reads the index change stream.
  *
  * EventSource would be the obvious way to do this and cannot be used, because
@@ -166,6 +185,10 @@ export const api = {
   me: (opts) => get("/me", {}, opts),
   stats: (opts) => get("/stats", {}, opts),
   search: (query, opts) => get("/search", query, opts),
+  // One request for both halves of the recent screen, because the screen asks
+  // both questions at once and a screen that paints in two stages paints twice.
+  recent: (limit, opts) => get("/recent", { limit }, opts),
+  recordOpen,
   suggest: (q, opts) => get("/suggest", { q }, opts),
   document: (id, opts) => get(`/documents/${encodeURIComponent(id)}`, {}, opts),
   content: (id, opts) => bytes(`/documents/${encodeURIComponent(id)}/content`, opts),

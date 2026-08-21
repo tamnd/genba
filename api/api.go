@@ -158,6 +158,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/documents/{id}", s.authenticated(s.handleDocument))
 	mux.Handle("GET /api/v1/documents/{id}/content", s.authenticated(s.handleContent))
 	mux.Handle("GET /api/v1/documents/{id}/thumbnail", s.authenticated(s.handleThumbnail))
+	mux.Handle("GET /api/v1/recent", s.authenticated(s.handleRecent))
+	mux.Handle("POST /api/v1/recent", s.authenticated(s.handleRecordOpen))
 	mux.Handle("GET /api/v1/stats", s.authenticated(s.handleStats))
 	mux.Handle("GET /api/v1/events", s.authenticated(s.handleEvents))
 	if s.assets != nil {
@@ -308,20 +310,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Pri
 		Hits:    []searchHit{},
 	}
 	for _, h := range res.Hits {
-		out.Hits = append(out.Hits, searchHit{
-			ID:         h.Document.ID,
-			Title:      h.Document.Title,
-			URL:        h.Document.URL,
-			Source:     h.Document.Source,
-			Kind:       string(h.Document.Kind),
-			Container:  h.Document.Container,
-			Author:     personName(h.Document.Author),
-			MediaType:  h.Document.Properties[doc.MediaType],
-			ModifiedAt: h.Document.ModifiedAt,
-			Snippet:    h.Snippet,
-			Passages:   passages(h.Passages),
-			Score:      h.Score,
-		})
+		hit := hitOf(h.Document)
+		hit.Snippet, hit.Passages, hit.Score = h.Snippet, passages(h.Passages), h.Score
+		out.Hits = append(out.Hits, hit)
 	}
 	writeConditional(w, r, http.StatusOK, out, out.identity())
 }

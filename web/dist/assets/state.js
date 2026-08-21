@@ -7,12 +7,15 @@
 
 const LIST_KEYS = ["source", "kind", "container", "author", "owner"];
 
-// The one screen that is a path rather than a query string.
+// The two screens that are a path rather than a query string.
 //
 // A document is the thing somebody pastes into a message, so it gets an address
 // that survives being read out loud and does not carry the state of whoever
-// found it. Everything else is a view of a search and belongs in the query.
+// found it. Recent is a path because it is not a view of a search: it answers
+// what has been going on rather than what matches, and a rail entry that ran a
+// recency sorted search was answering the wrong question with the right rows.
 const DOCUMENT = "/d/";
+export const RECENT = "/recent";
 
 /**
  * route says which screen the path names.
@@ -21,6 +24,7 @@ const DOCUMENT = "/d/";
  * of a document page reaches this function rather than a 404.
  */
 export function route(pathname = location.pathname) {
+  if (pathname === RECENT) return { name: "recent", id: "" };
   if (!pathname.startsWith(DOCUMENT)) return { name: "search", id: "" };
   const id = decode(pathname.slice(DOCUMENT.length));
   return id ? { name: "document", id } : { name: "search", id: "" };
@@ -78,8 +82,15 @@ function cursorOf(value) {
   return Number.isInteger(n) && n >= 0 ? n : -1;
 }
 
-/** write turns a query back into a query string, leaving out the defaults. */
-export function write(query) {
+/**
+ * write turns a query back into an address, leaving out the defaults.
+ *
+ * The path is a parameter because two screens carry this state now. Opening a
+ * preview from the recent screen has to stay on the recent screen, and a
+ * function that always wrote a slash would have quietly moved somebody to the
+ * search every time they pressed Enter on a row.
+ */
+export function write(query, path = "/") {
   const params = new URLSearchParams();
   if (query.q) params.set("q", query.q);
   for (const key of LIST_KEYS) {
@@ -94,7 +105,7 @@ export function write(query) {
   // Rooted rather than relative, because a search reached from a document page
   // is a search and not a document with a query string stuck on the end of it.
   const s = params.toString();
-  return s ? `/?${s}` : "/";
+  return s ? `${path}?${s}` : path;
 }
 
 /**

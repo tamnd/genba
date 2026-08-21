@@ -1,24 +1,29 @@
 // The home screen.
 //
-// It answers "what is in here and what changed" without anybody having to
-// think of a query first. Everything on it is a real query against the same
-// API the search page uses, so nothing here can show a document the person
-// could not have found by searching for it.
+// It answers three questions and nothing else. What is in here, from the session
+// and the index statistics. What was I doing, from the recent endpoint and from
+// the searches this browser remembers. What is going on, which is what changed
+// in the corpus. Everything on it is a real read against the same API the search
+// page uses, so nothing here can show a document the person could not have found
+// by searching for it.
 
 import { h, replace } from "./dom.js";
 import { api } from "./api.js";
 import { cache } from "./cache.js";
+import { queries } from "./queries.js";
+import { LIMIT as RECENT_LIMIT } from "./recent.js";
 import { label, sourceColor, when, number, initials } from "./format.js";
 
-// RECENT is the query behind the what changed panel. It is a constant because
-// it is also a cache key, and a request built twice must be built the same way
-// twice or the second build is a miss.
-const RECENT = { sort: "recent", limit: 6 };
+// How many rows a panel on this screen carries. Home is a summary and the whole
+// answer is one click away, so six is a panel somebody reads rather than one
+// they scroll.
+const PANEL_ROWS = 6;
 
 export class Home {
-  constructor({ onQuery, onOpen }) {
+  constructor({ onQuery, onOpen, onVisit }) {
     this.onQuery = onQuery;
     this.onOpen = onOpen;
+    this.onVisit = onVisit;
     this.el = h("div", { class: "home" });
   }
 
@@ -26,12 +31,12 @@ export class Home {
    * render paints the home screen, from cache if there is one.
    *
    * Home is the destination of the back button and of the brand in the rail, so
-   * it is loaded far more often than it is loaded for the first time. Both
-   * panels are painted from whatever is held, and repainted only if the check
-   * behind them comes back with something different.
+   * it is loaded far more often than it is loaded for the first time. Both reads
+   * are painted from whatever is held, and repainted only if the check behind
+   * them comes back with something different.
    */
   async render(session) {
-    const recentKey = cache.key("search", RECENT);
+    const recentKey = cache.key("recent", { limit: RECENT_LIMIT });
     const statsKey = cache.key("stats", {});
     let recent = cache.read(recentKey).data || null;
     let stats = cache.read(statsKey).data || null;
@@ -42,7 +47,7 @@ export class Home {
     // not a change, and again only if the server disagreed with it.
     await Promise.all([
       cache
-        .swr(recentKey, (opts) => api.search(RECENT, opts), (d) => {
+        .swr(recentKey, (opts) => api.recent(RECENT_LIMIT, opts), (d) => {
           if (d === recent) return;
           recent = d;
           changed = true;
@@ -73,8 +78,10 @@ export class Home {
         ? h(
             "div",
             { class: "home__grid" },
-            this.recentPanel(recent),
-            this.sourcesPanel(session, recent),
+            this.openedPanel(recent),
+            this.changedPanel(recent),
+            this.searchesPanel(),
+            this.sourcesPanel(session),
             this.statsPanel(stats, session),
             this.tipsPanel(),
           )
@@ -95,36 +102,97 @@ export class Home {
     );
   }
 
-  recentPanel(res) {
-    const hits = (res && res.hits) || [];
+  /**
+   * openedPanel is what this person was reading.
+   *
+   * It comes from the server rather than from this browser, because the whole
+   * value of the list is that it follows somebody from the laptop to the desk
+   * machine. It is also the panel that is empty on a first visit, and an empty
+   * panel that says why is better than one that is missing.
+   */
+  openedPanel(recent) {
+    const opened = (recent && recent.opened) || [];
     return h(
       "section",
       { class: "panel" },
-      h(
-        "div",
-        { class: "panel__head" },
-        h("h2", { class: "panel__title" }, "Recently updated"),
-        h(
-          "button",
-          { class: "panel__link", type: "button", onClick: () => this.onQuery({ q: "", sort: "recent" }) },
-          "See all",
-        ),
-      ),
-      hits.length
-        ? hits.map((hit) =>
-            h(
-              "button",
-              { class: "panel__row", type: "button", onClick: () => this.onOpen(hit.id) },
-              h("span", { class: "source__dot", style: { background: sourceColor(hit.source) } }),
-              h("span", { class: "panel__row-title" }, hit.title || hit.id),
-              h("span", { class: "panel__row-meta" }, when(hit.modified_at)),
-            ),
-          )
+      this.head("Recently opened"),
+      opened.length
+        ? opened.slice(0, PANEL_ROWS).map((hit) => this.documentRow(hit, hit.at))
+        : h("p", { class: "meta" }, "Nothing yet. Whatever you open shows up here, on any machine you sign in from."),
+    );
+  }
+
+  /** changedPanel is what moved in the corpus, which is nobody's history. */
+  changedPanel(recent) {
+    const changed = (recent && recent.changed) || [];
+    return h(
+      "section",
+      { class: "panel" },
+      this.head("Recently updated"),
+      changed.length
+        ? changed.slice(0, PANEL_ROWS).map((hit) => this.documentRow(hit, hit.modified_at))
         : h("p", { class: "meta" }, "Nothing has been indexed yet."),
     );
   }
 
-  sourcesPanel(session, res) {
+  /** head is a panel title with the way to the whole list beside it. */
+  head(title) {
+    return h(
+      "div",
+      { class: "panel__head" },
+      h("h2", { class: "panel__title" }, title),
+      h(
+        "a",
+        {
+          class: "panel__link",
+          href: "/recent",
+          onClick: (e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+            e.preventDefault();
+            this.onVisit("/recent");
+          },
+        },
+        "See all",
+      ),
+    );
+  }
+
+  documentRow(hit, at) {
+    return h(
+      "button",
+      { class: "panel__row", type: "button", onClick: () => this.onOpen(hit.id) },
+      h("span", { class: "source__dot", style: { background: sourceColor(hit.source) } }),
+      h("span", { class: "panel__row-title" }, hit.title || hit.id),
+      h("span", { class: "panel__row-meta" }, when(at)),
+    );
+  }
+
+  /**
+   * searchesPanel is what this person searched for, from this browser.
+   *
+   * The one panel on the screen that is not a read. A query is somebody's own
+   * input rather than corpus content, so it stays on their machine, which is
+   * written down in the client cache specification and is why this list is empty
+   * in a fresh browser even when the opened list is not.
+   */
+  searchesPanel() {
+    const held = queries();
+    if (!held.length) return null;
+    return h(
+      "section",
+      { class: "panel" },
+      h("div", { class: "panel__head" }, h("h2", { class: "panel__title" }, "Your searches")),
+      held.slice(0, PANEL_ROWS).map((q) =>
+        h(
+          "button",
+          { class: "panel__row", type: "button", onClick: () => this.onQuery({ q }) },
+          h("span", { class: "panel__row-title" }, q),
+        ),
+      ),
+    );
+  }
+
+  sourcesPanel(session) {
     const sources = (session && session.sources) || [];
     return h(
       "section",

@@ -157,6 +157,16 @@ async function walk() {
     "document.querySelector('#rail-sources').children.length === 0",
   );
 
+  // The part of the page that scrolls is a tab stop of its own, so a screen
+  // whose rows have not arrived yet can still be scrolled and read. Everything
+  // else on this walk is content, and content is exactly what is missing in the
+  // moment this covers.
+  await check(
+    session,
+    "the region that scrolls can be reached from the keyboard",
+    "document.querySelector('#main').tabIndex === 0",
+  );
+
   // The two boundaries the corpus above cannot show, asked of the function
   // directly. It is a module in the page, so the browser is the test runner and
   // there is nothing to install.
@@ -359,6 +369,96 @@ async function walk() {
     session,
     "a second Escape clears the field",
     "document.querySelector('.omnibox__input').value === ''",
+  );
+
+  // The recent screen. It is the one screen made of somebody's own history
+  // rather than of the corpus, so the walk has to make some history first and
+  // then go and look for it.
+  await visit(session, `${BASE}/?q=cache`, "document.querySelectorAll('.result').length > 0");
+  const read = await evaluate(session, "document.querySelector('.result__title').textContent.trim()");
+  await evaluate(session, "document.querySelector('.result__title').click()");
+  await settle(session, "!document.querySelector('.drawer').hidden");
+  await press(session, "Escape", "Escape", 27);
+
+  // Through the rail rather than by typing the address, because being one click
+  // away from every other screen is the reason it is on the rail at all.
+  await evaluate(session, "document.querySelector('.rail__link[data-route=\"recent\"]').click()");
+  await settle(session, "location.pathname === '/recent'");
+  await check(
+    session,
+    "the rail leads to the recent screen and says which entry you are on",
+    `document.querySelector('.rail__link[data-route="recent"]').getAttribute('aria-current') === 'page' &&
+      !document.querySelector('.rail__link[data-route="home"]').hasAttribute('aria-current')`,
+  );
+
+  await check(
+    session,
+    "the two halves are two lists with names of their own",
+    `(() => {
+      const lists = [...document.querySelectorAll('.recent [role="list"]')];
+      const names = lists.map((l) => l.getAttribute('aria-label'));
+      return lists.length === 2 && names.every(Boolean) && names[0] !== names[1];
+    })()`,
+  );
+
+  // The assertion the whole endpoint exists for. Opening a document from a
+  // search is recorded on the server, so it is there on the next screen and
+  // would be there on another machine.
+  await settle(session, "document.querySelectorAll('.recent .result').length > 0");
+  await check(
+    session,
+    "a document opened from a search is at the top of your own history",
+    `(() => {
+      const first = document.querySelector('.recent [aria-label="Documents you opened"] .result');
+      return Boolean(first) && first.querySelector('.result__title').textContent.trim() === ${JSON.stringify(read)};
+    })()`,
+  );
+
+  await check(
+    session,
+    "a row of history is the same row as a result, with the time it was read on it",
+    `(() => {
+      const first = document.querySelector('.recent [aria-label="Documents you opened"] .result');
+      const at = first && first.querySelector('.result__meta time[datetime]:last-of-type');
+      return Boolean(at) && at.textContent.includes('you opened this');
+    })()`,
+  );
+
+  await press(session, "j", "KeyJ", 74);
+  await check(
+    session,
+    "j walks the list of what you read rather than the one under it",
+    `document.querySelector('.recent [aria-label="Documents you opened"]').contains(document.activeElement) &&
+      document.activeElement.dataset.index === '0'`,
+  );
+
+  await press(session, "Enter", "Enter", 13);
+  await check(
+    session,
+    "Enter opens the preview without leaving the recent screen",
+    `!document.querySelector('.drawer').hidden && location.pathname === '/recent' &&
+      location.search.includes('open=')`,
+  );
+
+  await press(session, "Escape", "Escape", 27);
+  await check(
+    session,
+    "Escape closes it and leaves the cursor on the row it opened from",
+    `document.querySelector('.drawer').hidden && !location.search.includes('open=') &&
+      document.querySelector('.recent [aria-label="Documents you opened"]').contains(document.activeElement)`,
+  );
+
+  // Home asks the same question of the same endpoint and shows the top of the
+  // answer, with the way to the whole of it beside the heading.
+  await visit(session, `${BASE}/`, "document.querySelectorAll('.home .panel').length > 0");
+  await check(
+    session,
+    "home shows what was opened and what changed, with a real link to the rest",
+    `(() => {
+      const links = [...document.querySelectorAll('.home .panel__link')];
+      const rows = document.querySelectorAll('.home .panel__row-title').length;
+      return links.length >= 2 && links.every((a) => a.getAttribute('href') === '/recent') && rows > 0;
+    })()`,
   );
 
   // The grid. The pictures behind this query are written into the corpus by the

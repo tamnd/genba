@@ -17,6 +17,8 @@ import { Results, VERTICALS, verticalsFor } from "./results.js";
 import { Drawer } from "./drawer.js";
 import { Page } from "./page.js";
 import { Home } from "./home.js";
+import { Recent } from "./recent.js";
+import { forget, remember } from "./queries.js";
 
 const THEME_KEY = "genba.theme";
 const DENSITY_KEY = "genba.density";
@@ -59,13 +61,19 @@ class App {
     this.pageTimer = null;
     this.suggestionTimer = null;
     this.guessing = 0;
+    // The last document this session told the server about, so a page that
+    // renders itself again does not say it twice.
+    this.recorded = "";
     // The last results page this session painted, so that a document page has
     // somewhere to go back to. It is empty in a tab that opened straight onto a
     // document, which is the case the back link has to answer differently.
     this.lastSearch = "";
 
     this.omnibox = new Omnibox({
-      onSearch: (text) => this.go({ ...this.query, q: text, offset: 0, open: "" }),
+      // Explicitly the search, because the box is on every screen and a search
+      // run from the recent screen is a search rather than a recent screen with
+      // a query string on it.
+      onSearch: (text) => this.go({ ...this.query, q: text, offset: 0, open: "" }, { path: "/" }),
       onOpen: (id) => this.open(id),
       onHighlight: (item) => this.guessSuggestion(item),
     });
@@ -77,15 +85,22 @@ class App {
       onCursor: (i) => this.rememberCursor(i),
     });
     this.home = new Home({
-      onQuery: (q) => this.go({ ...urlState.read(""), ...q }),
+      onQuery: (q) => this.go({ ...urlState.read(""), ...q }, { path: "/" }),
       onOpen: (id) => this.open(id),
+      onVisit: (path) => this.visit(path),
+    });
+    this.recent = new Recent({
+      onOpen: (id) => this.open(id),
+      onHover: (id) => this.guessDocument(id),
+      onSay: (text) => this.say(text),
     });
     this.drawer = new Drawer({
       onClose: () => {
         this.go({ ...this.query, open: "" }, { replace: true });
         // Back to the row it was opened from rather than to the top of the
         // page, which is the whole reason the cursor is in the URL.
-        this.results.focusCursor();
+        const rows = this.rows();
+        if (rows) rows.focusCursor();
       },
       onSay: (text) => this.say(text),
     });
@@ -97,6 +112,14 @@ class App {
     this.main = h("main", {
       class: "main",
       id: "main",
+      // This element is what scrolls, and a region that scrolls has to be
+      // reachable from the keyboard, because Safari will not scroll one that
+      // focus cannot enter. Until now it passed for the wrong reason: every
+      // screen happened to have something focusable on it, which stops being
+      // true for the moment a screen is loading and its rows are placeholders.
+      // It is also where the skip link points, and a target with no tabindex is
+      // a skip link that scrolls without moving focus.
+      tabindex: "0",
       // The header carries a hairline only once there is something scrolled
       // under it, so a page at rest has one less line on it.
       onScroll: () => {
@@ -231,7 +254,10 @@ class App {
             class: "rail__link",
             href: "/",
             title: "Home",
-            "aria-current": this.query.q || urlState.count(this.query) ? null : "page",
+            // Which entry is current is decided on every render rather than
+            // once here, because the rail is built when the shell is and
+            // outlives every screen it points at.
+            dataset: { route: "home" },
             onClick: (e) => this.link(e, {}),
           },
           svg(icon("home"), 20),
@@ -241,13 +267,14 @@ class App {
           "a",
           {
             class: "rail__link",
-            // Rooted. A query string on its own resolves against whatever path
-            // is showing, which was always the search until a document got a
-            // path of its own, and would otherwise make every rail entry a link
-            // back to the same document with a stray parameter on the end.
-            href: "/?sort=recent",
+            // A screen of its own rather than a recency sorted search. The two
+            // look alike and answer different questions: a search cannot say
+            // what this person read, and that is the half everybody comes here
+            // for.
+            href: urlState.RECENT,
             title: "Recent",
-            onClick: (e) => this.link(e, { q: "", sort: "recent" }),
+            dataset: { route: "recent" },
+            onClick: (e) => this.follow(e, urlState.RECENT),
           },
           svg(icon("clock"), 20),
           h("span", { class: "rail__label" }, "Recent"),
@@ -277,7 +304,31 @@ class App {
   link(e, query) {
     if (e.metaKey || e.ctrlKey || e.shiftKey) return;
     e.preventDefault();
-    this.go({ ...urlState.read(""), ...query });
+    // Rooted at the search. A query string on its own resolves against whatever
+    // path is showing, which was harmless while every path was the search and
+    // would now make every rail entry a link back to the document or the recent
+    // screen with a stray parameter on the end.
+    this.go({ ...urlState.read(""), ...query }, { path: "/" });
+  }
+
+  /** follow is the same thing for a rail entry that is a path rather than a query. */
+  follow(e, path) {
+    if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+    e.preventDefault();
+    this.visit(path);
+  }
+
+  /**
+   * visit moves to a screen that has an address rather than a query.
+   *
+   * The query is emptied rather than carried, because a filter belongs to the
+   * search it was set on and a sort belongs to a result list. Nothing on the
+   * recent screen is a view of either.
+   */
+  visit(path) {
+    if (location.pathname !== path || location.search) history.pushState(null, "", path);
+    this.query = urlState.read("");
+    this.sync();
   }
 
   async start() {
@@ -370,7 +421,7 @@ class App {
     if (!urlState.same(urlState.params(next, VERTICALS), urlState.params(this.query, VERTICALS))) {
       next.cursor = -1;
     }
-    const url = urlState.write(next);
+    const url = urlState.write(next, opts.path === undefined ? this.here() : opts.path);
     if (opts.replace) history.replaceState(null, "", url);
     else history.pushState(null, "", url);
     this.query = urlState.read();
@@ -389,16 +440,28 @@ class App {
   rememberCursor(i) {
     if (this.query.cursor === i) return;
     this.query = { ...this.query, cursor: i };
-    history.replaceState(null, "", urlState.write(this.query));
+    history.replaceState(null, "", urlState.write(this.query, this.here()));
+  }
+
+  /**
+   * here is the path the query state currently belongs to.
+   *
+   * Two screens carry it: the search and the recent list. A document page never
+   * does, so a go from one of those is a go back to the search, which is the
+   * only place its query came from.
+   */
+  here() {
+    return urlState.route().name === "recent" ? urlState.RECENT : "/";
   }
 
   /** sync renders whatever the URL currently says. */
   sync() {
-    // Two routes: a document by path, and everything else by query string. A
-    // document is the only screen somebody links to from outside the product,
-    // which is why it is the only one with an address that does not carry the
-    // state of whoever found it.
+    // Three routes: a document and the recent list by path, and everything else
+    // by query string. A document is the only screen somebody links to from
+    // outside the product, which is why it is the only one with an address that
+    // does not carry the state of whoever found it.
     const route = urlState.route();
+    this.markRail();
     if (route.name === "document") {
       this.showDocument(route.id);
       return;
@@ -408,7 +471,8 @@ class App {
     this.omnibox.value = this.query.q;
     const searching = Boolean(this.query.q) || urlState.count(this.query) > 0 || Boolean(this.query.sort);
 
-    if (searching) this.search();
+    if (route.name === "recent") this.showRecent();
+    else if (searching) this.search();
     else this.showHome();
 
     if (this.query.open && this.drawer.currentId !== this.query.open) {
@@ -428,6 +492,10 @@ class App {
    */
   async showDocument(id) {
     this.currentKey = "";
+    // Both ways in count. A document reached by its own address, from a link
+    // somebody was sent or from a new tab, was read exactly as much as one
+    // opened in the preview beside a list.
+    this.record(id);
     this.drawer.currentId = null;
     if (this.drawer.open) this.drawer.close({ notify: false, focus: false });
     if (this.main.firstChild !== this.page.el) replace(this.main, this.page.el);
@@ -460,10 +528,45 @@ class App {
     await this.home.render(this.session);
   }
 
+  /**
+   * showRecent renders what this person opened and what changed.
+   *
+   * A failure only reaches the error screen when there is nothing to show. A
+   * check that failed behind a list already on screen keeps the list, for the
+   * same reason a search does: what is there was correct when it was painted,
+   * and the banner already says the connection is gone.
+   */
+  async showRecent() {
+    this.currentKey = this.recent.key();
+    if (this.main.firstChild !== this.recent.el) replace(this.main, this.recent.el);
+    try {
+      await this.recent.render();
+    } catch (err) {
+      if (err.name === "AbortError") return;
+      if (!this.recent.painted) this.fail(err);
+    }
+  }
+
+  /** markRail says which rail entry is the screen somebody is on. */
+  markRail() {
+    const searching = Boolean(this.query.q) || urlState.count(this.query) > 0 || Boolean(this.query.sort);
+    const route = urlState.route();
+    const here = route.name === "recent" ? "recent" : route.name === "search" && !searching ? "home" : "";
+    for (const link of this.rail.querySelectorAll("[data-route]")) {
+      if (link.dataset.route === here) link.setAttribute("aria-current", "page");
+      else link.removeAttribute("aria-current");
+    }
+  }
+
   async search() {
     const showing = this.main.firstChild === this.results.el;
     if (!showing) replace(this.main, this.results.el);
     this.lastSearch = urlState.write(this.query);
+    // Their own words, on their own machine. It happens here rather than in the
+    // omnibox so that a search reached from a link or from the back button is
+    // remembered too, which is what makes the list a history rather than a log
+    // of what was typed.
+    remember(this.query.q);
 
     const request = urlState.params(this.query, VERTICALS);
     const k = cache.key("search", request);
@@ -652,7 +755,26 @@ class App {
   }
 
   open(id) {
+    this.record(id);
     this.go({ ...this.query, open: id }, { replace: true });
+  }
+
+  /**
+   * record tells the server this document was read, and forgets what it knew.
+   *
+   * Nothing waits for either half. The write is fire and forget by design, and
+   * the cache entry is marked stale rather than dropped, so the recent screen
+   * still paints instantly from what it holds and finds the new row on the
+   * revalidation behind that paint.
+   */
+  record(id) {
+    // The same document twice running is one read. A document page is rendered
+    // again on every background refresh, and without this the recency list
+    // would be a record of how long a tab was left open.
+    if (!id || this.recorded === id) return;
+    this.recorded = id;
+    api.recordOpen(id);
+    cache.invalidate(cache.key("recent", {}));
   }
 
   theme() {
@@ -704,6 +826,10 @@ class App {
     );
     if (identities === null) return;
 
+    // The searches go with the results. They are this person's own input, and
+    // the next person at this machine is not entitled to know what the last one
+    // was looking for.
+    forget();
     setIdentity({
       subject: subject.trim() || "dev",
       tenant: tenant.trim(),
@@ -788,6 +914,21 @@ class App {
   }
 
   /**
+   * rows is the list the keyboard is walking, or nothing.
+   *
+   * Two screens are made of rows now and the keys mean the same thing on both,
+   * so the shell asks which one is on screen rather than holding a reference to
+   * the results and hoping. Home and the document page have no list at all,
+   * which is why this returns nothing rather than an empty one: j on the home
+   * screen should be a j, not a silent no-op somewhere else.
+   */
+  rows() {
+    if (this.main.firstChild === this.results.el) return this.results.rows;
+    if (this.main.firstChild === this.recent.el) return this.recent.active();
+    return null;
+  }
+
+  /**
    * copyLink is the y key: a link to the result under the cursor.
    *
    * The link is this product's address for the document rather than the
@@ -796,11 +937,11 @@ class App {
    * URL that nobody can follow from a message.
    */
   copyLink() {
-    const hit = this.results.current();
+    const rows = this.rows();
+    const hit = rows && rows.current();
     if (!hit) return false;
     const link = new URL(urlState.documentPath(hit.id), location.origin).href;
-    const row = this.results.list.querySelector(`[data-index="${this.results.selected}"]`);
-    const button = row && row.querySelector(".icon-button--copy");
+    const button = rows.copyTarget();
     // The tick where there is a control to draw it on, so the keyboard and the
     // pointer produce the same answer, and the spoken sentence either way.
     if (button) copies(button, link, (text) => this.say(text));
@@ -808,9 +949,10 @@ class App {
     return true;
   }
 
-  /** inList reports whether focus is on a row of the result list. */
+  /** inList reports whether focus is on a row of a document list. */
   inList() {
-    return this.results.list.contains(document.activeElement);
+    const rows = this.rows();
+    return Boolean(rows && rows.holds());
   }
 
   bindKeys() {
@@ -826,7 +968,8 @@ class App {
       // The modifier means the same thing here as it does on a link: open it
       // over there and leave me where I am.
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !typing) {
-        const hit = this.results.current();
+        const rows = this.rows();
+        const hit = rows && rows.current();
         if (!hit) return;
         e.preventDefault();
         window.open(urlState.documentPath(hit.id), "_blank", "noreferrer");
@@ -843,10 +986,17 @@ class App {
       // disarms itself, so a stray g does nothing rather than waiting forever.
       if (chord === "g") {
         chord = null;
-        const destinations = { h: {}, s: { q: "", sort: "recent" }, a: { tab: "all" } };
+        // s is the recent screen, which is a path rather than a query, so it
+        // is the one destination in here that is not a search.
+        if (e.key === "s") {
+          e.preventDefault();
+          this.visit(urlState.RECENT);
+          return;
+        }
+        const destinations = { h: {}, a: { tab: "all" } };
         if (destinations[e.key]) {
           e.preventDefault();
-          this.go({ ...urlState.read(""), ...destinations[e.key] });
+          this.go({ ...urlState.read(""), ...destinations[e.key] }, { path: "/" });
         }
         return;
       }
@@ -861,36 +1011,38 @@ class App {
           setTimeout(() => (chord = null), 1200);
           break;
         case "j":
+        case "k": {
+          const rows = this.rows();
+          if (!rows) return;
           e.preventDefault();
-          this.results.move(1);
+          rows.move(e.key === "j" ? 1 : -1);
           break;
-        case "k":
-          e.preventDefault();
-          this.results.move(-1);
-          break;
+        }
         // The arrow keys move inside the list and only inside it. A page has
         // one scrollbar and somebody reading a preview with the arrow keys is
         // scrolling it, so these are answered where the pattern says they are:
         // when focus is in the widget they belong to.
         case "ArrowDown":
+        case "ArrowUp": {
           if (!this.inList()) return;
+          const rows = this.rows();
+          if (!rows) return;
           e.preventDefault();
-          this.results.move(1);
+          rows.move(e.key === "ArrowDown" ? 1 : -1);
           break;
-        case "ArrowUp":
-          if (!this.inList()) return;
-          e.preventDefault();
-          this.results.move(-1);
-          break;
+        }
         case "Home":
-        case "End":
-          if (this.drawer.open || !this.results.hits.length) return;
+        case "End": {
+          const rows = this.rows();
+          if (this.drawer.open || !rows || !rows.hits.length) return;
           e.preventDefault();
-          this.results.edge(e.key === "Home" ? "first" : "last");
+          rows.edge(e.key === "Home" ? "first" : "last");
           break;
+        }
         case "Enter":
         case "p": {
-          const hit = this.results.current();
+          const rows = this.rows();
+          const hit = rows && rows.current();
           if (!hit) return;
           e.preventDefault();
           this.open(hit.id);
@@ -900,7 +1052,8 @@ class App {
           // Only where a browser would go there. Opening a file:// URL in a new
           // tab from an HTTP page leaves somebody looking at a blank tab, which
           // is worse than the key doing nothing.
-          const hit = this.results.current();
+          const rows = this.rows();
+          const hit = rows && rows.current();
           if (!hit || !followable(hit.url)) return;
           e.preventDefault();
           window.open(hit.url, "_blank", "noreferrer");
@@ -912,8 +1065,9 @@ class App {
           break;
         case "f":
           // Not from inside the preview, which is modal. Moving focus behind a
-          // modal is the one way out of a focus trap that nobody asked for.
-          if (this.drawer.open) return;
+          // modal is the one way out of a focus trap that nobody asked for, and
+          // not from a screen with no filters on it either.
+          if (this.drawer.open || this.main.firstChild !== this.results.el) return;
           e.preventDefault();
           this.results.focusFilters();
           break;

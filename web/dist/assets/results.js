@@ -1,20 +1,9 @@
 // The results view: verticals, active filters, result rows and facets.
 
 import { h, replace, svg } from "./dom.js";
-import {
-  kindIcon,
-  sourceColor,
-  label,
-  when,
-  exact,
-  number,
-  duration,
-  icon,
-  followable,
-  copyable,
-} from "./format.js";
-import { tile, cover, shapeOf } from "./content.js";
-import { copies } from "./clipboard.js";
+import { label, number, duration, icon } from "./format.js";
+import { shapeOf } from "./content.js";
+import { RowList } from "./rows.js";
 import * as urlState from "./state.js";
 
 /**
@@ -77,14 +66,14 @@ const FACET_VISIBLE = 8;
 export class Results {
   constructor({ onQuery, onOpen, onHover, onSay, onCursor }) {
     this.onQuery = onQuery;
-    this.onOpen = onOpen;
-    this.onHover = onHover || (() => {});
-    this.onSay = onSay || (() => {});
-    this.onCursor = onCursor || (() => {});
     this.expanded = new Set();
-    this.selected = -1;
     this.hits = [];
     this.total = 0;
+    // The rows and the keyboard that walks them are shared with the recent
+    // screen. What is left in here is everything a result list has that a list
+    // of documents does not: the verticals, the filters, the count and the
+    // pager.
+    this.rows = new RowList({ onOpen, onHover, onSay, onCursor });
     // Empty until the session says what the corpus holds, so the strip is never
     // painted with tabs that are about to be taken away.
     this.verticals = [];
@@ -127,7 +116,7 @@ export class Results {
     this.progress = h("div", { class: "progress", hidden: true });
     this.chips = h("div", { class: "chips" });
     this.head = h("div", { class: "results__head" });
-    this.list = h("div", { class: "results__list", role: "list" });
+    this.list = this.rows.el;
     this.aside = h("div", { class: "results__aside" });
 
     this.el = h(
@@ -154,25 +143,12 @@ export class Results {
    */
   loading(query) {
     this.renderTabs(query, null);
+    // The list is emptied through the row list rather than around it, so that
+    // the cursor and the hits it walks go with the rows on screen.
+    this.hits = [];
+    this.rows.skeleton();
     replace(this.chips);
     replace(this.head, h("div", { class: "skeleton", style: { width: "180px", height: "16px" } }));
-    replace(
-      this.list,
-      Array.from({ length: 6 }, () =>
-        h(
-          "div",
-          // The skeleton rows sit inside the list, so they carry the role its
-          // children are supposed to carry. A placeholder that is not an item
-          // makes the list itself invalid while it is loading.
-          { class: "skeleton-result", role: "listitem" },
-          h("div", { class: "skeleton skeleton-result__tile" }),
-          h("div", { class: "skeleton", style: { width: "60%", height: "20px" } }),
-          h("div", { class: "skeleton", style: { width: "40%", height: "14px" } }),
-          h("div", { class: "skeleton", style: { width: "100%", height: "14px" } }),
-          h("div", { class: "skeleton", style: { width: "82%", height: "14px" } }),
-        ),
-      ),
-    );
     replace(this.aside);
     replace(this.facets);
   }
@@ -186,22 +162,15 @@ export class Results {
    */
   revalidating(on) {
     this.progress.hidden = !on;
-    this.list.setAttribute("aria-busy", String(Boolean(on)));
+    this.rows.busy(on);
   }
 
-  /**
-   * render draws one answer, cursor and all.
-   *
-   * The cursor is restored from the query rather than reset, because this
-   * function runs again on every repaint and on the way back from a preview,
-   * and a cursor that only lived in this object would be lost both times.
-   */
+  /** render draws one answer, cursor and all. */
   render(query, res) {
     this.hits = res.hits || [];
     // Kept because the paging keys have to know where the last page ends, and
     // the pager itself is rebuilt from the response every time.
     this.total = res.total || 0;
-    this.selected = query.cursor >= 0 && query.cursor < this.hits.length ? query.cursor : -1;
     this.renderTabs(query, res);
     this.renderChips(query);
     this.renderHead(query, res);
@@ -369,226 +338,8 @@ export class Results {
   // item, so a reader on a screen reader is told there are twenty one results
   // and the last one is a pair of buttons.
   renderList(query, res) {
-    if (!this.hits.length) {
-      this.list.dataset.view = "list";
-      replace(this.list);
-      replace(this.aside, emptyState(query, res, this.onQuery));
-      return;
-    }
-
-    const view = this.viewFor(query);
-    this.list.dataset.view = view;
-    // Every row on screen is about to be replaced, and one of them may be the
-    // element focus is on. Losing focus to the body in the middle of a
-    // background revalidation is how a keyboard interface quietly stops.
-    const held = this.list.contains(document.activeElement);
-    replace(
-      this.list,
-      this.hits.map((hit, i) => (view === "grid" ? this.cell(hit, i) : this.row(hit, i))),
-    );
-    // The row is the tab stop, so nothing inside a row is one. A list of twenty
-    // rows with a title and three buttons each is eighty tab stops between the
-    // search box and the pager, which is the thing the roving tabindex exists
-    // to prevent. Everything in here has a key of its own instead: Enter
-    // previews, o opens at the source and y copies the link.
-    for (const control of this.list.querySelectorAll("a[href], button")) control.tabIndex = -1;
-    this.mark();
-    // Focus is only ever put back, never taken. A repaint while somebody is
-    // typing in the search box must not pull the caret out of it.
-    if (held) this.focusCursor({ scroll: false });
-    replace(this.aside, pager(query, res, this.onQuery));
-  }
-
-  /**
-   * seat is what every row and every cell carries so the list is one tab stop.
-   *
-   * A list where each of twenty rows is a tab stop takes forty presses to get
-   * past, which is the case the roving tabindex pattern exists for. Exactly one
-   * of them is reachable with Tab and the arrow keys move which one that is.
-   *
-   * Roving tabindex here rather than aria-activedescendant, which is what the
-   * omnibox uses, because a row is genuinely focusable and a browser scrolls a
-   * focused element into view on its own.
-   */
-  seat(i) {
-    return {
-      role: "listitem",
-      tabindex: "-1",
-      dataset: { index: String(i) },
-      // Tabbing in lands on whichever row holds the zero, and clicking a row
-      // focuses it. Either way the cursor is now there, so j and k carry on
-      // from what somebody is looking at rather than from where they left off.
-      onFocus: () => this.at(i),
-    };
-  }
-
-  /**
-   * cell is one result in the grid.
-   *
-   * The picture is the result and everything else is a label under it, so the
-   * cell carries the title and one line of provenance and nothing more. A
-   * snippet is left out rather than truncated: an image has no text to snip, and
-   * the ones that do are the reason the list view still exists.
-   */
-  cell(hit, i) {
-    const open = () => this.onOpen(hit.id);
-    return h(
-      "article",
-      {
-        class: "cell",
-        ...this.seat(i),
-        onMouseenter: () => this.onHover(hit.id),
-        onMouseleave: () => this.onHover(null),
-        onClick: (e) => {
-          if (e.target.closest("a, button")) return;
-          open();
-        },
-      },
-      cover(hit),
-      h(
-        "a",
-        {
-          class: "cell__title",
-          href: urlState.documentPath(hit.id),
-          title: hit.title || hit.id,
-          onClick: (e) => {
-            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-            e.preventDefault();
-            open();
-          },
-        },
-        hit.title || hit.id,
-      ),
-      // Where it is, rather than what it is. A grid of pictures from one source
-      // is twenty four copies of the same word, and the folder a picture is in
-      // is the thing that tells two similar screenshots apart.
-      h(
-        "div",
-        { class: "cell__meta" },
-        h("span", { class: "source__dot", style: { background: sourceColor(hit.source) } }),
-        h("span", { class: "cell__where", title: hit.container || label(hit.source) }, hit.container || label(hit.source)),
-      ),
-    );
-  }
-
-  /**
-   * row is one result.
-   *
-   * A tile, then the title, then the line of provenance, then the snippet. The
-   * old order put provenance above the title, which meant the first thing on
-   * every row was the least distinguishing thing about it. The tile is the only
-   * part of a row that is not words, and for an image it is the whole answer.
-   */
-  row(hit, i) {
-    const open = () => this.onOpen(hit.id);
-    return h(
-      "article",
-      {
-        class: "result",
-        ...this.seat(i),
-        // A pointer resting on a row is a good guess at the next preview, and
-        // the shell is what decides how long resting means and how many of
-        // those guesses may be in the air at once.
-        onMouseenter: () => this.onHover(hit.id),
-        onMouseleave: () => this.onHover(null),
-        onClick: (e) => {
-          // Anything that is already a control handles its own click. A click
-          // on the rest of the row opens the preview, which is what somebody
-          // scanning a list wants and is cheaper than loading a page.
-          if (e.target.closest("a, button")) return;
-          open();
-        },
-      },
-      tile(hit),
-      // The title is an anchor to this document's own page, and the default is
-      // prevented on a plain left click so that the preview opens instead.
-      //
-      // It is an anchor rather than a button so that a middle click, a command
-      // click, the context menu and copying the link address all do what they
-      // do everywhere else on the web. It points at us rather than at the
-      // document's source, because a source URL is whatever a connector found
-      // and for the file connector that is a file:// URL, which a browser
-      // served over HTTP will not navigate to. Clicking the primary target on
-      // every row of a file corpus did nothing at all.
-      h(
-        "a",
-        {
-          class: "result__title",
-          href: urlState.documentPath(hit.id),
-          onClick: (e) => {
-            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
-            e.preventDefault();
-            open();
-          },
-        },
-        hit.title || hit.id,
-      ),
-      h(
-        "div",
-        { class: "result__meta" },
-        h(
-          "span",
-          { class: "source" },
-          h("span", { class: "source__dot", style: { background: sourceColor(hit.source) } }),
-          label(hit.source),
-        ),
-        h("span", { class: "crumbs__sep" }, "·"),
-        h("span", { class: "crumbs" }, svg(kindIcon(hit.kind), 14), label(hit.kind)),
-        hit.container && h("span", { class: "crumbs__sep" }, "·"),
-        hit.container && h("span", { class: "crumbs" }, hit.container),
-        hit.author && h("span", { class: "crumbs__sep" }, "·"),
-        hit.author && h("span", { class: "crumbs" }, hit.author),
-        hit.modified_at && h("span", { class: "crumbs__sep" }, "·"),
-        hit.modified_at &&
-          h("time", { title: exact(hit.modified_at), datetime: hit.modified_at }, when(hit.modified_at)),
-      ),
-      // A row with nothing to quote does not reserve the space for a quote. An
-      // image has no text in it, so every image row used to end in two empty
-      // lines, which is what made a list of screenshots look like a list of
-      // documents that had failed to load.
-      hasText(hit) && h("p", { class: "result__snippet" }, passages(hit)),
-      h(
-        "div",
-        { class: "result__actions" },
-        h(
-          "button",
-          { class: "icon-button", type: "button", title: "Preview (p)", "aria-label": "Preview", onClick: open },
-          svg(icon("preview"), 18),
-        ),
-        // Opening at the source is the secondary action, and it is only offered
-        // where it would work. Where it would not, the path is the useful thing
-        // to hand over, so the button copies it rather than pretending to be a
-        // link and doing nothing.
-        followable(hit.url)
-          ? h(
-              "a",
-              {
-                class: "icon-button",
-                href: hit.url,
-                target: "_blank",
-                rel: "noreferrer noopener",
-                title: "Open in source",
-                "aria-label": "Open in source",
-              },
-              svg(icon("external"), 18),
-            )
-          : hit.url &&
-            h(
-              "button",
-              {
-                // The class is how the y key finds this button, so that a
-                // copy from the keyboard draws the same tick as a copy from
-                // the pointer rather than happening invisibly.
-                class: "icon-button icon-button--copy",
-                type: "button",
-                title: "Copy path",
-                "aria-label": "Copy path",
-                onClick: (e) => copies(e.currentTarget, copyable(hit.url), this.onSay),
-              },
-              svg(icon("copy"), 18),
-            ),
-      ),
-    );
+    this.rows.render(this.hits, { view: this.viewFor(query), cursor: query.cursor });
+    replace(this.aside, this.hits.length ? pager(query, res, this.onQuery) : emptyState(query, res, this.onQuery));
   }
 
   renderFacets(query, res) {
@@ -648,71 +399,6 @@ export class Results {
     );
   }
 
-  /** move walks the cursor with j and k, or with the arrow keys. */
-  move(delta) {
-    if (!this.hits.length) return;
-    const next = Math.min(Math.max(this.selected + delta, 0), this.hits.length - 1);
-    this.select(next);
-  }
-
-  /** edge is Home and End: the first row and the last row on this page. */
-  edge(which) {
-    if (!this.hits.length) return;
-    this.select(which === "first" ? 0 : this.hits.length - 1);
-  }
-
-  /** select moves the cursor to a row and puts focus on it. */
-  select(i) {
-    this.at(i);
-    // Focus rather than scrollIntoView: the browser brings a focused element
-    // into view on its own, and a row that is highlighted but not focused is a
-    // row a screen reader is not reading.
-    this.focusCursor();
-  }
-
-  /**
-   * focusCursor puts focus on the row the cursor is on, if there is one.
-   *
-   * It is also the way back from the preview. The drawer keeps a reference to
-   * whatever had focus when it opened, and by the time it closes that row has
-   * been rebuilt by a repaint, so the element it remembers is not in the
-   * document any more. The cursor is, and it names the same row.
-   */
-  focusCursor(opts = {}) {
-    if (this.selected < 0) return;
-    const row = this.list.querySelector(`[data-index="${this.selected}"]`);
-    if (row) row.focus({ preventScroll: opts.scroll === false });
-  }
-
-  /** at records where the cursor is without touching focus. */
-  at(i) {
-    if (this.selected === i) return;
-    this.selected = i;
-    this.mark();
-    this.onCursor(i);
-  }
-
-  /**
-   * mark writes the cursor into the list.
-   *
-   * Both layouts, by the attribute they share rather than by class, so j and k
-   * walk a grid exactly as they walk a list. Exactly one row holds the zero,
-   * and where there is no cursor yet that is the first row, so the first Tab
-   * into the list arrives at the top of it rather than nowhere.
-   */
-  mark() {
-    const rows = this.list.querySelectorAll("[data-index]");
-    const roving = this.selected < 0 ? 0 : this.selected;
-    rows.forEach((row, n) => {
-      row.setAttribute("data-active", String(n === this.selected));
-      row.tabIndex = n === roving ? 0 : -1;
-    });
-  }
-
-  current() {
-    return this.hits[this.selected];
-  }
-
   /**
    * focusFilters is the f key.
    *
@@ -744,24 +430,6 @@ function countFor(res, vertical) {
 
 function labelFor(field) {
   return { source: "Source", kind: "Type", container: "In", author: "Person" }[field] || field;
-}
-
-/**
- * passages renders the snippet with the matched words marked.
- *
- * The server decided which runs matched, using the analyzer that produced the
- * index. Marking them here with a substring search instead would highlight
- * things the index never matched, which teaches people the wrong thing about
- * why a result came back.
- */
-/** hasText reports whether the server found anything in this hit worth quoting. */
-function hasText(hit) {
-  return Boolean((hit.passages && hit.passages.length) || hit.snippet);
-}
-
-function passages(hit) {
-  if (!hit.passages || !hit.passages.length) return hit.snippet || "";
-  return hit.passages.map((p) => (p.match ? h("mark", {}, p.text) : document.createTextNode(p.text)));
 }
 
 function pager(query, res, onQuery) {

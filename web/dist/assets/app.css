@@ -167,6 +167,13 @@ time {
   overflow-y: auto;
 }
 
+/* The scrolling region takes focus, so the ring is drawn inside it. The default
+   offset would put it outside the viewport on three sides, which is a ring
+   nobody can see on the one element that fills the screen. */
+.main:focus-visible {
+  outline-offset: -2px;
+}
+
 /* Rail ------------------------------------------------------------------- */
 
 .brand {
@@ -1156,10 +1163,18 @@ mark::after {
 
 /* Home ------------------------------------------------------------------- */
 
-.home {
+.home,
+.recent {
   max-width: var(--page-max);
   margin: 0 auto;
   padding: var(--space-16) var(--gutter) var(--space-24);
+}
+
+/* The two halves of the recent screen are two answers, and the space between
+   them is what says so. There is no rule and no card: the heading and the gap
+   do the separating, which is the same argument the panels make. */
+.recent__section + .recent__section {
+  margin-top: var(--space-16);
 }
 
 .home__greeting {

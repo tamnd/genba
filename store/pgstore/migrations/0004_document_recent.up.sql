@@ -1,0 +1,14 @@
+-- document_recent answers what changed in the corpus, which is a query with no
+-- terms to cut the match set with.
+--
+-- document_modified is on the column alone and is no use to it, because the
+-- predicate fixes the tenant and the ordering follows, so the planner sorts
+-- every visible document to answer a request for twenty rows. With the tenant
+-- and the queryable flag in front of the date the same request is a walk down
+-- the index that stops when the page is full.
+--
+-- The nulls ordering is part of the index rather than left to the default,
+-- because the query says DESC NULLS LAST and an index built the other way is an
+-- index the planner will not use for it. The id is in it so the tie break does
+-- not put the sort back.
+CREATE INDEX document_recent ON document (tenant, queryable, modified_at DESC NULLS LAST, id);
