@@ -13,6 +13,7 @@ import { cache } from "./cache.js";
 import { queries } from "./queries.js";
 import { LIMIT as RECENT_LIMIT } from "./recent.js";
 import { label, sourceColor, when, number, initials } from "./format.js";
+import { firstRun } from "./states.js";
 
 // How many rows a panel on this screen carries. Home is a summary and the whole
 // answer is one click away, so six is a panel somebody reads rather than one
@@ -66,6 +67,15 @@ export class Home {
 
   /** paint draws the screen, with skeletons standing in for what is not here. */
   paint(session, recent, stats) {
+    // An index with nothing in it gets the screen about that and not this one.
+    // A first install currently sees a dashboard reading zero in three places,
+    // which is the only first impression this program will ever get and is
+    // spent on a disappointment. Only once the count is known, because a
+    // dashboard that flashes the install screen while it loads is worse again.
+    if (stats && stats.documents === 0) {
+      replace(this.el, firstRun());
+      return;
+    }
     replace(
       this.el,
       h(

@@ -4,6 +4,7 @@ import { h, replace, svg } from "./dom.js";
 import { label, number, duration, icon } from "./format.js";
 import { shapeOf } from "./content.js";
 import { RowList } from "./rows.js";
+import { nothingMatched, slow, stopped } from "./states.js";
 import * as urlState from "./state.js";
 
 /**
@@ -69,6 +70,15 @@ export class Results {
     this.expanded = new Set();
     this.hits = [];
     this.total = 0;
+    // What the last paint was of, so that a sentence arriving after it can be
+    // added without asking the server the same question a second time. The
+    // answer to why there is nothing here is worked out in pieces: the search
+    // comes back first, what the filters removed comes back after it, and what
+    // the index holds may already be known or may still be in flight.
+    this.query = null;
+    this.res = null;
+    this.context = {};
+    this.waitingNow = false;
     // The rows and the keyboard that walks them are shared with the recent
     // screen. What is left in here is everything a result list has that a list
     // of documents does not: the verticals, the filters, the count and the
@@ -154,6 +164,60 @@ export class Results {
   }
 
   /**
+   * waiting says a request has gone on long enough to be worth a word about,
+   * and offers the way out of it.
+   *
+   * It goes under the skeleton rather than over it, because the skeleton is the
+   * shape of the answer and this is a remark about the wait. Nothing already on
+   * screen is touched: a person reading the previous answer while a slow check
+   * runs behind it has not asked for anything and does not need a control.
+   */
+  waiting(on, onCancel) {
+    if (on) {
+      this.waitingNow = true;
+      replace(this.aside, slow(onCancel));
+      return;
+    }
+    // Only what this put there. The same corner of the screen holds the pager
+    // and the empty state, and taking down a remark about a wait must not take
+    // down the answer that ended it.
+    if (!this.waitingNow) return;
+    this.waitingNow = false;
+    replace(this.aside);
+  }
+
+  /**
+   * cancelled is what a search that somebody stopped leaves behind.
+   *
+   * Only ever with nothing on screen. A cancelled check behind an answer that
+   * is already painted leaves that answer alone, because it was correct when it
+   * was painted and stopping the check did not change that.
+   */
+  cancelled(onRetry) {
+    this.hits = [];
+    this.rows.render([], { view: "list", cursor: -1 });
+    replace(this.head);
+    replace(this.facets);
+    replace(this.aside, stopped(onRetry));
+  }
+
+  /**
+   * knows adds to what the empty state is allowed to say, and repaints it.
+   *
+   * Two things arrive after a search does. What the same words match without the
+   * filters, which is a second search and only worth running when the first one
+   * came back with nothing. And how many documents are in the index at all,
+   * which decides whether an empty answer means nothing matched or nothing has
+   * been indexed. Both are additions to a state that reads correctly without
+   * them, so neither is waited for.
+   */
+  knows(more) {
+    this.context = { ...this.context, ...more };
+    if (this.hits.length || !this.query) return;
+    replace(this.aside, this.empty(this.query));
+  }
+
+  /**
    * revalidating shows that a cached answer is being checked.
    *
    * The content underneath is not dimmed, blurred or overlaid. Dimming stale
@@ -167,6 +231,12 @@ export class Results {
 
   /** render draws one answer, cursor and all. */
   render(query, res) {
+    this.query = query;
+    this.res = res;
+    // What the filters removed was measured against the previous query, so it
+    // is dropped here rather than carried. What the index holds is a fact about
+    // the corpus and survives.
+    this.context = { ...this.context, removed: null };
     this.hits = res.hits || [];
     // Kept because the paging keys have to know where the last page ends, and
     // the pager itself is rebuilt from the response every time.
@@ -221,29 +291,7 @@ export class Results {
   }
 
   renderChips(query) {
-    const active = [];
-    for (const { key, field } of FACETS) {
-      for (const value of query[key] || []) {
-        active.push(
-          h(
-            "span",
-            { class: "chip chip--on" },
-            `${labelFor(field)}: ${value}`,
-            h(
-              "button",
-              {
-                class: "chip__remove",
-                type: "button",
-                "aria-label": `Remove the ${labelFor(field)} filter ${value}`,
-                onClick: () => this.onQuery(urlState.toggle(query, key, value)),
-              },
-              svg(icon("close"), 14),
-            ),
-          ),
-        );
-      }
-    }
-
+    const active = chipsFor(query, this.onQuery);
     replace(
       this.chips,
       active,
@@ -339,7 +387,19 @@ export class Results {
   // and the last one is a pair of buttons.
   renderList(query, res) {
     this.rows.render(this.hits, { view: this.viewFor(query), cursor: query.cursor });
-    replace(this.aside, this.hits.length ? pager(query, res, this.onQuery) : emptyState(query, res, this.onQuery));
+    replace(this.aside, this.hits.length ? pager(query, res, this.onQuery) : this.empty(query));
+  }
+
+  /** empty is why there is nothing here, with everything known so far in it. */
+  empty(query) {
+    const chips = chipsFor(query, this.onQuery);
+    // The vertical is a filter that does not look like one, because it is a tab
+    // rather than a chip. On a page with nothing on it, a tab holding the whole
+    // answer back while the state lists the filters and does not mention it is
+    // the same dead end with better manners.
+    const vertical = this.verticals.find((v) => v.id === query.tab && v.id !== "all");
+    if (vertical) chips.push(tabChip(vertical, query, this.onQuery));
+    return nothingMatched(query, this.onQuery, { ...this.context, chips });
   }
 
   renderFacets(query, res) {
@@ -471,50 +531,53 @@ function pager(query, res, onQuery) {
 }
 
 /**
- * emptyState says why there is nothing here and offers the way out.
+ * chipsFor is one control per filter that is on, each removing only itself.
  *
- * The three cases are genuinely different. Nothing typed is not a failure.
- * Nothing matched with filters on is almost always the filters. Nothing matched
- * without filters is a query to change or a source that is not connected, and
- * saying so is better than a shrug.
+ * The same controls are offered above a list of results and inside the state
+ * that says there are none, because they are the same claim about what is on.
+ * Two sets built from the same query in two places is two chances to disagree
+ * about it.
  */
-function emptyState(query, res, onQuery) {
-  if (!query.q && urlState.count(query) === 0) {
-    return h(
-      "div",
-      { class: "state" },
-      h("span", { class: "state__icon" }, svg(icon("search"), 40)),
-      h("p", { class: "state__title" }, "Search your company"),
-      h("p", { class: "state__body" }, "Start typing above. Add app:, type:, in: or from: to narrow it down."),
-    );
-  }
-  if (urlState.count(query) > 0 || (query.tab && query.tab !== "all")) {
-    return h(
-      "div",
-      { class: "state" },
-      h("span", { class: "state__icon" }, svg(icon("slider"), 40)),
-      h("p", { class: "state__title" }, "No results with these filters"),
-      h("p", { class: "state__body" }, `Nothing matches ${query.q ? `"${query.q}"` : "this search"} in the selected filters.`),
-      h(
-        "div",
-        { class: "state__actions" },
-        h(
-          "button",
-          { class: "button button--primary", type: "button", onClick: () => onQuery(urlState.clear(query)) },
-          "Clear filters",
-        ),
-      ),
-    );
-  }
+function tabChip(vertical, query, onQuery) {
   return h(
-    "div",
-    { class: "state" },
-    h("span", { class: "state__icon" }, svg(icon("search"), 40)),
-    h("p", { class: "state__title" }, `Nothing found for "${query.q}"`),
+    "span",
+    { class: "chip chip--on" },
+    `Showing: ${vertical.title}`,
     h(
-      "p",
-      { class: "state__body" },
-      "Try fewer words, or check that the source you are looking in has finished indexing.",
+      "button",
+      {
+        class: "chip__remove",
+        type: "button",
+        "aria-label": `Search everything rather than ${vertical.title}`,
+        onClick: () => onQuery({ ...query, tab: "all", kind: [], offset: 0 }),
+      },
+      svg(icon("close"), 14),
     ),
   );
+}
+
+function chipsFor(query, onQuery) {
+  const out = [];
+  for (const { key, field } of FACETS) {
+    for (const value of query[key] || []) {
+      out.push(
+        h(
+          "span",
+          { class: "chip chip--on" },
+          `${labelFor(field)}: ${value}`,
+          h(
+            "button",
+            {
+              class: "chip__remove",
+              type: "button",
+              "aria-label": `Remove the ${labelFor(field)} filter ${value}`,
+              onClick: () => onQuery(urlState.toggle(query, key, value)),
+            },
+            svg(icon("close"), 14),
+          ),
+        ),
+      );
+    }
+  }
+  return out;
 }

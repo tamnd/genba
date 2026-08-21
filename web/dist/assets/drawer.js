@@ -14,6 +14,7 @@ import { copies } from "./clipboard.js";
 import { icon, label, sourceColor, when, exact, followable, copyable } from "./format.js";
 import { body as renderBody, shapeOf, detailOf } from "./content.js";
 import { reveal } from "./marks.js";
+import { NOT_AVAILABLE, NO_ACCESS } from "./states.js";
 import { documentPath } from "./state.js";
 
 export class Drawer {
@@ -175,18 +176,14 @@ export class Drawer {
 
   renderError(err) {
     // A document that is not there and a document this viewer may not read say
-    // the same thing, because a message that told them apart would let anybody
-    // enumerate what exists by reading the difference.
+    // the same thing, from the same two constants, because a message that told
+    // them apart would let anybody enumerate what exists by reading the
+    // difference.
     const missing = err.status === 404 || err.status === 403;
-    replace(this.title, missing ? "Not available" : "Could not load this document");
+    replace(this.title, missing ? NOT_AVAILABLE : "Could not load this document");
     replace(this.meta);
     this.body.dataset.shape = "text";
-    replace(
-      this.body,
-      missing
-        ? "This document no longer exists, or you do not have access to it."
-        : err.message,
-    );
+    replace(this.body, h("p", { class: "preview__empty" }, missing ? NO_ACCESS : err.message));
     replace(this.foot);
   }
 

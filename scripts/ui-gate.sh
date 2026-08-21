@@ -4,18 +4,18 @@
 # It starts the real binary over a real corpus, which is this repository, and
 # audits the screens somebody actually looks at: the home page, a results page,
 # a results page with the document drawer open, a document on a page of its own,
-# a grid of pictures, and the recent screen. Auditing a static fixture would
-# audit the fixture, and
-# every accessibility bug this is meant to catch lives in the markup the
-# interface builds after a fetch.
+# a grid of pictures, the recent screen and a search that matched nothing.
+# Auditing a static fixture would audit the fixture, and every accessibility bug
+# this is meant to catch lives in the markup the interface builds after a fetch.
 #
-# The keyboard walk, the rendering check and axe are the parts that fail a
-# build. axe reports
-# violations of a standard rather than an opinion, it does not move when the
-# runner is busy, and a violation is a person who cannot use the page. The walk
-# presses the keys and clicks the links a person would and asserts where each
-# one led, which is the half axe cannot see: markup can describe itself
-# perfectly and still go nowhere when you click it.
+# The keyboard walk, the rendering check, the states check and axe are the parts
+# that fail a build. axe reports violations of a standard rather than an
+# opinion, it does not move when the runner is busy, and a violation is a person
+# who cannot use the page. The walk presses the keys and clicks the links a
+# person would and asserts where each one led, which is the half axe cannot see:
+# markup can describe itself perfectly and still go nowhere when you click it.
+# The states check drives the screens that are not the happy path, which is
+# where an interface either has a way out or does not.
 #
 # Lighthouse is advisory here and enforced on the nightly run, because a
 # Lighthouse performance score on a shared runner moves by ten points between
@@ -121,6 +121,14 @@ if ! node scripts/render-check.mjs "$BASE"; then
 	status=1
 fi
 
+# The screens that are not the happy path. It holds the search endpoint open
+# from the browser side to produce a slow request and a failed one, so it needs
+# nothing downloaded either and asks nothing of the server it is auditing.
+echo "ui-gate: states check"
+if ! node scripts/state-check.mjs "$BASE"; then
+	status=1
+fi
+
 if ! command -v npx >/dev/null 2>&1; then
 	echo "ui-gate: npx is not on the path, so axe and Lighthouse cannot run"
 	exit $status
@@ -141,7 +149,7 @@ if [ -n "${CHROMEDRIVER:-}" ]; then
 	DRIVER="--chromedriver-path $CHROMEDRIVER"
 fi
 
-for path in "/" "/?q=cache" "/?q=cache&open=$ID" "/d/$ID" "/?q=gatepix" "/recent"; do
+for path in "/" "/?q=cache" "/?q=cache&open=$ID" "/d/$ID" "/?q=gatepix" "/recent" "/?q=cache&kind=image"; do
 	echo "ui-gate: axe $path"
 	# The interface renders after a fetch, so the audit waits for the first
 	# paint to have happened. Auditing an empty document passes and proves
