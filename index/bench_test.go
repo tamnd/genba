@@ -1,6 +1,7 @@
 package index_test
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -83,6 +84,26 @@ func BenchmarkSearchDeepPage(b *testing.B) {
 		q.Offset = 200
 		return q
 	})
+}
+
+// BenchmarkSearchPage measures the same query at four page sizes, which is the
+// measurement that separates the cost of finding the results from the cost of
+// assembling them.
+//
+// Everything before the page is work over the match set and does not move when
+// the page grows, so whatever the difference between one result and fifty is,
+// that is what a result costs to put on a page. It was 0.7ms each, which on the
+// default page of twenty spent more than the whole search budget before
+// retrieval had done anything.
+func BenchmarkSearchPage(b *testing.B) {
+	for _, size := range []int{1, 5, 20, 50} {
+		b.Run(strconv.Itoa(size), func(b *testing.B) {
+			run(b, benchcorpus.ClassCommon, func(q index.Query) index.Query {
+				q.Limit = size
+				return q
+			})
+		})
+	}
 }
 
 // BenchmarkSearchByRecency ranks on the date instead of the score, which takes

@@ -37,6 +37,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tamnd/genba/acl"
 	"github.com/tamnd/genba/cache"
@@ -382,7 +383,7 @@ func (s *Searcher) Search(ctx context.Context, p *acl.Principal, q Query) (Resul
 			continue
 		}
 		hit := Result{Document: full, Score: r.score}
-		hit.Snippet, hit.Passages = snippet(readable(full), req.Terms)
+		hit.Snippet, hit.Passages = snippet(full, req.Terms)
 		res.Hits = append(res.Hits, hit)
 	}
 	res.Took = s.now().Sub(start)
@@ -563,30 +564,79 @@ func (s *Searcher) recency(modified, now time.Time) float64 {
 // SnippetWidth is roughly how many characters of body a snippet shows.
 const SnippetWidth = 260
 
-// snippet returns a passage of the body around the first query match, and the
-// same passage split at the matches so the interface can mark them.
-func snippet(body string, terms []string) (string, []Passage) {
-	if body == "" {
+// snippet returns a passage of the document around the first query match, and
+// the same passage split at the matches so the interface can mark them.
+//
+// It works twice: once over the source, to find a window worth reading, and once
+// over that window, to cut the snippet itself. The second pass is what a reader
+// sees, since taking the markup out of a markdown document moves every offset in
+// it, and it is cheap because the window is a few hundred characters.
+//
+// The alternative is one pass over readable text for the whole document, which
+// is what this did. That meant rewriting a document to show two lines of it, per
+// result, on every page.
+func snippet(d doc.Document, terms []string) (string, []Passage) {
+	raw := d.Body
+	if raw == "" {
 		return "", nil
 	}
-	runes := []rune(body)
-	start := 0
-	if idx := firstMatch(body, terms); idx > 0 {
-		start = max(0, len([]rune(body[:idx]))-SnippetWidth/3)
-	}
-	end := min(start+SnippetWidth, len(runes))
 
-	text := strings.TrimSpace(collapse(string(runes[start:end])))
-	passages := mark(text, terms)
-	if start > 0 {
-		text = "..." + text
+	// Wide enough that a window whose markup is removed is still longer than the
+	// snippet, and anchored far enough back that the match does not land on the
+	// first character of it.
+	from := 0
+	if at := firstMatch(raw, terms); at > 0 {
+		from = back(raw, at, SnippetWidth)
+	}
+	to := forward(raw, from, 3*SnippetWidth)
+
+	text := raw[from:to]
+	if d.Properties[doc.MediaType] == "text/markdown" {
+		text = plainText(text)
+	}
+	text = collapse(text)
+
+	head := 0
+	if at := firstMatch(text, terms); at > 0 {
+		head = back(text, at, SnippetWidth/3)
+	}
+	tail := forward(text, head, SnippetWidth)
+
+	out := strings.TrimSpace(text[head:tail])
+	passages := mark(out, terms)
+	if from > 0 || head > 0 {
+		out = "..." + out
 		passages = append([]Passage{{Text: "..."}}, passages...)
 	}
-	if end < len(runes) {
-		text += "..."
+	if to < len(raw) || tail < len(text) {
+		out += "..."
 		passages = append(passages, Passage{Text: "..."})
 	}
-	return text, passages
+	return out, passages
+}
+
+// back is the byte offset n characters before at, and forward is the byte offset
+// n characters after it.
+//
+// Byte offsets rather than a rune slice of the body, because the window is a few
+// hundred characters and the body is a document. Converting the whole thing to
+// runes to take three lines out of the middle allocated four bytes per character
+// of every result on the page, which on a page of twenty was most of what
+// building the page cost.
+func back(s string, at, n int) int {
+	for ; n > 0 && at > 0; n-- {
+		_, size := utf8.DecodeLastRuneInString(s[:at])
+		at -= size
+	}
+	return at
+}
+
+func forward(s string, at, n int) int {
+	for ; n > 0 && at < len(s); n-- {
+		_, size := utf8.DecodeRuneInString(s[at:])
+		at += size
+	}
+	return at
 }
 
 // collapse turns runs of whitespace into single spaces. A snippet lifted out of
@@ -628,15 +678,13 @@ func mark(text string, terms []string) []Passage {
 }
 
 // firstMatch returns the byte offset of the first query term in body, or -1.
+//
+// It stops at the first one and allocates nothing on the way, which is the
+// difference between reading a sentence and rewriting a document. See [doc.Find].
 func firstMatch(body string, terms []string) int {
 	want := make(map[string]bool, len(terms))
 	for _, t := range terms {
 		want[t] = true
 	}
-	for _, s := range doc.Analyze(body) {
-		if want[s.Term] {
-			return s.Start
-		}
-	}
-	return -1
+	return doc.Find(body, want)
 }

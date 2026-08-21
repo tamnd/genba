@@ -1,29 +1,16 @@
 package index
 
-import (
-	"strings"
-
-	"github.com/tamnd/genba/doc"
-)
-
-// readable is the text a snippet is cut out of.
-//
-// For most documents that is the body as it was indexed. For a markdown
-// document it is the body with the syntax taken out, because two lines of a
-// result row is a small budget and a snippet that spends it on hashes, asterisks
-// and table pipes has spent it on nothing. The person reading wants the sentence
-// somebody wrote.
-//
-// Only markdown is treated this way. A source file is not markdown, and stripping
-// what looks like syntax out of code would be lying about the file.
-func readable(d doc.Document) string {
-	if d.Properties[doc.MediaType] != "text/markdown" {
-		return d.Body
-	}
-	return plainText(d.Body)
-}
+import "strings"
 
 // plainText removes markdown syntax and keeps the words.
+//
+// A snippet is cut out of what this returns, because two lines of a result row
+// is a small budget and one spent on hashes, asterisks and table pipes has been
+// spent on nothing. The person reading wants the sentence somebody wrote.
+//
+// Only markdown is treated this way, and see [snippet] for where that is
+// decided. A source file is not markdown, and stripping what looks like syntax
+// out of code would be lying about the file.
 //
 // It is a line pass and then an inline pass, which is enough for a snippet and
 // deliberately less than a renderer. It never reorders text: a term at the start
