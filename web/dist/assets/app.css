@@ -555,8 +555,19 @@ time {
   font-weight: var(--weight-normal);
 }
 
-.filterbar__toggle {
+/* Two classes rather than one, because the button carries .button as well and
+   the rule that gives .button a display of its own is further down the file.
+   One class each and the later one wins, which put a Filters button next to the
+   open panel of filters at every width above the breakpoint. */
+.filterbar .filterbar__toggle {
   display: none;
+}
+
+/* Louder than the rule that brings it back below the breakpoint, because a
+   display of its own beats the hidden attribute and the button would come back
+   underneath the open sheet. */
+.filterbar__toggle[hidden] {
+  display: none !important;
 }
 
 /* Chips ------------------------------------------------------------------ */
@@ -1094,10 +1105,32 @@ mark.hit--current::after {
   display: none;
 }
 
+.facets__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
 .facets__title {
   font-size: var(--text-title);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-title);
+}
+
+/* The sheet's way out, and only the sheet's. Above the breakpoint the panel is
+   a column on the page with nothing covering it, so there is nothing to
+   dismiss and a close button would be a control that removes the filters from
+   a window wide enough to hold them. */
+.facets__done {
+  display: none;
+}
+
+/* The panel is the surface where there is room for it, and the sheet where
+   there is not, and the two are never on screen together. This is the half
+   that keeps the scrim off a window that has no sheet in it. */
+.scrim--filters {
+  display: none;
 }
 
 .facet__title {
@@ -1114,8 +1147,11 @@ mark.hit--current::after {
   align-items: center;
   gap: var(--space-3);
   width: 100%;
-  height: 40px;
-  padding: 0 var(--space-2);
+  /* A minimum rather than a height. A value with a context under it is two
+     lines, and a row that was fixed at one clipped the line that made the
+     first one readable. */
+  min-height: 40px;
+  padding: var(--space-2);
   border-radius: var(--radius-sm);
   color: var(--text);
   font-size: var(--text-body);
@@ -1148,12 +1184,35 @@ mark.hit--current::after {
   color: var(--text-inverse);
 }
 
-.facet__label {
+.facet__text {
   flex: 1;
   min-width: 0;
+}
+
+.facet__label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/*
+ * Where the value came from, cut at the front rather than at the end.
+ *
+ * A column of paths truncated on the right is a column of identical rows: the
+ * shared prefix is what fits and the part that tells them apart is what got
+ * dropped. Reversing the direction of the box moves the ellipsis to the start,
+ * and the bdi inside it keeps the text itself running left to right so the
+ * separators stay where they were written.
+ */
+.facet__context {
+  display: block;
+  direction: rtl;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: var(--text-small);
 }
 
 .facet__count {
@@ -2572,30 +2631,64 @@ h6.prose__h {
     );
   }
 
-  .filterbar__toggle {
+  .filterbar .filterbar__toggle {
     display: inline-flex;
     flex: none;
     margin-left: auto;
     align-self: center;
   }
 
+  /*
+   * The panel becomes a sheet.
+   *
+   * It is the same element and the same counts, moved rather than duplicated,
+   * because a second copy of the filters for narrow windows is a second list to
+   * keep in step with the first and the way that goes wrong is that one of them
+   * is a query out of date.
+   *
+   * Over the results rather than above them, which is what makes it one filter
+   * surface: while it is open it covers the bar that opened it, so there is
+   * never a Filters button next to an open panel of filters.
+   */
   .facets {
-    position: static;
-    max-height: none;
-    overflow: visible;
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: var(--z-drawer);
     display: none;
+    max-height: 80vh;
+    padding: var(--space-6) var(--gutter) var(--space-8);
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    animation: sheet-up var(--dur-fast) var(--ease);
   }
 
   .facets[data-open="true"] {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: var(--space-8);
-    padding-bottom: var(--space-6);
-    border-bottom: 1px solid var(--border);
+    align-content: start;
   }
 
-  .facets__title {
+  .facets__head {
     grid-column: 1 / -1;
+  }
+
+  .facets__done {
+    display: inline-flex;
+  }
+
+  .scrim--filters {
+    display: block;
+  }
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
   }
 }
 

@@ -113,8 +113,9 @@ type searchBody struct {
 		Score   float64 `json:"score"`
 	} `json:"hits"`
 	Facets map[string][]struct {
-		Value string `json:"value"`
-		Count int    `json:"count"`
+		Value    string `json:"value"`
+		Count    int    `json:"count"`
+		Selected bool   `json:"selected"`
 	} `json:"facets"`
 }
 
@@ -335,6 +336,78 @@ func TestSearchReadsOperatorsFromTheQuery(t *testing.T) {
 	}
 	if len(typed.Hits) != 1 || typed.Hits[0].ID != "d1" {
 		t.Fatalf("app:gdrive returned %v, want only the drive document", typed.Hits)
+	}
+}
+
+// A filter panel is a set of questions about what would happen if you chose
+// something else, and the answer to all of them used to be zero. Counting a
+// field with its own filter applied leaves the value that was ticked reporting
+// its own count and every sibling reporting nothing, so the one moment somebody
+// needs to know whether unticking is worth it is the moment the panel goes
+// blank.
+func TestSearchCountsAFacetWithItsOwnFilterLifted(t *testing.T) {
+	h := engineerWithBothGroups()
+	body := decode[searchBody](t, request(t, newServer(t), http.MethodGet,
+		"/api/v1/search?q=payments&kind=page", h))
+
+	if body.Total != 1 {
+		t.Fatalf("total = %d, the filtered match set is one page", body.Total)
+	}
+	kinds := map[string]int{}
+	for _, v := range body.Facets["kind"] {
+		kinds[v.Value] = v.Count
+	}
+	if kinds["page"] != 1 || kinds["ticket"] != 1 {
+		t.Fatalf("the kind facet is %v, and there is a page and a ticket to be found", kinds)
+	}
+
+	// The other fields keep the filter, because they are a different question.
+	// How many results there are in Drive given that you are looking at pages is
+	// useful. How many there are with the query's filters ignored is a fact about
+	// the corpus rather than about the search.
+	sources := map[string]int{}
+	for _, v := range body.Facets["source"] {
+		sources[v.Value] = v.Count
+	}
+	if len(sources) != 1 || sources["gdrive"] != 1 {
+		t.Fatalf("the source facet is %v, and only the drive document is a page", sources)
+	}
+}
+
+// Which values are ticked is the server's answer rather than the client's,
+// because a count that was computed with a filter lifted only makes sense next
+// to the flag that says the filter is there.
+func TestSearchSaysWhichFacetValuesAreChosen(t *testing.T) {
+	h := engineerWithBothGroups()
+	srv := newServer(t)
+
+	body := decode[searchBody](t, request(t, srv, http.MethodGet, "/api/v1/search?q=payments&kind=page", h))
+	for _, v := range body.Facets["kind"] {
+		if want := v.Value == "page"; v.Selected != want {
+			t.Errorf("the kind facet reports %q as selected=%v", v.Value, v.Selected)
+		}
+	}
+	// A different field, untouched by the query, has nothing chosen in it.
+	for _, v := range body.Facets["source"] {
+		if v.Selected {
+			t.Errorf("the source facet reports %q as chosen and the query does not narrow by source", v.Value)
+		}
+	}
+
+	// A typed operator is the same filter as a ticked box, so it ticks the box.
+	typed := decode[searchBody](t, request(t, srv, http.MethodGet,
+		"/api/v1/search?q="+url.QueryEscape("payments app:gdrive"), h))
+	var chosen int
+	for _, v := range typed.Facets["source"] {
+		if v.Selected {
+			chosen++
+			if v.Value != "gdrive" {
+				t.Errorf("app:gdrive ticked %q", v.Value)
+			}
+		}
+	}
+	if chosen != 1 {
+		t.Errorf("app:gdrive ticked %d values in the source facet", chosen)
 	}
 }
 

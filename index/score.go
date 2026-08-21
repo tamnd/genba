@@ -143,27 +143,42 @@ func (s *Searcher) collect(ctx context.Context, p *acl.Principal, r store.Reques
 		}, nil
 	}
 
+	// The walk is over the request with the facet constraints lifted, and the
+	// constraints are applied here instead. A document that fails exactly one of
+	// them is not a result and is still a count: it is what ticking that value
+	// instead would have found, which is the number the sidebar exists to show.
+	// See [store.Request.Without].
+	base := r.WithoutFacets()
 	var (
-		out  pool
-		seen []store.Candidate
+		out    pool
+		seen   []store.Candidate
+		counts = newDrill(r)
+		walked int
 	)
 	take := func(d doc.Document) bool {
-		if len(seen) >= MaxMatches {
+		// The cap is on the walk rather than on the match set, because the walk
+		// is the work. A query that reaches it has stopped counting, and
+		// truncated is how that is admitted.
+		if walked >= MaxMatches {
 			out.truncated = true
 			return false
 		}
-		seen = append(seen, candidateOf(d, r.Terms))
+		walked++
+		if counts.add(d) {
+			seen = append(seen, candidateOf(d, r.Terms))
+		}
 		return true
 	}
 
 	var err error
 	if rt, ok := s.store.(store.Retriever); ok {
-		// The driver has already applied the terms and the filters, so every
-		// document it yields is in the match set.
-		err = rt.Retrieve(ctx, p, r, take)
+		// The driver has already applied the terms and everything that is not a
+		// facet, so what it yields is the match set plus the documents one
+		// ticked box away from it.
+		err = rt.Retrieve(ctx, p, base, take)
 	} else {
 		err = s.store.Scan(ctx, p, func(d doc.Document) bool {
-			if !r.Matches(d) {
+			if !base.Matches(d) {
 				return true
 			}
 			return take(d)
@@ -179,11 +194,82 @@ func (s *Searcher) collect(ctx context.Context, p *acl.Principal, r store.Reques
 	// scoring instead: see [Searcher.Search].
 	out.cands = seen
 	out.total = len(seen)
-	out.facets = facetsOf(seen)
+	out.facets = counts.facets()
 	// Exact, unless [MaxMatches] stopped the walk, in which case the counts are
 	// over what was walked and are a lower bound like a driver's bounded ones.
 	out.approximate = out.truncated
 	return out, nil
+}
+
+// drill counts the facets the way a filter panel has to be counted: each field
+// with its own constraint lifted, and every other constraint applied.
+//
+// This is the Go side of what a driver does in SQL, and the two produce the same
+// sidebar for the same query, which is what store/storetest holds a driver to. A
+// document is offered to it once and lands in one of three places. In the match
+// set, where it counts towards all four fields. One constraint short of it,
+// where it counts towards that field and nothing else, because it is a result
+// that ticking that value would produce. Two or more short, where it counts
+// towards nothing: it is not reachable by changing one answer, and a count that
+// included it would be a count of a page nobody can get to.
+type drill struct {
+	r      store.Request
+	counts map[string]map[string]int
+}
+
+func newDrill(r store.Request) *drill {
+	d := &drill{r: r, counts: make(map[string]map[string]int, len(store.FacetFields))}
+	for _, field := range store.FacetFields {
+		d.counts[field] = map[string]int{}
+	}
+	return d
+}
+
+// add records one document and reports whether it is in the match set.
+func (dr *drill) add(d doc.Document) bool {
+	missing := ""
+	for _, field := range store.FacetFields {
+		if dr.r.Passes(field, d) {
+			continue
+		}
+		if missing != "" {
+			return false
+		}
+		missing = field
+	}
+	if missing != "" {
+		dr.counts[missing][valueOf(missing, d)]++
+		return false
+	}
+	for _, field := range store.FacetFields {
+		dr.counts[field][valueOf(field, d)]++
+	}
+	return true
+}
+
+func (dr *drill) facets() map[string][]Facet {
+	out := make(map[string][]Facet, len(dr.counts))
+	for field, counts := range dr.counts {
+		out[field] = sortedFacets(counts)
+	}
+	return out
+}
+
+// valueOf is the display string a facet counts a document under. It is the same
+// string a driver reads out of its own column, because both of them are what a
+// person sees on the row and clicks to filter by.
+func valueOf(field string, d doc.Document) string {
+	switch field {
+	case "source":
+		return d.Source
+	case "kind":
+		return string(d.Kind)
+	case "container":
+		return d.Container
+	case "author":
+		return d.Author.Display()
+	}
+	return ""
 }
 
 // candidateOf is a document reduced to what the ranking reads.
@@ -272,26 +358,6 @@ func score(c store.Candidate, terms []string, corpus store.Corpus) float64 {
 		total += idf * tf * (bm25K1 + 1) / (tf + norm)
 	}
 	return total
-}
-
-// facetsOf counts the facets over a match set the caller holds in full.
-func facetsOf(cands []store.Candidate) map[string][]Facet {
-	bySource := map[string]int{}
-	byKind := map[string]int{}
-	byContainer := map[string]int{}
-	byAuthor := map[string]int{}
-	for _, c := range cands {
-		bySource[c.Source]++
-		byKind[string(c.Kind)]++
-		byContainer[c.Container]++
-		byAuthor[c.Author]++
-	}
-	return map[string][]Facet{
-		"source":    sortedFacets(bySource),
-		"kind":      sortedFacets(byKind),
-		"container": sortedFacets(byContainer),
-		"author":    sortedFacets(byAuthor),
-	}
 }
 
 // facetsFrom carries a driver's counts across, in the same order the Go side

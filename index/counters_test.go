@@ -7,6 +7,7 @@ import (
 
 	"github.com/tamnd/genba/acl"
 	"github.com/tamnd/genba/benchcorpus"
+	"github.com/tamnd/genba/doc"
 	"github.com/tamnd/genba/index"
 	"github.com/tamnd/genba/store"
 	"github.com/tamnd/genba/store/sqlitestore"
@@ -34,19 +35,43 @@ import (
 // minute.
 const counterCorpus = 4_000
 
-const (
-	// maxStatements is the statement budget for one search. The candidate cut,
-	// the term frequencies for the candidates, the total, the facet counts, two
-	// of corpus statistics and the fetch of the page. The budget is a little
-	// above that so an extra lookup is allowed, and far below one statement per
-	// result, which is the shape of every N plus one regression.
-	maxStatements = 9
+// maxStatements is the statement budget for one search. The candidate cut, the
+// term frequencies for the candidates, the total, the facet counts, two of
+// corpus statistics and the fetch of the page. The budget is a little above that
+// so an extra lookup is allowed, and far below one statement per result, which
+// is the shape of every N plus one regression.
+//
+// It does not move with the filters. Every facet, lifted or not, is counted in
+// the same statement, and a filtered search running one statement per ticked box
+// is the regression this number is here to catch.
+const maxStatements = 9
 
-	// countRows is the rows the counting returns: the total, then the size of
-	// the pool the facets were counted over and four fields each capped at the
-	// number of values a facet reports.
-	countRows = 1 + 1 + 4*store.MaxFacetValues
-)
+// countRows is the rows the counting returns for a request that constrains the
+// given number of facet fields: the total, then one pool per expression the
+// statement declares and one capped group of values per field it counts.
+//
+// A field somebody has ticked is counted twice, once with its own filter lifted
+// and once over the match set, and the lifted count needs an expression of its
+// own. So a search with two boxes ticked returns rather more rows than one with
+// none, and writing that out is how the growth stays something somebody chose
+// rather than something that happened.
+func countRows(constrained int) int {
+	pools := 1 + constrained
+	groups := len(store.FacetFields) + constrained
+	return 1 + pools + groups*store.MaxFacetValues
+}
+
+// constrained is how many facet fields the request narrows, which is what the
+// counting statement grows with.
+func constrained(r store.Request) int {
+	var n int
+	for _, field := range store.FacetFields {
+		if r.Constrains(field) {
+			n++
+		}
+	}
+	return n
+}
 
 // rowBudget is every row one search is allowed to read, by where it is read.
 //
@@ -54,7 +79,7 @@ const (
 // a bound somebody chose, and a search that goes over one of them has broken
 // the thing that bound was protecting, which is a more useful failure than
 // "slower than it was".
-func rowBudget(pool, terms, hits int) int64 {
+func rowBudget(pool, terms, hits, constrained int) int64 {
 	// Phase one hands back at most the pool.
 	rows := pool
 	// The term frequencies for those candidates, which is the one part that
@@ -63,7 +88,7 @@ func rowBudget(pool, terms, hits int) int64 {
 	// The total and the facet counts, which are aggregates, so the rows are the
 	// values reported and not the documents behind them. What those aggregates
 	// read is counted separately: see [store.Counters.Faceted].
-	rows += countRows
+	rows += countRows(constrained)
 	// The corpus row and one row per term of statistics.
 	rows += 1 + terms
 	// A search that found nothing looks for a spelling that would have found
@@ -123,6 +148,7 @@ func TestSearchCounters(t *testing.T) {
 				}
 				c := st.Counters()
 				pool := int64(index.CandidatePool(query.Offset, index.DefaultLimit))
+				filters := constrained(query.Request())
 
 				// Decoding is the expensive part of returning a result, because
 				// it is JSON, so a search decodes the page it is about to
@@ -144,14 +170,20 @@ func TestSearchCounters(t *testing.T) {
 
 				// And the rows, which is the counter that catches a count being
 				// done by reading the rows and adding them up in Go.
-				if most := rowBudget(int(pool), len(query.Request().Terms), len(res.Hits)); c.Rows > most {
+				if most := rowBudget(int(pool), len(query.Request().Terms), len(res.Hits), filters); c.Rows > most {
 					t.Errorf("Search(%q) read %d rows, at most %d", q.Text, c.Rows, most)
 				}
 
 				// The facet counts, which the rows counter cannot see because an
 				// aggregate returns the same handful of rows whatever it read.
-				if c.Faceted > int64(index.FacetPool) {
-					t.Errorf("Search(%q) counted facets over %d documents, the bound is %d", q.Text, c.Faceted, index.FacetPool)
+				//
+				// The bound is per expression and there is one of those for the
+				// match set plus one per ticked box, because a field counted with
+				// its own filter lifted is counted over a different set of
+				// documents and each of them stops at the same bound. Four boxes
+				// is five bounded walks and never a walk of the match set.
+				if most := int64(index.FacetPool) * int64(1+filters); c.Faceted > most {
+					t.Errorf("Search(%q) counted facets over %d documents, the bound is %d", q.Text, c.Faceted, most)
 				}
 			}
 		})
@@ -179,7 +211,7 @@ func TestSearchCounters(t *testing.T) {
 			if c.Candidates != 0 || c.Decodes != 0 {
 				t.Errorf("Search(%q) ranked %d candidates and decoded %d documents for a reader who may see nothing", q.Text, c.Candidates, c.Decodes)
 			}
-			if c.Rows > countRows {
+			if c.Rows > int64(countRows(0)) {
 				t.Errorf("Search(%q) read %d rows for a reader who may see nothing", q.Text, c.Rows)
 			}
 		}
@@ -240,6 +272,94 @@ func TestFacetCounters(t *testing.T) {
 	if bounded == 0 {
 		t.Fatalf("no query matched more than the facet pool of %d, so the bound was never exercised", index.FacetPool)
 	}
+}
+
+// A filtered search counts more documents than it matched, on purpose. A field
+// somebody has ticked is counted a second time with its own filter lifted, so
+// that the values nobody ticked still carry the number of results choosing them
+// would find, which is the one thing worth knowing at the moment somebody is
+// looking at a filter they have already applied.
+//
+// What that must not become is unbounded. The bound applies to each of those
+// walks separately, so the work grows by a factor of the boxes somebody ticked,
+// which is at most five walks, and never with the size of the match set.
+func TestFilteredFacetCounters(t *testing.T) {
+	if testing.Short() {
+		t.Skip("generating the corpus takes a few seconds the first time")
+	}
+	s, p, st := counters(t)
+
+	byClass := benchcorpus.ByClass(benchcorpus.Queries())
+	queries := append(slices.Clone(byClass[benchcorpus.ClassFilter][:8]), byClass[benchcorpus.ClassTermFilter][:8]...)
+
+	var siblings, exact int
+	for _, q := range queries {
+		query := index.Parse(q.Text)
+		r := query.Request()
+		filters := constrained(r)
+		if filters == 0 {
+			t.Fatalf("%q is meant to be a filtered query and narrows no facet", q.Text)
+		}
+
+		st.ResetCounters()
+		res, err := s.Search(t.Context(), p, query)
+		if err != nil {
+			t.Fatalf("Search(%q): %v", q.Text, err)
+		}
+		if most := int64(index.FacetPool) * int64(1+filters); st.Counters().Faceted > most {
+			t.Errorf("Search(%q) counted facets over %d documents, the bound is %d",
+				q.Text, st.Counters().Faceted, most)
+		}
+
+		for _, field := range store.FacetFields {
+			if !r.Constrains(field) {
+				continue
+			}
+			var ticked, other int
+			for _, v := range res.Facets[field] {
+				if chosen(r, field, v.Value) {
+					ticked = v.Count
+					continue
+				}
+				other++
+			}
+			siblings += other
+			// The value somebody ticked reports the results they are looking at,
+			// which is the total. Under the bound it is a lower bound like every
+			// other count, so the check is on the queries small enough to be exact.
+			if res.Approximate || res.Total > index.FacetPool {
+				continue
+			}
+			exact++
+			if ticked != res.Total {
+				t.Errorf("Search(%q) ticked %s and its own count is %d of %d results",
+					q.Text, field, ticked, res.Total)
+			}
+		}
+	}
+
+	// The point of all of it. If every ticked field reported nothing but itself
+	// the assertions above would still pass, and the sidebar would be a list of
+	// one thing somebody already knows.
+	if siblings == 0 {
+		t.Fatal("no filtered query offered a single alternative to the value it had ticked")
+	}
+	if exact == 0 {
+		t.Fatal("every filtered query was counted under the bound, so nothing checked a ticked count against the total")
+	}
+}
+
+// chosen reports whether the request already narrows the field to this value.
+func chosen(r store.Request, field, value string) bool {
+	switch field {
+	case "source":
+		return slices.Contains(r.Sources, value)
+	case "kind":
+		return slices.Contains(r.Kinds, doc.Kind(value))
+	case "container":
+		return slices.Contains(r.Containers, value)
+	}
+	return false
 }
 
 // TestDeepPageCounters holds the tenth page to the same bounds as the first.

@@ -89,6 +89,15 @@ func TestDriversAgree(t *testing.T) {
 		{"an author filter", p, index.Query{Authors: []string{"mei@acme.com"}}},
 		{"an owner filter", p, index.Query{Owners: []string{"mei@acme.com"}}},
 		{"a term and a filter", p, index.Query{Text: "payments", Sources: []string{"gdrive"}}},
+		// A filtered query is where the two ways of counting a facet can differ
+		// without the results differing at all: each field is counted with its own
+		// filter lifted, so the sidebar describes documents the page does not
+		// contain. One driver does that in SQL and the other in Go, and a
+		// disagreement here is a sidebar that changes when a deployment switches
+		// storage.
+		{"two filters", p, index.Query{Sources: []string{"gdrive"}, Kinds: []doc.Kind{doc.KindPage}}},
+		{"a filter matching nothing", p, index.Query{Sources: []string{"jira"}, Authors: []string{"mei@acme.com"}}},
+		{"a term and two filters", p, index.Query{Text: "payments", Sources: []string{"gdrive", "slack"}, Containers: []string{"Platform"}}},
 		{"a lower time bound", p, index.Query{Since: epoch.AddDate(0, 0, -30)}},
 		{"an upper time bound", p, index.Query{Until: epoch.AddDate(0, 0, -30)}},
 		{"a window", p, index.Query{Since: epoch.AddDate(0, 0, -60), Until: epoch.AddDate(0, 0, -10)}},

@@ -100,6 +100,39 @@ async function walk(session) {
     })`,
   );
 
+  // Facet labels, asked of the function for the same reason. The corpus the
+  // gate indexes has whatever paths it has, and the case worth pinning is the
+  // one where two of them would read identically.
+  await check(
+    session,
+    "a facet value reads as its last segment, and a collision grows one",
+    `import('genba/format.js').then(({ facetLabels }) => {
+      const out = facetLabels([
+        'team/alpha/docs',
+        'team/beta/docs',
+        '/Users/mei/notes/Spec/2121',
+      ]);
+      return out[0].label === 'alpha/docs' && out[1].label === 'beta/docs' &&
+        out[0].context === 'team' &&
+        out[2].label === '2121' &&
+        out[2].context === 'Users / mei / notes / Spec';
+    })`,
+  );
+
+  await check(
+    session,
+    "a filter row shows the end of the value rather than the start",
+    `(() => {
+      const items = [...document.querySelectorAll('.facet__item')];
+      return items.length > 0 && items.every((el) => {
+        const value = el.querySelector('.facet__text').title;
+        const shown = el.querySelector('.facet__label').textContent.trim().toLowerCase();
+        const last = (value.split('/').filter(Boolean).pop() || value).toLowerCase();
+        return shown.endsWith(last);
+      });
+    })()`,
+  );
+
   await press(session, "j", "KeyJ", 74);
   await check(
     session,
@@ -543,6 +576,24 @@ async function walk(session) {
     })()`,
   );
 
+  // The wide half of the one filter surface rule. The panel is the surface, so
+  // the button that would open it somewhere else is not on the page at all. The
+  // width is set rather than assumed, because a headless window opens at 800 and
+  // every rule here is about which side of 960 we are on.
+  await narrow(session, 1280, 900);
+  await visit(session, `${BASE}/?q=cache`, "document.querySelectorAll('.facet__item').length > 0");
+  await check(
+    session,
+    "the panel is the only filter surface where there is room for it",
+    `(() => {
+      const panel = document.querySelector('.facets');
+      const toggle = document.querySelector('.filterbar__toggle');
+      return panel.getBoundingClientRect().height > 0 &&
+        toggle.offsetParent === null &&
+        panel.getAttribute('aria-modal') === null;
+    })()`,
+  );
+
   // Last, because it changes the viewport for everything after it. 390 is the
   // narrowest phone worth drawing for, and it is the width at which the strip
   // used to shrink its tabs to fit instead of scrolling, so the last one read
@@ -559,6 +610,34 @@ async function walk(session) {
       );
       return whole && tabs.scrollWidth > tabs.clientWidth && tabs.dataset.scroll === 'end';
     })()`,
+  );
+
+  // The narrow half of the one filter surface rule. The same panel comes up as
+  // a sheet, and the button that raised it goes, so there is never a Filters
+  // button sitting next to an open panel of filters.
+  await settle(session, "document.querySelectorAll('.facet__item').length > 0");
+  await evaluate(session, "document.querySelector('.filterbar__toggle').click()");
+  await check(
+    session,
+    "at 390 pixels the filters are a sheet and the button that opened it is gone",
+    `(() => {
+      const panel = document.querySelector('.facets');
+      const toggle = document.querySelector('.filterbar__toggle');
+      return panel.dataset.open === 'true' &&
+        panel.getBoundingClientRect().height > 0 &&
+        panel.getAttribute('aria-modal') === 'true' &&
+        toggle.offsetParent === null &&
+        panel.contains(document.activeElement);
+    })()`,
+  );
+
+  await press(session, "Escape", "Escape", 27);
+  await check(
+    session,
+    "Escape closes the sheet and puts focus back on the button",
+    `document.querySelector('.facets').dataset.open === 'false' &&
+      document.querySelector('.scrim--filters').hidden &&
+      document.activeElement === document.querySelector('.filterbar__toggle')`,
   );
 
   // At this width the drawer is the window and there is nothing behind it to
