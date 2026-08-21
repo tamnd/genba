@@ -36,13 +36,23 @@ func TestUnknownPathsFallBackToTheDocument(t *testing.T) {
 		t.Skip("this build carries no interface")
 	}
 
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/search/deep/link", nil))
-	if w.Code != http.StatusOK {
-		t.Fatalf("a client route returned %d, want 200 so that a reload survives", w.Code)
-	}
-	if w.Header().Get("Cache-Control") != "no-cache" {
-		t.Errorf("Cache-Control = %q, the document must not be cached", w.Header().Get("Cache-Control"))
+	// A document id carries a source prefix and a path, so the route for one
+	// arrives here with a colon and slashes already decoded and looks exactly
+	// like a file that is not there. It has to reach the shell anyway, or every
+	// link anybody pastes is a 404 on the first load.
+	for _, path := range []string{
+		"/search/deep/link",
+		"/d/repo:index/cache.go",
+		"/d/notes:Spec/2121/ui/08_kaggle_calibration.md",
+	} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s returned %d, want 200 so that a reload survives", path, w.Code)
+		}
+		if w.Header().Get("Cache-Control") != "no-cache" {
+			t.Errorf("%s Cache-Control = %q, the document must not be cached", path, w.Header().Get("Cache-Control"))
+		}
 	}
 }
 

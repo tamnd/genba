@@ -175,13 +175,15 @@ jobs:
           path: bench-report.json
           if-no-files-found: warn
 
-  # The browser gate: asset budgets, markup safety, axe and Lighthouse.
+  # The browser gate: asset budgets, markup safety, the keyboard walk, axe and
+  # Lighthouse.
   #
-  # The Go tests are the part that cannot flake and they run first. axe reports
-  # violations of a standard rather than an opinion and it fails the job.
-  # Lighthouse is advisory here and enforced on the nightly run, because a
-  # performance score on a shared runner moves by ten points between two runs of
-  # the same commit.
+  # The Go tests are the part that cannot flake and they run first. The walk
+  # presses the keys and clicks the links a person would and asserts where each
+  # one led, which is the half an audit cannot see. axe reports violations of a
+  # standard rather than an opinion. Both fail the job. Lighthouse is advisory
+  # here and enforced on the nightly run, because a performance score on a
+  # shared runner moves by ten points between two runs of the same commit.
   ui:
     runs-on: ubuntu-latest
     timeout-minutes: 20

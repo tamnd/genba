@@ -101,7 +101,14 @@
   --code-string: #0a3069;
   --code-number: #0550ae;
   --code-func: #953800;
-  --code-comment: var(--text-muted);
+
+  /* Muted, on the code surface rather than on the page ground. The code block
+     sits on --bg-subtle, and --text-muted clears the AA contrast ratio against
+     white by a tenth of a point and misses it here. This is the same grey a
+     shade darker, which clears it on both, and it is what the comment token
+     and the language chip use. */
+  --code-muted: #6b6b6b;
+  --code-comment: var(--code-muted);
 
   /* Semantic layer. This is what components use. */
   --bg: var(--gray-0);
@@ -318,6 +325,7 @@
   --code-string: #a5d6ff;
   --code-number: #79c0ff;
   --code-func: #ffa657;
+  --code-muted: var(--text-muted);
 
   /* A shadow on a dark ground carries almost no information, so the drawer
      additionally takes a hairline to define its edge. */

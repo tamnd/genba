@@ -20,6 +20,9 @@ const ICONS = {
   check: "m5 12 5 5 9-10",
   rows: "M4 6h16M4 10h16M4 14h16M4 18h16",
   preview: "M4 6h16v12H4zM4 10h16",
+  copy: "M9 9h10v11H9zM5 15V4h10",
+  "arrow-left": "M19 12H5M11 6l-6 6 6 6",
+  link: "M10.5 13.5a4 4 0 0 0 5.7 0l2.3-2.3a4 4 0 0 0-5.7-5.7l-1.1 1.1M13.5 10.5a4 4 0 0 0-5.7 0l-2.3 2.3a4 4 0 0 0 5.7 5.7l1.1-1.1",
 };
 
 export function icon(name) {
@@ -52,6 +55,51 @@ const SOURCE_COLORS = {
 
 export function sourceColor(source) {
   return SOURCE_COLORS[source] || "var(--source-files)";
+}
+
+// Schemes a browser will not navigate to from a page served over HTTP.
+//
+// A file:// link is the one that matters, because the file connector writes one
+// for every document it reads and clicking it does nothing at all: no
+// navigation, no error, no console message. The others are here because a
+// document's URL comes from a connector and a connector reads a corpus we did
+// not write.
+const DEAD = new Set(["file:", "data:", "blob:", "javascript:", "vbscript:", "about:"]);
+
+/**
+ * followable reports whether clicking this URL would go anywhere.
+ *
+ * A custom scheme is followable: slack:// and vscode:// are handed to the
+ * operating system and open the application somebody wanted. The test is the
+ * short list above rather than a list of the schemes we approve of, because a
+ * connector we have not written yet should not have to be added to a table
+ * here before its links work.
+ */
+export function followable(url) {
+  if (!url) return false;
+  try {
+    return !DEAD.has(new URL(url, location.href).protocol);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * copyable is what goes on the clipboard in place of a link nobody can follow.
+ *
+ * For a file URL that is the path, decoded, which is what somebody pastes into
+ * a terminal or an editor. For anything else it is the URL as it arrived,
+ * because we do not know enough about it to improve on it.
+ */
+export function copyable(url) {
+  const value = String(url || "");
+  try {
+    const parsed = new URL(value, location.href);
+    if (parsed.protocol !== "file:") return value;
+    return decodeURIComponent(parsed.pathname) || value;
+  } catch {
+    return value;
+  }
 }
 
 /** title cases a source or kind for display without touching the value. */
