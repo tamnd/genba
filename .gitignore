@@ -20,6 +20,11 @@ coverage.out
 # review and a build nobody can reproduce, so none of it is committed.
 /third_party/
 
+# The pictures scripts/ui-gate.sh generates so the grid has something to audit.
+# The corpus for the gate is this directory, so they have to be written inside
+# it, and the gate removes them when it exits.
+/gate-images/
+
 # Frontend build tooling. web/dist is checked in on purpose: it is what the
 # binary embeds, so a clone builds a working server without a node toolchain.
 /web/node_modules/

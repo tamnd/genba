@@ -13,7 +13,7 @@ import {
   followable,
   copyable,
 } from "./format.js";
-import { tile } from "./content.js";
+import { tile, cover, shapeOf } from "./content.js";
 import { copies } from "./clipboard.js";
 import * as urlState from "./state.js";
 
@@ -286,6 +286,7 @@ export class Results {
           : `${number(res.total)} ${res.total === 1 ? "result" : "results"}`,
         h("span", { class: "results__took" }, duration(res.took_ms)),
       ),
+      this.viewToggle(query),
       h(
         "label",
         {},
@@ -303,22 +304,123 @@ export class Results {
     );
   }
 
+  /**
+   * viewToggle offers the grid where a grid would be worth having.
+   *
+   * A page with no pictures in it is a page where every cell would be an icon
+   * and a file name, which is a list with more scrolling, so the control is not
+   * offered at all rather than offered and pointless. Where it is offered it
+   * writes the choice into the URL, because the shape of a page somebody sends
+   * to a colleague should be the shape they were looking at.
+   */
+  viewToggle(query) {
+    if (!this.hits.some((hit) => shapeOf(hit) === "image")) return null;
+    const current = this.viewFor(query);
+    const button = (id, title, name) =>
+      h(
+        "button",
+        {
+          class: "view__button",
+          type: "button",
+          "aria-pressed": String(current === id),
+          title,
+          "aria-label": title,
+          onClick: () => this.onQuery({ ...query, view: id }),
+        },
+        svg(icon(name), 18),
+      );
+    return h(
+      "div",
+      { class: "view", role: "group", "aria-label": "Result layout" },
+      button("list", "List", "rows"),
+      button("grid", "Grid", "grid"),
+    );
+  }
+
+  /**
+   * viewFor is which layout this page of results is drawn in.
+   *
+   * The URL wins where it says anything, and where it says nothing the answer
+   * comes from the results themselves: a page that is all pictures is a page
+   * where the file names are the least useful thing on it, and a grid shows
+   * three times as many of them in the same space. A page with one screenshot
+   * and nineteen documents stays a list, because a grid of mostly icons is a
+   * worse list.
+   */
+  viewFor(query) {
+    if (query.view) return query.view;
+    return this.hits.length > 0 && this.hits.every((hit) => shapeOf(hit) === "image") ? "grid" : "list";
+  }
+
   // The list holds results and nothing else. A list that also holds its own
   // pager or its empty state is a list whose every child is announced as an
   // item, so a reader on a screen reader is told there are twenty one results
   // and the last one is a pair of buttons.
   renderList(query, res) {
     if (!this.hits.length) {
+      this.list.dataset.view = "list";
       replace(this.list);
       replace(this.aside, emptyState(query, res, this.onQuery));
       return;
     }
 
+    const view = this.viewFor(query);
+    this.list.dataset.view = view;
     replace(
       this.list,
-      this.hits.map((hit, i) => this.row(hit, i)),
+      this.hits.map((hit, i) => (view === "grid" ? this.cell(hit, i) : this.row(hit, i))),
     );
     replace(this.aside, pager(query, res, this.onQuery));
+  }
+
+  /**
+   * cell is one result in the grid.
+   *
+   * The picture is the result and everything else is a label under it, so the
+   * cell carries the title and one line of provenance and nothing more. A
+   * snippet is left out rather than truncated: an image has no text to snip, and
+   * the ones that do are the reason the list view still exists.
+   */
+  cell(hit, i) {
+    const open = () => this.onOpen(hit.id);
+    return h(
+      "article",
+      {
+        class: "cell",
+        role: "listitem",
+        dataset: { index: String(i) },
+        onMouseenter: () => this.onHover(hit.id),
+        onMouseleave: () => this.onHover(null),
+        onClick: (e) => {
+          if (e.target.closest("a, button")) return;
+          open();
+        },
+      },
+      cover(hit),
+      h(
+        "a",
+        {
+          class: "cell__title",
+          href: urlState.documentPath(hit.id),
+          title: hit.title || hit.id,
+          onClick: (e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+            e.preventDefault();
+            open();
+          },
+        },
+        hit.title || hit.id,
+      ),
+      // Where it is, rather than what it is. A grid of pictures from one source
+      // is twenty four copies of the same word, and the folder a picture is in
+      // is the thing that tells two similar screenshots apart.
+      h(
+        "div",
+        { class: "cell__meta" },
+        h("span", { class: "source__dot", style: { background: sourceColor(hit.source) } }),
+        h("span", { class: "cell__where", title: hit.container || label(hit.source) }, hit.container || label(hit.source)),
+      ),
+    );
   }
 
   /**
@@ -393,7 +495,11 @@ export class Results {
         hit.modified_at &&
           h("time", { title: exact(hit.modified_at), datetime: hit.modified_at }, when(hit.modified_at)),
       ),
-      h("p", { class: "result__snippet" }, passages(hit)),
+      // A row with nothing to quote does not reserve the space for a quote. An
+      // image has no text in it, so every image row used to end in two empty
+      // lines, which is what made a list of screenshots look like a list of
+      // documents that had failed to load.
+      hasText(hit) && h("p", { class: "result__snippet" }, passages(hit)),
       h(
         "div",
         { class: "result__actions" },
@@ -500,7 +606,9 @@ export class Results {
   }
 
   select(i) {
-    const rows = this.list.querySelectorAll(".result");
+    // Both layouts, by the attribute they share rather than by class, so j and
+    // k walk a grid exactly as they walk a list.
+    const rows = this.list.querySelectorAll("[data-index]");
     rows.forEach((row, n) => row.setAttribute("data-active", String(n === i)));
     this.selected = i;
     if (rows[i]) rows[i].scrollIntoView({ block: "nearest" });
@@ -534,6 +642,11 @@ function labelFor(field) {
  * things the index never matched, which teaches people the wrong thing about
  * why a result came back.
  */
+/** hasText reports whether the server found anything in this hit worth quoting. */
+function hasText(hit) {
+  return Boolean((hit.passages && hit.passages.length) || hit.snippet);
+}
+
 function passages(hit) {
   if (!hit.passages || !hit.passages.length) return hit.snippet || "";
   return hit.passages.map((p) => (p.match ? h("mark", {}, p.text) : document.createTextNode(p.text)));

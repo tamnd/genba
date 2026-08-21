@@ -169,6 +169,17 @@ export const api = {
   suggest: (q, opts) => get("/suggest", { q }, opts),
   document: (id, opts) => get(`/documents/${encodeURIComponent(id)}`, {}, opts),
   content: (id, opts) => bytes(`/documents/${encodeURIComponent(id)}/content`, opts),
+  // The version goes in the URL rather than in a header, because it is what
+  // makes the address of a thumbnail stand for one picture forever. The server
+  // reads it only to decide how long the browser may keep the answer, so a
+  // document that never said which revision it is still gets a thumbnail, it
+  // just gets one the browser revalidates.
+  thumbnail: (id, size, version, opts) =>
+    bytes(
+      `/documents/${encodeURIComponent(id)}/thumbnail?size=${encodeURIComponent(size)}` +
+        (version ? `&v=${encodeURIComponent(version)}` : ""),
+      opts,
+    ),
   events,
   health: (signal) => fetch("/healthz", { signal }).then((r) => r.json()),
 };

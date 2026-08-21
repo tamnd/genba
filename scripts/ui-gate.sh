@@ -26,12 +26,17 @@ BASE="http://127.0.0.1:$PORT"
 TENANT=demo
 LIGHTHOUSE_MIN=${LIGHTHOUSE_MIN:-95}
 SERVER=
+# Where the pictures go. It is inside the corpus because the corpus is this
+# directory, it is gitignored, and it is not a dotted name because the file
+# connector skips anything that starts with a dot and would index none of it.
+IMAGES=${IMAGES:-gate-images}
 
 cleanup() {
 	if [ -n "$SERVER" ]; then
 		kill "$SERVER" 2>/dev/null || true
 		wait "$SERVER" 2>/dev/null || true
 	fi
+	rm -rf "$IMAGES"
 }
 trap cleanup EXIT INT TERM
 
@@ -54,6 +59,11 @@ if curl -fsS -o /dev/null "$BASE/healthz" 2>/dev/null; then
 	echo "ui-gate: something is already listening on $PORT, set PORT to a free one" >&2
 	exit 1
 fi
+
+# The repository holds no images, so the grid and the thumbnail endpoint would
+# have nothing to audit. Two dozen generated pictures are written into the corpus
+# before it is indexed and removed by the trap above, whatever the gate exits on.
+node scripts/gate-images.mjs "$IMAGES" 24
 
 # The corpus is this repository. It is a few hundred documents of real prose and
 # code, which is enough for a results page with snippets, facets and a drawer,
@@ -121,7 +131,7 @@ if [ -n "${CHROMEDRIVER:-}" ]; then
 	DRIVER="--chromedriver-path $CHROMEDRIVER"
 fi
 
-for path in "/" "/?q=cache" "/?q=cache&open=$ID" "/d/$ID"; do
+for path in "/" "/?q=cache" "/?q=cache&open=$ID" "/d/$ID" "/?q=gatepix"; do
 	echo "ui-gate: axe $path"
 	# The interface renders after a fetch, so the audit waits for the first
 	# paint to have happened. Auditing an empty document passes and proves

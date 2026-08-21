@@ -31,6 +31,7 @@ import (
 	"github.com/tamnd/genba/doc"
 	"github.com/tamnd/genba/index"
 	"github.com/tamnd/genba/store"
+	"github.com/tamnd/genba/thumb"
 )
 
 // Authenticator resolves an HTTP request to the principal making it.
@@ -74,6 +75,13 @@ type Server struct {
 	// recorded, because a histogram nobody scrapes costs a lock and nine
 	// comparisons, and it is only served where a caller mounts [Server.Metrics].
 	metrics *metrics
+
+	// thumbs holds the rendered thumbnails. It lives on the server rather than
+	// in the store because it is derived data with a cost that is measured in
+	// milliseconds of decoding rather than in whether the bytes exist, and
+	// because a driver that holds no content still has one of these and never
+	// puts anything in it.
+	thumbs *cache.Cache[thumb.Thumbnail]
 }
 
 // Option configures a [Server].
@@ -127,6 +135,7 @@ func New(st store.Store, searcher *index.Searcher, auth Authenticator, opts ...O
 		started:   time.Now(),
 		now:       time.Now,
 		heartbeat: HeartbeatInterval,
+		thumbs:    newThumbnailCache(),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -148,6 +157,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/suggest", s.authenticated(s.handleSuggest))
 	mux.Handle("GET /api/v1/documents/{id}", s.authenticated(s.handleDocument))
 	mux.Handle("GET /api/v1/documents/{id}/content", s.authenticated(s.handleContent))
+	mux.Handle("GET /api/v1/documents/{id}/thumbnail", s.authenticated(s.handleThumbnail))
 	mux.Handle("GET /api/v1/stats", s.authenticated(s.handleStats))
 	mux.Handle("GET /api/v1/events", s.authenticated(s.handleEvents))
 	if s.assets != nil {
@@ -737,8 +747,23 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request, _ *acl.Prin
 	writeJSON(w, http.StatusOK, statsResponse{
 		Documents:   st.Documents,
 		Quarantined: st.Quarantined,
-		Cache:       s.searcher.CacheStats(),
+		Cache:       s.cacheStats(),
 	})
+}
+
+// cacheStats is every cache the process runs, under one name each.
+//
+// The searcher reports nil when it is running without a cache, so the map is
+// built here rather than written into: an operator looking at a deployment with
+// the search cache turned off should still be able to see whether the
+// thumbnails are being generated once or on every scroll.
+func (s *Server) cacheStats() map[string]cache.Stats {
+	out := s.searcher.CacheStats()
+	if out == nil {
+		out = make(map[string]cache.Stats, 1)
+	}
+	out["thumbnail"] = s.thumbs.Stats()
+	return out
 }
 
 func facets(in map[string][]index.Facet) map[string][]facet {

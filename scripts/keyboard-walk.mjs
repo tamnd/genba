@@ -236,6 +236,64 @@ async function walk() {
     })`,
   );
 
+  // The grid. The pictures behind this query are written into the corpus by the
+  // gate before the server starts, because the repository itself holds none.
+  await visit(session, `${BASE}/?q=gatepix`, "document.querySelectorAll('.cell').length > 0");
+
+  await check(
+    session,
+    "a page of nothing but images opens as a grid",
+    `document.querySelector('.results__list').dataset.view === 'grid' &&
+      document.querySelectorAll('.result').length === 0`,
+  );
+
+  // The assertion the endpoint exists for. Twenty four pictures at a megabyte
+  // each is what this page used to move, and no amount of loading them lazily
+  // makes that acceptable once somebody scrolls to the bottom of it.
+  await settle(
+    session,
+    "performance.getEntriesByType('resource').some((e) => e.name.includes('/thumbnail'))",
+  );
+  await check(
+    session,
+    "a page of image results transfers well under a megabyte of picture",
+    `(() => {
+      const image = performance
+        .getEntriesByType('resource')
+        .filter((e) => e.name.includes('/thumbnail') || e.name.includes('/content'));
+      const bytes = image.reduce((n, e) => n + (e.encodedBodySize || e.transferSize || 0), 0);
+      return image.length > 0 && bytes < 1_000_000;
+    })()`,
+  );
+
+  await check(
+    session,
+    "every picture in the grid carries its own width and height",
+    `(() => {
+      const images = [...document.querySelectorAll('.cover .image__img')];
+      return images.length > 0 && images.every((img) => img.getAttribute('width') && img.getAttribute('height'));
+    })()`,
+  );
+
+  // The choice goes into the address bar, so a grid somebody sends to a
+  // colleague opens as a grid for them too.
+  await evaluate(session, "document.querySelectorAll('.view__button')[0].click()");
+  await check(
+    session,
+    "asking for the list writes the layout into the URL",
+    `location.search.includes('view=list') &&
+      document.querySelector('.results__list').dataset.view === 'list'`,
+  );
+
+  await check(
+    session,
+    "an image row does not reserve blank snippet lines",
+    `(() => {
+      const rows = [...document.querySelectorAll('.result')];
+      return rows.length > 0 && rows.every((row) => !row.querySelector('.result__snippet'));
+    })()`,
+  );
+
   // Last, because it changes the viewport for everything after it. 390 is the
   // narrowest phone worth drawing for, and it is the width at which the strip
   // used to shrink its tabs to fit instead of scrolling, so the last one read
