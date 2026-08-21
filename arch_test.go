@@ -104,7 +104,14 @@ var allowed = map[string][]string{
 	"index":             {"acl", "cache", "doc", "store"},
 	"config":            nil,
 	"web":               nil,
-	"api":               {"", "acl", "cache", "doc", "index", "metric", "store"},
+	"api":               {"", "acl", "cache", "doc", "index", "metric", "store", "thumb"},
+
+	// thumb imports nothing of ours. It is handed bytes and a size and hands
+	// back a smaller picture, which means the package that decodes files a
+	// stranger wrote knows nothing about documents, principals or storage. It
+	// stays that way: a scaler that could read a store would put the most
+	// hostile input in the system next to the data it protects.
+	"thumb": nil,
 
 	// Ingestion sits beside the query path rather than under it. A connector
 	// describes documents and who may read them, the pipeline writes them, and

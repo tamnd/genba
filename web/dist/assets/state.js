@@ -52,6 +52,11 @@ export function read(search = location.search) {
     limit: Number(params.get("limit") || 20) || 20,
     tab: params.get("tab") || "all",
     open: params.get("open") || "",
+    // Empty means the view has not been chosen, which is different from having
+    // chosen the list. A page of nothing but images opens as a grid, and that
+    // has to stop happening the moment somebody says they want the list, so the
+    // absence of an answer and the answer list cannot be the same value.
+    view: params.get("view") === "grid" || params.get("view") === "list" ? params.get("view") : "",
   };
   for (const key of LIST_KEYS) query[key] = params.getAll(key).filter(Boolean);
   return query;
@@ -67,6 +72,7 @@ export function write(query) {
   if (query.sort) params.set("sort", query.sort);
   if (query.offset) params.set("offset", String(query.offset));
   if (query.tab && query.tab !== "all") params.set("tab", query.tab);
+  if (query.view) params.set("view", query.view);
   if (query.open) params.set("open", query.open);
   // Rooted rather than relative, because a search reached from a document page
   // is a search and not a document with a query string stuck on the end of it.

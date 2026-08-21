@@ -19,6 +19,7 @@ const ICONS = {
   menu: "M4 7h16M4 12h16M4 17h16",
   check: "m5 12 5 5 9-10",
   rows: "M4 6h16M4 10h16M4 14h16M4 18h16",
+  grid: "M4 4h7v7H4V4ZM13 4h7v7h-7V4ZM4 13h7v7H4v-7ZM13 13h7v7h-7v-7Z",
   preview: "M4 6h16v12H4zM4 10h16",
   copy: "M9 9h10v11H9zM5 15V4h10",
   image: "M4 5h16v14H4V5ZM4 16l4.5-4.5 3 3 3.5-3.5L20 16M9.5 9.5h.01",
