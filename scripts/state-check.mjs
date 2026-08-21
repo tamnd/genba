@@ -21,6 +21,11 @@
 import { available, evaluate, launch, reporter, settle, sleep, visit } from "./chrome.mjs";
 
 const BASE = process.argv[2] || "http://127.0.0.1:8123";
+// A second server holding nothing, when the gate started one. The empty index
+// is rendered from a module below like the other states, and this is the same
+// screen reached the way somebody reaches it, which is the only way to find out
+// whether the count of documents survives the trip.
+const EMPTY = process.argv[3] || "";
 
 const why = available();
 if (why) {
@@ -319,6 +324,35 @@ async function run(session) {
         refused.querySelector('.state__title').textContent === 'That request was refused' &&
         !unreachable.querySelector('.state__actions');
     `),
+  );
+
+  if (!EMPTY) {
+    console.log("state-check: no empty server was passed, so the first run is only checked from the module");
+    return;
+  }
+
+  // The same screen as the two assertions above, reached the way somebody
+  // reaches it on the day they install this. The module can be told there are
+  // no documents; only the server can be empty.
+  await visit(session, `${EMPTY}/`, "Boolean(document.querySelector('.state'))");
+  await check(
+    session,
+    "a server with an empty index opens on how to fill it",
+    `(() => {
+      const state = document.querySelector('.state--first');
+      return Boolean(state) && state.textContent.includes('Nothing indexed yet') &&
+        state.querySelector('.state__command').textContent.includes('-corpus');
+    })()`,
+  );
+  // Searching an empty index is not an unlucky query and is not written as one.
+  await visit(session, `${EMPTY}/?q=anything`, "Boolean(document.querySelector('.state'))");
+  await check(
+    session,
+    "and searching it says the same thing rather than that nothing matched",
+    `(() => {
+      const state = document.querySelector('.state--first');
+      return Boolean(state) && state.textContent.includes('Nothing indexed yet');
+    })()`,
   );
 }
 

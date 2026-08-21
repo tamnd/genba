@@ -193,6 +193,46 @@ async function run(session) {
     `),
   );
 
+  // The sixth shape. A row and a grid cell ask for two different pictures and
+  // neither of them is the file: a photograph off a phone is four megabytes and
+  // the box it goes in is fifty six pixels across, so a list of twenty of them
+  // downloaded as they are is eighty megabytes to draw a page.
+  await check(
+    session,
+    "a picture in a row and a picture in a grid cell are thumbnails of two sizes, not the file",
+    expr(`
+      const { tile, cover, TILE, CELL } = await import('genba/content.js');
+      const { api } = await import('genba/api.js');
+      const hit = { id: 'repo:shot.png', media_type: 'image/png', kind: 'image', title: 'shot.png', modified_at: '7' };
+      const asked = [];
+      const sent = window.fetch;
+      window.fetch = function (input) { asked.push(String((input && input.url) || input)); return sent.apply(this, arguments); };
+      try {
+        document.body.append(tile(hit), cover(hit));
+        await new Promise((done) => setTimeout(done, 400));
+      } finally {
+        window.fetch = sent;
+      }
+      const thumbs = asked.filter((u) => u.includes('/thumbnail?size='));
+      return thumbs.some((u) => u.includes('size=' + TILE)) &&
+        thumbs.some((u) => u.includes('size=' + CELL)) &&
+        thumbs.every((u) => u.includes('v=7')) &&
+        !asked.some((u) => /\\/documents\\/[^/]+\\/content/.test(u)) &&
+        TILE < CELL;
+    `),
+  );
+
+  await check(
+    session,
+    "a document that is not a picture gets the icon for its kind rather than a hole in the grid",
+    expr(`
+      const { tile, cover } = await import('genba/content.js');
+      const hit = { id: 'repo:notes.md', media_type: 'text/markdown', kind: 'document', source: 'repo' };
+      return Boolean(tile(hit).querySelector('svg')) && !tile(hit).querySelector('.image') &&
+        cover(hit).classList.contains('cover--icon');
+    `),
+  );
+
   await check(
     session,
     "a recording is its transcript, with a player that has not loaded anything yet",

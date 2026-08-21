@@ -2,42 +2,55 @@
 # The browser half of the performance gate.
 #
 # It starts the real binary over a real corpus, which is this repository, and
-# audits the screens somebody actually looks at: the home page, a results page,
-# a results page with the document drawer open, a document on a page of its own,
-# a grid of pictures, the recent screen and a search that matched nothing.
-# Auditing a static fixture would audit the fixture, and every accessibility bug
-# this is meant to catch lives in the markup the interface builds after a fetch.
+# audits nine screens: the home page, the home page over an index holding
+# nothing, a results page, a results page with the document drawer open, a
+# search that matched nothing, a filter that matched nothing, a grid of
+# pictures, a document on a page of its own and the recent screen. They are
+# states rather than layouts, because a layout is looked at every day and a
+# state is looked at once. Auditing a static fixture would audit the fixture,
+# and every accessibility bug this is meant to catch lives in the markup the
+# interface builds after a fetch.
 #
-# The keyboard walk, the rendering check, the states check and axe are the parts
-# that fail a build. axe reports violations of a standard rather than an
-# opinion, it does not move when the runner is busy, and a violation is a person
-# who cannot use the page. The walk presses the keys and clicks the links a
-# person would and asserts where each one led, which is the half axe cannot see:
-# markup can describe itself perfectly and still go nowhere when you click it.
-# The states check drives the screens that are not the happy path, which is
-# where an interface either has a way out or does not.
+# The keyboard walk, the rendering check, the states check, the budgets and axe
+# are the parts that fail a build. axe reports violations of a standard rather
+# than an opinion, it does not move when the runner is busy, and a violation is
+# a person who cannot use the page. The walk presses the keys and clicks the
+# links a person would and asserts where each one led, which is the half axe
+# cannot see: markup can describe itself perfectly and still go nowhere when you
+# click it. The states check drives the screens that are not the happy path,
+# which is where an interface either has a way out or does not. The budgets are
+# counts, of files fetched and nodes built, and a count does not flake.
 #
-# Lighthouse is advisory here and enforced on the nightly run, because a
-# Lighthouse performance score on a shared runner moves by ten points between
-# two runs of the same commit. Set GENBA_UI_STRICT=1 to have it fail.
+# Lighthouse and the cold latency report are advisory. A Lighthouse performance
+# score on a shared runner moves by ten points between two runs of the same
+# commit, and Lighthouse is enforced on the nightly run instead. Set
+# GENBA_UI_STRICT=1 to have it fail. The latency report is advisory for the
+# other reason: it is over its budget on purpose, and it prints so that the
+# number is watched while the work that fixes it is done.
 set -eu
 
 BIN=${BIN:-bin/genbad}
 PORT=${PORT:-8123}
 BASE="http://127.0.0.1:$PORT"
+# The second server holds nothing, because an index with nothing in it is a
+# state somebody sees on their first day and it cannot be reached from a server
+# that has a corpus.
+EMPTY_PORT=$((PORT + 1))
+EMPTY="http://127.0.0.1:$EMPTY_PORT"
 TENANT=demo
 LIGHTHOUSE_MIN=${LIGHTHOUSE_MIN:-95}
 SERVER=
+BLANK=
 # Where the pictures go. It is inside the corpus because the corpus is this
 # directory, it is gitignored, and it is not a dotted name because the file
 # connector skips anything that starts with a dot and would index none of it.
 IMAGES=${IMAGES:-gate-images}
 
 cleanup() {
-	if [ -n "$SERVER" ]; then
-		kill "$SERVER" 2>/dev/null || true
-		wait "$SERVER" 2>/dev/null || true
-	fi
+	for pid in $SERVER $BLANK; do
+		kill "$pid" 2>/dev/null || true
+		wait "$pid" 2>/dev/null || true
+	done
 	rm -rf "$IMAGES"
 }
 trap cleanup EXIT INT TERM
@@ -57,10 +70,30 @@ fi
 # pages to the audit, while our server exits because it could not bind. The
 # failure that produces blames the corpus, which is a long way from the truth,
 # so the port is checked before anything is started.
-if curl -fsS -o /dev/null "$BASE/healthz" 2>/dev/null; then
-	echo "ui-gate: something is already listening on $PORT, set PORT to a free one" >&2
-	exit 1
-fi
+for url in "$BASE" "$EMPTY"; do
+	if curl -fsS -o /dev/null "$url/healthz" 2>/dev/null; then
+		echo "ui-gate: something is already listening on $url, set PORT to a free one" >&2
+		exit 1
+	fi
+done
+
+# ready waits for a server to answer its health check, and gives up if the
+# process it is waiting for is no longer there.
+ready() {
+	i=0
+	until curl -fsS "$1/healthz" >/dev/null 2>&1; do
+		if ! kill -0 "$2" 2>/dev/null; then
+			echo "ui-gate: the server on $1 exited before it was ready" >&2
+			exit 1
+		fi
+		i=$((i + 1))
+		if [ "$i" -gt 100 ]; then
+			echo "ui-gate: the server on $1 never became healthy" >&2
+			exit 1
+		fi
+		sleep 0.2
+	done
+}
 
 # The repository holds no images, so the grid and the thumbnail endpoint would
 # have nothing to audit. Two dozen generated pictures are written into the corpus
@@ -73,19 +106,14 @@ node scripts/gate-images.mjs "$IMAGES" 24
 "$BIN" -addr "127.0.0.1:$PORT" -store memory -tenant "$TENANT" -corpus . -corpus-name repo -log-level error &
 SERVER=$!
 
-i=0
-until curl -fsS "$BASE/healthz" >/dev/null 2>&1; do
-	if ! kill -0 "$SERVER" 2>/dev/null; then
-		echo "ui-gate: the server exited before it was ready" >&2
-		exit 1
-	fi
-	i=$((i + 1))
-	if [ "$i" -gt 100 ]; then
-		echo "ui-gate: the server never became healthy" >&2
-		exit 1
-	fi
-	sleep 0.2
-done
+# The same binary with nothing to index. It is one more process rather than a
+# fixture because the empty state is what the interface does with an answer of
+# no documents, and an answer of no documents has to come from the server.
+"$BIN" -addr "127.0.0.1:$EMPTY_PORT" -store memory -tenant "$TENANT" -log-level error &
+BLANK=$!
+
+ready "$BASE" "$SERVER"
+ready "$EMPTY" "$BLANK"
 
 # The drawer is opened by an id in the URL, so one has to be looked up. The
 # headers are what a trusted proxy would pass down, and the corpus is readable
@@ -125,9 +153,21 @@ fi
 # from the browser side to produce a slow request and a failed one, so it needs
 # nothing downloaded either and asks nothing of the server it is auditing.
 echo "ui-gate: states check"
-if ! node scripts/state-check.mjs "$BASE"; then
+if ! node scripts/state-check.mjs "$BASE" "$EMPTY"; then
 	status=1
 fi
+
+# Counts rather than timings, so they fail a build. What a screen fetches and
+# how much markup it builds are both things that grow one commit at a time and
+# are never noticed in any single one of them.
+echo "ui-gate: budgets"
+if ! node scripts/budget-check.mjs "$BASE" "$ID"; then
+	status=1
+fi
+
+# Printed on every run and advisory until #55 lands. See the script.
+echo "ui-gate: latency"
+node scripts/latency-report.mjs "$BASE" "$TENANT" || status=1
 
 if ! command -v npx >/dev/null 2>&1; then
 	echo "ui-gate: npx is not on the path, so axe and Lighthouse cannot run"
@@ -149,13 +189,31 @@ if [ -n "${CHROMEDRIVER:-}" ]; then
 	DRIVER="--chromedriver-path $CHROMEDRIVER"
 fi
 
-for path in "/" "/?q=cache" "/?q=cache&open=$ID" "/d/$ID" "/?q=gatepix" "/recent" "/?q=cache&kind=image"; do
-	echo "ui-gate: axe $path"
+# Nine screens, and they are states rather than layouts. Three of them, the
+# empty index, the query that matched nothing and the filter that matched
+# nothing, produce markup no other screen produces, and that markup is where an
+# accessibility bug survives longest: nobody looks at an empty page twice.
+#
+# The settings screen the specification lists is not among them because it does
+# not exist yet. When it does it belongs here, and until then a screen audited
+# on a corpus that has no filter left to remove is worth more than a placeholder.
+# It is #133.
+for url in \
+	"$BASE/" \
+	"$EMPTY/" \
+	"$BASE/?q=cache" \
+	"$BASE/?q=cache&open=$ID" \
+	"$BASE/?q=zzqxzzqx" \
+	"$BASE/?q=cache&kind=image" \
+	"$BASE/?q=gatepix&kind=image&view=grid" \
+	"$BASE/d/$ID" \
+	"$BASE/recent"; do
+	echo "ui-gate: axe $url"
 	# The interface renders after a fetch, so the audit waits for the first
 	# paint to have happened. Auditing an empty document passes and proves
 	# nothing.
 	# shellcheck disable=SC2086
-	if ! npx --yes @axe-core/cli "$BASE$path" \
+	if ! npx --yes @axe-core/cli "$url" \
 		--tags wcag2a,wcag2aa,wcag21a,wcag21aa \
 		--load-delay 2000 \
 		$DRIVER \
