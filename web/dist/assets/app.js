@@ -10,9 +10,9 @@ import { api, identity, setIdentity, ApiError } from "./api.js";
 import { cache } from "./cache.js";
 import { Live } from "./live.js";
 import * as urlState from "./state.js";
-import { followable, icon, initials, label, sourceColor, when } from "./format.js";
+import { followable, icon, initials, label, number, sourceColor, when } from "./format.js";
 import { Omnibox, modifierLabel, shortcutLabel } from "./omnibox.js";
-import { Results, VERTICALS } from "./results.js";
+import { Results, VERTICALS, verticalsFor } from "./results.js";
 import { Drawer } from "./drawer.js";
 import { Page } from "./page.js";
 import { Home } from "./home.js";
@@ -246,24 +246,11 @@ class App {
           h("span", { class: "rail__label" }, "Recent"),
         ),
       ),
-      h(
-        "div",
-        { class: "rail__section" },
-        h("h2", { class: "rail__title" }, "Verticals"),
-        VERTICALS.filter((v) => v.id !== "all").map((v) =>
-          h(
-            "a",
-            {
-              class: "rail__link",
-              href: `/?tab=${v.id}`,
-              title: v.title,
-              onClick: (e) => this.link(e, { ...this.query, tab: v.id, kind: [], offset: 0 }),
-            },
-            svg(icon(v.id === "people" ? "people" : v.id === "code" ? "code" : v.id === "messages" ? "chat" : v.id === "tickets" ? "ticket" : "doc"), 20),
-            h("span", { class: "rail__label" }, v.title),
-          ),
-        ),
-      ),
+      // Both of these are filled once the session says what the corpus holds.
+      // They are empty until then rather than full of guesses, because a rail
+      // that shortens a moment after it paints is worse than one that arrives a
+      // moment late.
+      h("div", { class: "rail__section", id: "rail-verticals" }),
       h("div", { class: "rail__section", id: "rail-sources" }),
       h(
         "button",
@@ -293,6 +280,8 @@ class App {
       // anything is read and the switcher below empties the cache by changing
       // it. Nothing cached under one identity is reachable from another.
       cache.as(this.session.view || "");
+      this.results.verticals = verticalsFor(this.session.kinds);
+      this.renderVerticals();
       this.renderSources();
     } catch (err) {
       this.fail(err);
@@ -302,10 +291,46 @@ class App {
     this.refresher.start();
   }
 
+  /** renderVerticals fills the rail with the verticals the corpus has. */
+  renderVerticals() {
+    const holder = this.rail.querySelector("#rail-verticals");
+    // All is the tab strip's way of saying no filter, and on the rail it is the
+    // brand and the Home link, so it does not get a row of its own.
+    const verticals = this.results.verticals.filter((v) => v.id !== "all");
+    if (!verticals.length) {
+      replace(holder);
+      return;
+    }
+    replace(
+      holder,
+      h("h2", { class: "rail__title" }, "Verticals"),
+      verticals.map((v) =>
+        h(
+          "a",
+          {
+            class: "rail__link",
+            href: `/?tab=${v.id}`,
+            title: v.title,
+            onClick: (e) => this.link(e, { ...this.query, tab: v.id, kind: [], offset: 0 }),
+          },
+          svg(icon(v.icon), 20),
+          h("span", { class: "rail__label" }, v.title),
+          h("span", { class: "rail__count" }, number(countIn(this.session.kinds, v))),
+        ),
+      ),
+    );
+  }
+
+  /**
+   * renderSources fills the rail with where the documents came from.
+   *
+   * One source is not a filter. It always selects everything, and it sits above
+   * a facet panel saying the same word again.
+   */
   renderSources() {
     const holder = this.rail.querySelector("#rail-sources");
     const sources = (this.session && this.session.sources) || [];
-    if (!sources.length) {
+    if (sources.length < 2) {
       replace(holder);
       return;
     }
@@ -323,7 +348,7 @@ class App {
           },
           h("span", { class: "source__dot", style: { background: sourceColor(s.value) } }),
           h("span", { class: "rail__label" }, label(s.value)),
-          h("span", { class: "rail__count" }, s.count),
+          h("span", { class: "rail__count" }, number(s.count)),
         ),
       ),
     );
@@ -794,6 +819,19 @@ class App {
       }
     });
   }
+}
+
+/**
+ * countIn adds up the corpus wide counts of the kinds a vertical covers.
+ *
+ * This is the rail's number and it is deliberately not the tab strip's. The rail
+ * says how much of this there is, which does not change while somebody types.
+ * The tab says how much of this the current query matched.
+ */
+function countIn(kinds, vertical) {
+  return (kinds || [])
+    .filter((k) => vertical.kinds.includes(k.value))
+    .reduce((n, k) => n + k.count, 0);
 }
 
 // Theme before first paint, so a dark theme does not arrive as a white flash.

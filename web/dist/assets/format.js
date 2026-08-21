@@ -21,6 +21,7 @@ const ICONS = {
   rows: "M4 6h16M4 10h16M4 14h16M4 18h16",
   preview: "M4 6h16v12H4zM4 10h16",
   copy: "M9 9h10v11H9zM5 15V4h10",
+  image: "M4 5h16v14H4V5ZM4 16l4.5-4.5 3 3 3.5-3.5L20 16M9.5 9.5h.01",
   "arrow-left": "M19 12H5M11 6l-6 6 6 6",
   link: "M10.5 13.5a4 4 0 0 0 5.7 0l2.3-2.3a4 4 0 0 0-5.7-5.7l-1.1 1.1M13.5 10.5a4 4 0 0 0-5.7 0l-2.3 2.3a4 4 0 0 0 5.7 5.7l1.1-1.1",
 };
@@ -38,6 +39,8 @@ const KIND_ICONS = {
   code: "code",
   person: "people",
   calendar: "clock",
+  image: "image",
+  video: "image",
 };
 
 export function kindIcon(kind) {

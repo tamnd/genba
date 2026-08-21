@@ -23,15 +23,44 @@ import * as urlState from "./state.js";
  * They are presets over document kinds rather than separate indexes, so the
  * counts across them add up and moving between them does not run a different
  * query with different ranking. A tab with no kinds is everything.
+ *
+ * The table is the editorial part and it stays a constant, because which kinds
+ * belong together is a judgement a count cannot make. Which of them a person is
+ * shown is decided by verticalsFor below.
  */
 export const VERTICALS = [
-  { id: "all", title: "All", kinds: [] },
-  { id: "documents", title: "Documents", kinds: ["page", "file"] },
-  { id: "messages", title: "Messages", kinds: ["message", "email"] },
-  { id: "tickets", title: "Tickets", kinds: ["ticket"] },
-  { id: "code", title: "Code", kinds: ["code"] },
-  { id: "people", title: "People", kinds: ["person"] },
+  { id: "all", title: "All", icon: "rows", kinds: [] },
+  { id: "documents", title: "Documents", icon: "doc", kinds: ["page", "file"] },
+  { id: "messages", title: "Messages", icon: "chat", kinds: ["message", "email"] },
+  { id: "tickets", title: "Tickets", icon: "ticket", kinds: ["ticket"] },
+  { id: "code", title: "Code", icon: "code", kinds: ["code"] },
+  { id: "images", title: "Images", icon: "image", kinds: ["image", "video"] },
+  { id: "people", title: "People", icon: "people", kinds: ["person"] },
 ];
+
+/**
+ * verticalsFor is the navigation this viewer should actually be offered.
+ *
+ * It takes the per kind counts from /api/v1/me, which are corpus wide and for
+ * this principal, and keeps a vertical when at least one of its kinds has a
+ * document in it. Counts for the current query are a different number and they
+ * belong on the tab; a tab that vanished when a search narrowed would be a tab
+ * nobody could use to widen one again.
+ *
+ * Being per viewer rather than per deployment is the same argument the source
+ * list already makes. Telling somebody a vertical exists that they have nothing
+ * in says a little about what other people can see.
+ *
+ * Two boundary cases both come out as nothing at all. An empty index reads as a
+ * system with nothing in it rather than as one with five broken tabs. A corpus
+ * that lands in exactly one vertical makes that vertical and All the same set of
+ * documents, and a choice between two identical answers is not a choice.
+ */
+export function verticalsFor(kinds) {
+  const counts = new Map((kinds || []).map((k) => [k.value, k.count]));
+  const held = VERTICALS.filter((v) => v.kinds.some((k) => (counts.get(k) || 0) > 0));
+  return held.length > 1 ? [VERTICALS[0], ...held] : [];
+}
 
 // A source and a kind are ours and read better capitalised. A container and a
 // person are somebody else's string, and a folder called store/sqlitestore is
@@ -54,8 +83,23 @@ export class Results {
     this.expanded = new Set();
     this.selected = -1;
     this.hits = [];
+    // Empty until the session says what the corpus holds, so the strip is never
+    // painted with tabs that are about to be taken away.
+    this.verticals = [];
 
-    this.tabs = h("div", { class: "tabs", role: "tablist", "aria-label": "Result types" });
+    this.tabs = h("div", {
+      class: "tabs",
+      role: "tablist",
+      "aria-label": "Result types",
+      hidden: true,
+      onScroll: () => this.edges(),
+    });
+    // The strip only scrolls on a narrow viewport, and whether it can is a
+    // question about its own width rather than about the window's, since the
+    // facet column comes and goes beside it.
+    if (typeof ResizeObserver === "function") {
+      new ResizeObserver(() => this.edges()).observe(this.tabs);
+    }
     this.facets = h("aside", { class: "facets", "aria-label": "Filters" });
 
     // The facet column becomes a disclosure below the medium breakpoint, where
@@ -154,9 +198,10 @@ export class Results {
   }
 
   renderTabs(query, res) {
+    this.tabs.hidden = this.verticals.length === 0;
     replace(
       this.tabs,
-      VERTICALS.map((v) => {
+      this.verticals.map((v) => {
         const active = (query.tab || "all") === v.id;
         const count = res ? countFor(res, v) : null;
         return h(
@@ -173,6 +218,25 @@ export class Results {
         );
       }),
     );
+    this.edges();
+  }
+
+  /**
+   * edges records which way the tab strip can still be scrolled.
+   *
+   * The fade at the edge of a narrow strip means there is more over there, so it
+   * has to know whether there is. A mask that is always on fades the last tab of
+   * a strip that fits, which reads as a rendering fault rather than as an
+   * invitation to scroll.
+   */
+  edges() {
+    const room = this.tabs.scrollWidth - this.tabs.clientWidth;
+    // A scroll position on a display whose pixel ratio is not one lands on a
+    // fraction and never reaches the far end exactly, so each end gets a pixel.
+    const before = this.tabs.scrollLeft > 1;
+    const after = room > 1 && this.tabs.scrollLeft < room - 1;
+    const state = before && after ? "both" : before ? "start" : after ? "end" : "none";
+    if (this.tabs.dataset.scroll !== state) this.tabs.dataset.scroll = state;
   }
 
   renderChips(query) {

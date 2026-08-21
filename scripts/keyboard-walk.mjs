@@ -137,6 +137,41 @@ async function walk() {
     })()`,
   );
 
+  // The corpus here is this repository, which holds code, pages and files and
+  // no messages, tickets or people. Those three tabs used to be on screen
+  // anyway, and every one of them was a click that led to an empty page.
+  await check(
+    session,
+    "the tab strip is what the corpus holds and nothing else",
+    `(() => {
+      const on = [...document.querySelectorAll('.tab')].map((t) => t.textContent);
+      const named = (name) => on.some((t) => t.startsWith(name));
+      return named('All') && named('Documents') && named('Code') &&
+        !named('Messages') && !named('Tickets') && !named('People');
+    })()`,
+  );
+
+  await check(
+    session,
+    "one source is not a filter, so the rail does not offer it",
+    "document.querySelector('#rail-sources').children.length === 0",
+  );
+
+  // The two boundaries the corpus above cannot show, asked of the function
+  // directly. It is a module in the page, so the browser is the test runner and
+  // there is nothing to install.
+  await check(
+    session,
+    "images are a vertical, and an empty index has none at all",
+    `import('/assets/results.js').then(({ verticalsFor }) => {
+      const withImages = verticalsFor([
+        { value: 'page', count: 4 },
+        { value: 'image', count: 912 },
+      ]);
+      return withImages.some((v) => v.id === 'images') && verticalsFor([]).length === 0;
+    })`,
+  );
+
   await press(session, "j", "KeyJ", 74);
   await check(
     session,
@@ -199,6 +234,24 @@ async function walk() {
       const u = new URL(a.href, location.href);
       return !(u.pathname.startsWith('/d/') && u.search);
     })`,
+  );
+
+  // Last, because it changes the viewport for everything after it. 390 is the
+  // narrowest phone worth drawing for, and it is the width at which the strip
+  // used to shrink its tabs to fit instead of scrolling, so the last one read
+  // "Tick".
+  await narrow(session, 390, 780);
+  await visit(session, `${BASE}/?q=cache`, "document.querySelectorAll('.tab').length > 0");
+  await check(
+    session,
+    "at 390 pixels the tab strip scrolls rather than cutting a label in half",
+    `(() => {
+      const tabs = document.querySelector('.tabs');
+      const whole = [...document.querySelectorAll('.tab')].every(
+        (t) => t.scrollWidth <= t.clientWidth + 1,
+      );
+      return whole && tabs.scrollWidth > tabs.clientWidth && tabs.dataset.scroll === 'end';
+    })()`,
   );
 }
 
@@ -283,6 +336,16 @@ async function attach(url) {
   const { sessionId } = await send("Target.attachToTarget", { targetId, flatten: true });
   await send("Page.bringToFront", {}, sessionId);
   return (method, params) => send(method, params, sessionId);
+}
+
+/** narrow tells the page it is on a small screen, media queries and all. */
+async function narrow(session, width, height) {
+  await session("Emulation.setDeviceMetricsOverride", {
+    width,
+    height,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
 }
 
 /** visit navigates and waits for the interface to have painted the answer. */
