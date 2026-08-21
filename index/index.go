@@ -152,9 +152,15 @@ type Results struct {
 	Total     int
 	Truncated bool
 
-	// Facets are counted over the whole match set, not over the page, which is
-	// what makes them usable as filters.
+	// Facets are counted over the match set, not over the page, which is what
+	// makes them usable as filters.
 	Facets map[string][]Facet
+
+	// Approximate says the facet counts were counted over the first [FacetPool]
+	// documents of the match set rather than over all of them, so each one is a
+	// lower bound. Total is exact either way, and an interface showing the
+	// counts is expected to say which of the two it is showing.
+	Approximate bool
 
 	// Candidates is how many documents were ranked to produce this page.
 	//
@@ -295,7 +301,12 @@ func (s *Searcher) Search(ctx context.Context, p *acl.Principal, q Query) (Resul
 	req := q.Request()
 	// A search shows a total and a facet sidebar, so it asks for the counts. See
 	// [Searcher.Recent] for the read that does not.
-	sel := store.Selection{Limit: CandidatePool(q.Offset, limit), Recent: q.Sort == ByRecent, Counts: true}
+	sel := store.Selection{
+		Limit:  CandidatePool(q.Offset, limit),
+		Recent: q.Sort == ByRecent,
+		Counts: true,
+		Facets: FacetPool,
+	}
 
 	// Phase one. Which documents are worth ranking, how many matched, and what
 	// the facet counts are, all under the permission rule and none of it
@@ -309,10 +320,11 @@ func (s *Searcher) Search(ctx context.Context, p *acl.Principal, q Query) (Resul
 	}
 
 	res := Results{
-		Total:      found.total,
-		Truncated:  found.truncated,
-		Facets:     found.facets,
-		Candidates: len(found.cands),
+		Total:       found.total,
+		Truncated:   found.truncated,
+		Facets:      found.facets,
+		Approximate: found.approximate,
+		Candidates:  len(found.cands),
 	}
 	if len(found.cands) == 0 {
 		// Nothing matched, which is the only place a correction is worth looking

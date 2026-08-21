@@ -44,6 +44,7 @@ var rankCases = []rankCase{
 	{"the total counts the match set and not the pool", testRankTotal},
 	{"truncated says whether the ranking saw everything", testRankTruncated},
 	{"facets are counted over the match set and not over the pool", testRankFacets},
+	{"a facet bound counts a sample and says the counts are a lower bound", testRankFacetBound},
 	{"a selection with no counts ranks the same documents", testRankWithoutCounts},
 	{"the principal is applied inside rank", testRankPermission},
 	{"a nil principal ranks nothing", testRankNilPrincipal},
@@ -225,6 +226,55 @@ func testRankFacets(t *testing.T, s store.Store) {
 		if !maps.EqualFunc(got, want, maps.Equal) {
 			t.Fatalf("facets for a pool of %d are %v, expected %v", sel.Limit, got, want)
 		}
+	}
+}
+
+// A facet bound is what a search sets, so this is the shape a driver actually
+// runs. The counts stop at the bound, which is what keeps a query for a common
+// word from reading four columns of every document that matched, and what comes
+// back has to admit that it stopped: a sidebar showing a sample as though it
+// were a count is a number somebody will subtract two others from.
+//
+// The total is checked in the same case because it is the number that must not
+// have been bounded along with them. It is one count over the predicate and it
+// is cheap to be exact about, and a driver that answers it out of the same
+// bounded pool would report four hundred results for a query that found forty
+// thousand.
+func testRankFacetBound(t *testing.T, s store.Store) {
+	rk := ranker(t, s)
+	mustPut(t, s, corpus()...)
+
+	matched := len(wantIDs(t, s, reader(), store.Request{}))
+	const bound = 2
+	got := mustRank(t, rk, reader(), store.Request{}, store.Selection{Limit: 100, Counts: true, Facets: bound})
+	if !got.Approximate {
+		t.Fatal("Approximate is not set for facets counted over a bound smaller than the match set")
+	}
+	if got.Total != matched {
+		t.Fatalf("Total = %d under a facet bound, the match set has %d documents in it", got.Total, matched)
+	}
+	if n := len(got.Candidates); n != matched {
+		t.Fatalf("the facet bound cut the candidate pool to %d of %d", n, matched)
+	}
+	for field, values := range got.Facets {
+		var counted int
+		for _, v := range values {
+			counted += v.Count
+		}
+		if counted > bound {
+			t.Fatalf("the %s facet counts %d documents under a bound of %d: %v", field, counted, bound, values)
+		}
+	}
+
+	// And a bound the match set fits inside is the exact answer, unflagged,
+	// because a search that says its counts are a sample when they are not
+	// teaches everybody to ignore the flag.
+	full := mustRank(t, rk, reader(), store.Request{}, store.Selection{Limit: 100, Counts: true, Facets: 100})
+	if full.Approximate {
+		t.Fatal("Approximate is set for facets counted over a bound larger than the match set")
+	}
+	if want := wantFacets(t, s, reader(), store.Request{}); !maps.EqualFunc(gotFacets(t, full), want, maps.Equal) {
+		t.Fatalf("facets under a bound larger than the match set are %v, expected %v", gotFacets(t, full), want)
 	}
 }
 

@@ -65,6 +65,27 @@ func CandidatePool(offset, limit int) int {
 	return min(max(CandidateFloor, (offset+limit)*CandidateFactor), MaxMatches)
 }
 
+// FacetPool is how many matching documents the facet counts are counted over.
+//
+// The sidebar is read as an ordering and as a set of proportions. Which sources
+// a query is finding things in, which of them has most of them, and whether
+// ticking one is going to leave anything: all three are settled by the first
+// thousand documents of a match set and none of them move when the other fifty
+// thousand are counted as well. What counting the rest costs is a read of four
+// columns of every matching document, which on a term most of the corpus
+// carries is a pass over most of the corpus, on every keystroke, for a number
+// nobody reads past its first two digits.
+//
+// So the counts stop here and say so. A count past the bound is a lower bound
+// rather than a count, [Results.Approximate] carries that up, and the interface
+// writes it as 1,000+ in the same place it already writes a truncated total.
+// The total itself is exact, because it is one count over the predicate and
+// costs nothing to be right about.
+//
+// Twice the candidate floor, so that the sidebar always describes more
+// documents than the page was ranked from.
+const FacetPool = 2 * CandidateFloor
+
 // pool is one query's retrieval: the candidates worth scoring, the counts over
 // the whole match set, and the corpus statistics the scorer needs.
 //
@@ -75,11 +96,12 @@ func CandidatePool(offset, limit int) int {
 // hundred thousand bodies is hundreds of megabytes of text that only the page's
 // worth is ever read from.
 type pool struct {
-	cands     []store.Candidate
-	total     int
-	truncated bool
-	facets    map[string][]Facet
-	corpus    store.Corpus
+	cands       []store.Candidate
+	total       int
+	truncated   bool
+	facets      map[string][]Facet
+	approximate bool
+	corpus      store.Corpus
 }
 
 // collect asks the driver for the candidates, using the best capability it has.
@@ -113,10 +135,11 @@ func (s *Searcher) collect(ctx context.Context, p *acl.Principal, r store.Reques
 			return pool{}, err
 		}
 		return pool{
-			cands:     ranked.Candidates,
-			total:     ranked.Total,
-			truncated: ranked.Truncated,
-			facets:    facetsFrom(ranked.Facets),
+			cands:       ranked.Candidates,
+			total:       ranked.Total,
+			truncated:   ranked.Truncated,
+			facets:      facetsFrom(ranked.Facets),
+			approximate: ranked.Approximate,
 		}, nil
 	}
 
@@ -157,6 +180,9 @@ func (s *Searcher) collect(ctx context.Context, p *acl.Principal, r store.Reques
 	out.cands = seen
 	out.total = len(seen)
 	out.facets = facetsOf(seen)
+	// Exact, unless [MaxMatches] stopped the walk, in which case the counts are
+	// over what was walked and are a lower bound like a driver's bounded ones.
+	out.approximate = out.truncated
 	return out, nil
 }
 

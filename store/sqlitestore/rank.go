@@ -23,10 +23,10 @@ import (
 // read out of columns rather than derived from text, and nothing on the path is
 // proportional to the corpus outside the index walk SQLite does for itself.
 //
-// Three statements: the candidates, their term frequencies, and one that
-// carries the total and every facet count over the same predicate. The third
-// runs only for a caller that asked for the counts, because it is the only one
-// of the three whose cost follows the match set rather than the page.
+// Four statements: the candidates, their term frequencies, the total, and the
+// facet counts. The last two run only for a caller that asked for the counts,
+// because they are the two whose cost follows the match set rather than the
+// page, and the facets are bounded on top of that. See [Store.counts].
 func (s *Store) Rank(ctx context.Context, p *acl.Principal, r store.Request, sel store.Selection) (store.Ranked, error) {
 	if err := s.ready(ctx); err != nil {
 		return store.Ranked{}, err
@@ -93,13 +93,22 @@ func (s *Store) Rank(ctx context.Context, p *acl.Principal, r store.Request, sel
 		}
 	}
 	if !sel.Counts {
-		// The counts are the one statement here whose cost follows the match set,
-		// so a caller that shows neither a total nor a sidebar does not run it.
+		// The counting is the part here whose cost follows the match set, so a
+		// caller that shows neither a total nor a sidebar does not run it.
 		return out, nil
 	}
-	if out.Total, out.Facets, err = s.counts(ctx, from, c); err != nil {
+	if out.Total, err = s.total(ctx, from, c); err != nil {
 		return store.Ranked{}, err
 	}
+	counted, facets, err := s.counts(ctx, from, c, sel.Facets)
+	if err != nil {
+		return store.Ranked{}, err
+	}
+	out.Facets = facets
+	// Counted rather than the bound, because what makes the counts a lower
+	// bound is the statement having stopped early, and the statement is the only
+	// thing that knows whether it did.
+	out.Approximate = counted < out.Total
 	out.Truncated = out.Total > len(cands)
 	return out, nil
 }
@@ -194,22 +203,55 @@ func (s *Store) frequencies(ctx context.Context, cands []store.Candidate, rowids
 	return rows.Err()
 }
 
-// counts is the total and every facet, over the same predicate, in one
-// statement.
+// total is how many documents matched, in one statement over the predicate.
 //
-// One rather than five, because the predicate is the expensive part and the
-// common table expression is materialised so it is evaluated once. Five
-// statements would apply the permission rule to the match set five times over
-// to answer five questions about the same rows.
-func (s *Store) counts(ctx context.Context, from string, c *clause) (total int, facets map[string][]store.Facet, err error) {
+// It is a plain count and it reads no columns, so SQLite answers it out of the
+// index walk it is doing anyway and nothing is written down on the way. The
+// same number used to come out of the common table expression below, which
+// meant a query for a common word copied every matching row into a temporary
+// b-tree to count them.
+func (s *Store) total(ctx context.Context, from string, c *clause) (int, error) {
+	var n int
+	if err := s.queryRow(ctx, `SELECT count(*) FROM `+from+` WHERE `+c.where(), c.args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("sqlitestore: rank: %w", err)
+	}
+	s.counters.rows.Add(1)
+	return n, nil
+}
+
+// counts is every facet over the same predicate, in one statement, and returns
+// how many documents it counted over.
+//
+// One statement rather than four, because the predicate is the expensive part
+// and the common table expression is materialised so it is evaluated once. Four
+// statements would apply the permission rule to the match set four times over
+// to answer four questions about the same rows.
+//
+// The bound is the LIMIT inside the expression, and it is what keeps this from
+// being proportional to the match set: the four columns are read for the first
+// bound documents and the walk stops there. They are the first in the order the
+// planner produces rather than the best matching, because ordering by the score
+// would mean reading those four columns of every matching document to find out
+// which ones to keep, which is the cost being removed. A sample of the match set
+// is what the sidebar gets, the number of documents behind it comes back so the
+// caller can say the counts are a lower bound, and the total above is exact.
+func (s *Store) counts(ctx context.Context, from string, c *clause, bound int) (counted int, facets map[string][]store.Facet, err error) {
 	const fields = `
-		SELECT 'total' AS field, '' AS value, count(*) AS n FROM m
+		SELECT 'counted' AS field, '' AS value, count(*) AS n FROM m
 		UNION ALL SELECT * FROM (SELECT 'source', source, count(*) FROM m WHERE source <> '' GROUP BY source ORDER BY 3 DESC, 2 LIMIT ?)
 		UNION ALL SELECT * FROM (SELECT 'kind', kind, count(*) FROM m WHERE kind <> '' GROUP BY kind ORDER BY 3 DESC, 2 LIMIT ?)
 		UNION ALL SELECT * FROM (SELECT 'container', container, count(*) FROM m WHERE container <> '' GROUP BY container ORDER BY 3 DESC, 2 LIMIT ?)
 		UNION ALL SELECT * FROM (SELECT 'author', author, count(*) FROM m WHERE author <> '' GROUP BY author ORDER BY 3 DESC, 2 LIMIT ?)`
 
+	// No bound means no LIMIT rather than a limit large enough to stand in for
+	// one, because the exact answer is what a selection without a bound asked
+	// for and a very large number is not the same claim.
+	limit := ``
 	args := append([]any{}, c.args...)
+	if bound > 0 {
+		limit = ` LIMIT ?`
+		args = append(args, bound)
+	}
 	for range 4 {
 		args = append(args, store.MaxFacetValues)
 	}
@@ -217,7 +259,7 @@ func (s *Store) counts(ctx context.Context, from string, c *clause) (total int, 
 	rows, err := s.query(ctx, `
 		WITH m AS MATERIALIZED (
 			SELECT d.source AS source, d.kind AS kind, d.container AS container, d.author_name AS author
-			FROM `+from+` WHERE `+c.where()+`
+			FROM `+from+` WHERE `+c.where()+limit+`
 		)`+fields, args...)
 	if err != nil {
 		return 0, nil, fmt.Errorf("sqlitestore: rank: %w", err)
@@ -234,8 +276,12 @@ func (s *Store) counts(ctx context.Context, from string, c *clause) (total int, 
 			return 0, nil, fmt.Errorf("sqlitestore: rank: %w", err)
 		}
 		s.counters.rows.Add(1)
-		if field == "total" {
-			total = n
+		if field == "counted" {
+			counted = n
+			// The documents the aggregate read, which no other counter can see:
+			// see [store.Counters.Faceted] for why it is counted separately from
+			// the rows the statement returned.
+			s.counters.faceted.Add(int64(n))
 			continue
 		}
 		facets[field] = append(facets[field], store.Facet{Value: value, Count: n})
@@ -243,7 +289,7 @@ func (s *Store) counts(ctx context.Context, from string, c *clause) (total int, 
 	if err := rows.Err(); err != nil {
 		return 0, nil, fmt.Errorf("sqlitestore: rank: %w", err)
 	}
-	return total, facets, nil
+	return counted, facets, nil
 }
 
 // Statistics reads the corpus numbers the scorer needs, in two key lookups.
