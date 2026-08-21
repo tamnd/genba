@@ -2,9 +2,10 @@
 # The browser half of the performance gate.
 #
 # It starts the real binary over a real corpus, which is this repository, and
-# audits the four screens somebody actually looks at: the home page, a results
-# page, a results page with the document drawer open, and a document on a page
-# of its own. Auditing a static fixture instead would audit the fixture, and
+# audits the screens somebody actually looks at: the home page, a results page,
+# a results page with the document drawer open, a document on a page of its own,
+# a grid of pictures, and the recent screen. Auditing a static fixture would
+# audit the fixture, and
 # every accessibility bug this is meant to catch lives in the markup the
 # interface builds after a fetch.
 #
@@ -131,7 +132,7 @@ if [ -n "${CHROMEDRIVER:-}" ]; then
 	DRIVER="--chromedriver-path $CHROMEDRIVER"
 fi
 
-for path in "/" "/?q=cache" "/?q=cache&open=$ID" "/d/$ID" "/?q=gatepix"; do
+for path in "/" "/?q=cache" "/?q=cache&open=$ID" "/d/$ID" "/?q=gatepix" "/recent"; do
 	echo "ui-gate: axe $path"
 	# The interface renders after a fetch, so the audit waits for the first
 	# paint to have happened. Auditing an empty document passes and proves

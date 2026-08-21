@@ -283,7 +283,9 @@ func (s *Searcher) Search(ctx context.Context, p *acl.Principal, q Query) (Resul
 	limit = min(limit, MaxLimit)
 
 	req := q.Request()
-	sel := store.Selection{Limit: CandidatePool(q.Offset, limit), Recent: q.Sort == ByRecent}
+	// A search shows a total and a facet sidebar, so it asks for the counts. See
+	// [Searcher.Recent] for the read that does not.
+	sel := store.Selection{Limit: CandidatePool(q.Offset, limit), Recent: q.Sort == ByRecent, Counts: true}
 
 	// Phase one. Which documents are worth ranking, how many matched, and what
 	// the facet counts are, all under the permission rule and none of it
@@ -321,12 +323,7 @@ func (s *Searcher) Search(ctx context.Context, p *acl.Principal, q Query) (Resul
 	// paging stays stable.
 	switch q.Sort {
 	case ByRecent:
-		sort.SliceStable(scored, func(i, j int) bool {
-			if !scored[i].cand.ModifiedAt.Equal(scored[j].cand.ModifiedAt) {
-				return scored[i].cand.ModifiedAt.After(scored[j].cand.ModifiedAt)
-			}
-			return scored[i].cand.ID < scored[j].cand.ID
-		})
+		byRecent(scored)
 	default:
 		sort.SliceStable(scored, func(i, j int) bool {
 			if scored[i].score != scored[j].score {
@@ -369,6 +366,75 @@ func (s *Searcher) Search(ctx context.Context, p *acl.Principal, q Query) (Resul
 type ranked struct {
 	cand  store.Candidate
 	score float64
+}
+
+// byRecent orders newest first, breaking ties on the id so that two runs of the
+// same query return the same page.
+//
+// A driver that made the cut for itself has already done this, and doing it
+// again over a page of twenty costs nothing. A driver that has not is the whole
+// reason it is here.
+func byRecent(scored []ranked) {
+	sort.SliceStable(scored, func(i, j int) bool {
+		if !scored[i].cand.ModifiedAt.Equal(scored[j].cand.ModifiedAt) {
+			return scored[i].cand.ModifiedAt.After(scored[j].cand.ModifiedAt)
+		}
+		return scored[i].cand.ID < scored[j].cand.ID
+	})
+}
+
+// Recent is what changed in the corpus this principal can see, newest first.
+//
+// It is a browse with no query, and it is a separate method rather than a
+// [Query] because of what it leaves out. There is no relevance to compute with
+// no terms to compute it from, no total to show and no facet sidebar next to it,
+// and those counts are the one part of a retrieval whose cost follows the match
+// set rather than the page. A browse through Search on twenty thousand
+// documents spends most of its time counting a match set nobody asked about the
+// size of.
+//
+// The permission rule is where it always is, inside the driver, so a document
+// that stopped being readable is absent from this list rather than filtered out
+// of it here.
+func (s *Searcher) Recent(ctx context.Context, p *acl.Principal, limit int) ([]doc.Document, error) {
+	if limit <= 0 {
+		limit = DefaultLimit
+	}
+	limit = min(limit, MaxLimit)
+
+	found, err := s.collect(ctx, p, store.Request{}, store.Selection{Limit: limit, Recent: true})
+	if err != nil {
+		return nil, err
+	}
+	if len(found.cands) == 0 {
+		return nil, nil
+	}
+
+	// The candidates carry no score and none is computed. Recency is the whole
+	// order, and a scored one would be a different list with a more expensive
+	// way of arriving at it.
+	scored := make([]ranked, 0, len(found.cands))
+	for _, c := range found.cands {
+		scored = append(scored, ranked{cand: c})
+	}
+	byRecent(scored)
+
+	window := page(scored, 0, limit)
+	bodies, err := s.fetch(ctx, p, window)
+	if err != nil {
+		return nil, err
+	}
+	// An id that has stopped being readable between the cut and the fetch is
+	// missing from what came back, and is dropped here for the same reason a
+	// search drops it: showing the title of a document somebody just lost access
+	// to is a leak, and losing a row is the cheaper mistake.
+	out := make([]doc.Document, 0, len(window))
+	for _, r := range window {
+		if d, ok := bodies[r.cand.ID]; ok {
+			out = append(out, d)
+		}
+	}
+	return out, nil
 }
 
 // fetch reads the documents behind one page.

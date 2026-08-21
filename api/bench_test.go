@@ -138,6 +138,43 @@ func BenchmarkAPIMe(b *testing.B) {
 	}
 }
 
+// BenchmarkAPIRecent is the home screen: what this person opened and what has
+// changed in the corpus they can see. The history is filled first, because an
+// empty one is a read of nothing and the number that matters is the one with a
+// screen of rows in it.
+func BenchmarkAPIRecent(b *testing.B) {
+	h, hdr := handler(b)
+
+	w := get(b, h, "/api/v1/search?q="+urlQuery(benchcorpus.ByClass(benchcorpus.Queries())[benchcorpus.ClassCommon][0].Text), hdr)
+	var page struct {
+		Hits []struct {
+			ID string `json:"id"`
+		} `json:"hits"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+		b.Fatalf("decoding the search page: %v", err)
+	}
+	for _, hit := range page.Hits {
+		r := httptest.NewRequestWithContext(b.Context(), http.MethodPost, "/api/v1/recent",
+			strings.NewReader(`{"id":"`+hit.ID+`"}`))
+		for k, v := range hdr {
+			r.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		if rec.Code != http.StatusNoContent {
+			b.Fatalf("POST /api/v1/recent = %d, %s", rec.Code, rec.Body)
+		}
+	}
+
+	get(b, h, "/api/v1/recent", hdr)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		get(b, h, "/api/v1/recent", hdr)
+	}
+}
+
 func BenchmarkAPIStats(b *testing.B) {
 	h, hdr := handler(b)
 	get(b, h, "/api/v1/stats", hdr)

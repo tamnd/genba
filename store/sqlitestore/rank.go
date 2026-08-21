@@ -24,7 +24,9 @@ import (
 // proportional to the corpus outside the index walk SQLite does for itself.
 //
 // Three statements: the candidates, their term frequencies, and one that
-// carries the total and every facet count over the same predicate.
+// carries the total and every facet count over the same predicate. The third
+// runs only for a caller that asked for the counts, because it is the only one
+// of the three whose cost follows the match set rather than the page.
 func (s *Store) Rank(ctx context.Context, p *acl.Principal, r store.Request, sel store.Selection) (store.Ranked, error) {
 	if err := s.ready(ctx); err != nil {
 		return store.Ranked{}, err
@@ -55,9 +57,16 @@ func (s *Store) Rank(ctx context.Context, p *acl.Principal, r store.Request, sel
 	from := `document d`
 	order := `d.id`
 	if sel.Recent {
-		// NULLs last, because a document whose date the source never gave us is
-		// not the most recent thing in the corpus.
-		order = `d.modified_at IS NULL, d.modified_at DESC, d.id`
+		// A document whose date the source never gave us is not the most recent
+		// thing in the corpus, and it does not have to be said: SQLite orders
+		// NULL below every value, so a descending scan puts them last for
+		// itself. Saying it anyway, as an ORDER BY d.modified_at IS NULL term in
+		// front of this one, cost a full sort of the match set. No index can
+		// satisfy an ordering that leads with an expression, so the planner
+		// walked every visible document into a temporary b-tree to answer a
+		// query for twenty rows, which is the whole of why an empty browse was
+		// slow. See document_recent in schema.go for the index this walks.
+		order = `d.modified_at DESC, d.id`
 	}
 	if q, ok := match(r.Terms); ok {
 		from = `document_fts CROSS JOIN document d ON d.rowid = document_fts.rowid`
@@ -82,6 +91,11 @@ func (s *Store) Rank(ctx context.Context, p *acl.Principal, r store.Request, sel
 		if err := s.frequencies(ctx, cands, rowids, r.Terms); err != nil {
 			return store.Ranked{}, err
 		}
+	}
+	if !sel.Counts {
+		// The counts are the one statement here whose cost follows the match set,
+		// so a caller that shows neither a total nor a sidebar does not run it.
+		return out, nil
 	}
 	if out.Total, out.Facets, err = s.counts(ctx, from, c); err != nil {
 		return store.Ranked{}, err

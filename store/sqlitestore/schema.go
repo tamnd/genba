@@ -194,6 +194,44 @@ var migrations = []step{
 	ddl(`UPDATE document SET source_update = COALESCE(
 		(SELECT json_extract(dd.data, '$.SourceUpdate') FROM document_data dd WHERE dd.doc_id = document.id), '')`),
 	ddl(`CREATE INDEX document_tenant_source ON document (tenant, source)`),
+
+	// document_open is what each person opened, which is the half of the recent
+	// screen that no amount of searching can reconstruct.
+	//
+	// One row per person per document rather than one per open, because the list
+	// answers what somebody was reading and a person who opened the same runbook
+	// nine times this morning wants the other nineteen entries, not nine copies
+	// of that one. The cascade is what keeps it honest: a document that leaves
+	// the corpus leaves everybody's history with it, so the table cannot hold an
+	// id nothing else in the database knows about.
+	ddl(`CREATE TABLE document_open (
+		tenant    TEXT    NOT NULL,
+		subject   TEXT    NOT NULL,
+		doc_id    TEXT    NOT NULL REFERENCES document(id) ON DELETE CASCADE,
+		opened_at INTEGER NOT NULL,
+		PRIMARY KEY (tenant, subject, doc_id)
+	) WITHOUT ROWID`),
+	ddl(`CREATE INDEX document_open_recent ON document_open (tenant, subject, opened_at DESC)`),
+
+	// document_recent is the other half of that screen: what changed in the
+	// corpus, which is a query with no terms to cut the match set with.
+	//
+	// document_modified is on the column alone and is no use to it, because the
+	// predicate fixes the tenant and the ordering follows, so the planner sorted
+	// every visible document into a temporary b-tree to answer a request for
+	// twenty rows. With the tenant in front of the date the same request is a
+	// walk down the index that stops when the page is full, and the id is in it
+	// so the tie break does not put the sort back.
+	//
+	// Partial, on the flag rather than with the flag in the key, and that is the
+	// whole difference between this index and one that made every filtered
+	// search slower. Written as (tenant, queryable, ...) it is two equality
+	// columns for the predicate every query in the product starts with, so the
+	// planner picked this index for filtered searches that have nothing to do
+	// with recency and walked a wider b-tree than the one it used to walk. As a
+	// partial index it offers one equality column, a source filter beats it on
+	// its own index, and the browse query still gets its ordering for free.
+	ddl(`CREATE INDEX document_recent ON document (tenant, modified_at DESC, id) WHERE queryable = 1`),
 }
 
 // backfill recomputes the ranking statistics for every document already stored.

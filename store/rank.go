@@ -27,7 +27,8 @@ type Ranker interface {
 // Selection is how many candidates to cut to, and in what order.
 type Selection struct {
 	// Limit is the size of the candidate pool. A driver returns at most this
-	// many candidates and still counts the whole match set.
+	// many candidates, and when it is also asked for the counts it counts the
+	// whole match set.
 	Limit int
 
 	// Recent asks for the most recently modified rather than the best matching.
@@ -37,6 +38,20 @@ type Selection struct {
 	// most recent of the most relevant, which is neither of the two things
 	// anybody asked for.
 	Recent bool
+
+	// Counts asks for [Ranked.Total] and [Ranked.Facets].
+	//
+	// They are the one part of a retrieval whose cost follows the match set
+	// rather than the page: a facet count has to count something, and on a query
+	// with no terms that something is every document the asker may read. A
+	// screen that shows neither a result count nor a sidebar should not pay for
+	// them, so it says so, and a driver that is not asked leaves both empty.
+	//
+	// It is opt in rather than opt out because leaving it out is the cheap
+	// answer and a caller that forgets to ask gets a screen with no facets on
+	// it, which is visible. Defaulting the other way would mean a caller who
+	// forgets gets the slow query, which is not.
+	Counts bool
 }
 
 // Ranked is one query's retrieval: the candidates worth scoring and the counts
@@ -44,16 +59,19 @@ type Selection struct {
 type Ranked struct {
 	Candidates []Candidate
 
-	// Total is the size of the match set, not of the candidate pool.
+	// Total is the size of the match set, not of the candidate pool. It is zero
+	// when the selection did not ask for the counts.
 	Total int
 
 	// Truncated reports that the match set was larger than the pool, so the
 	// ranking is over candidates rather than over everything. A caller is
-	// entitled to know which of the two it got.
+	// entitled to know which of the two it got. Without the counts there is
+	// nothing to compare the pool against, so it is false.
 	Truncated bool
 
 	// Facets are counted over the whole match set, which is what makes them
-	// usable as filters rather than as a description of the current page.
+	// usable as filters rather than as a description of the current page. They
+	// are empty when the selection did not ask for the counts.
 	Facets map[string][]Facet
 }
 

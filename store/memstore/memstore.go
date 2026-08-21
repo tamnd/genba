@@ -36,7 +36,11 @@ type Store struct {
 	// keeps it in its own table: a scan that carried image bytes would make
 	// every query pay for them.
 	content map[string]doc.Content
-	closed  bool
+
+	// opens is what each person has been reading, keyed by tenant and subject.
+	opens map[[2]string]*opened
+
+	closed bool
 }
 
 // New returns an empty store.
@@ -44,6 +48,7 @@ func New() *Store {
 	return &Store{
 		docs:    make(map[string]doc.Document),
 		content: make(map[string]doc.Content),
+		opens:   make(map[[2]string]*opened),
 	}
 }
 

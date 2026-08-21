@@ -140,9 +140,11 @@ func TestTheInterfaceFitsItsTransferBudget(t *testing.T) {
 // a convention because the tempting change is one line long and would look like
 // an improvement.
 func TestTheCacheKeepsNothingOnDisk(t *testing.T) {
-	// The theme, the density and the development identity are the whole of what
-	// may persist, and none of them is anything the corpus said.
-	persist := map[string]bool{"api.js": true, "app.js": true}
+	// The theme, the density, the development identity and the queries somebody
+	// typed are the whole of what may persist, and none of them is anything the
+	// corpus said. A query is the asker's own words, which is why it stays on
+	// their machine rather than being kept for them on the server.
+	persist := map[string]bool{"api.js": true, "app.js": true, "queries.js": true}
 
 	err := fs.WalkDir(os.DirFS("dist"), ".", func(name string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || path.Ext(name) != ".js" {
@@ -161,7 +163,7 @@ func TestTheCacheKeepsNothingOnDisk(t *testing.T) {
 			}
 		}
 		if strings.Contains(string(body), "localStorage.") && !persist[path.Base(name)] {
-			t.Errorf("%s writes to localStorage, which is only for the theme, the density and the identity", name)
+			t.Errorf("%s writes to localStorage, which is only for the theme, the density, the identity and the queries somebody typed", name)
 		}
 		return nil
 	})

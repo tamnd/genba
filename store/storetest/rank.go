@@ -44,6 +44,7 @@ var rankCases = []rankCase{
 	{"the total counts the match set and not the pool", testRankTotal},
 	{"truncated says whether the ranking saw everything", testRankTruncated},
 	{"facets are counted over the match set and not over the pool", testRankFacets},
+	{"a selection with no counts ranks the same documents", testRankWithoutCounts},
 	{"the principal is applied inside rank", testRankPermission},
 	{"a nil principal ranks nothing", testRankNilPrincipal},
 	{"a candidate carries the token counts the analyzer produces", testRankTokens},
@@ -109,8 +110,9 @@ func candidateIDs(ranked store.Ranked) []string {
 	return ids
 }
 
-// pool is a selection large enough that nothing in the fixture is cut.
-func pool() store.Selection { return store.Selection{Limit: 100} }
+// pool is a selection large enough that nothing in the fixture is cut, with the
+// counts asked for, which is what a search does.
+func pool() store.Selection { return store.Selection{Limit: 100, Counts: true} }
 
 // wantFacets counts the facets the slow way, from the documents the principal
 // can actually read.
@@ -188,7 +190,7 @@ func testRankTotal(t *testing.T, s store.Store) {
 	// matched. A total that reports the pool would tell the interface there is
 	// one result when there are four, which is the number a person reads before
 	// deciding the search is broken.
-	got := mustRank(t, rk, reader(), store.Request{}, store.Selection{Limit: 1})
+	got := mustRank(t, rk, reader(), store.Request{}, store.Selection{Limit: 1, Counts: true})
 	if len(got.Candidates) != 1 {
 		t.Fatalf("asked for one candidate and got %d", len(got.Candidates))
 	}
@@ -204,7 +206,7 @@ func testRankTruncated(t *testing.T, s store.Store) {
 	if got := mustRank(t, rk, reader(), store.Request{}, pool()); got.Truncated {
 		t.Fatal("Truncated is set for a pool that held the whole match set")
 	}
-	if got := mustRank(t, rk, reader(), store.Request{}, store.Selection{Limit: 2}); !got.Truncated {
+	if got := mustRank(t, rk, reader(), store.Request{}, store.Selection{Limit: 2, Counts: true}); !got.Truncated {
 		t.Fatal("Truncated is not set for a pool that cut the match set in half")
 	}
 }
@@ -218,10 +220,38 @@ func testRankFacets(t *testing.T, s store.Store) {
 	// over the pool would make the sidebar change as somebody pages, and the
 	// counts it shows would be a description of the current page rather than of
 	// what ticking the filter is about to do.
-	for _, sel := range []store.Selection{pool(), {Limit: 1}} {
+	for _, sel := range []store.Selection{pool(), {Limit: 1, Counts: true}} {
 		got := gotFacets(t, mustRank(t, rk, reader(), store.Request{}, sel))
 		if !maps.EqualFunc(got, want, maps.Equal) {
 			t.Fatalf("facets for a pool of %d are %v, expected %v", sel.Limit, got, want)
+		}
+	}
+}
+
+// A selection that asks for no counts gets the same candidates and none of the
+// counting. It is what the home screen runs, and the point of it is the work
+// that does not happen, so what is asserted here is that skipping the counting
+// did not quietly change which documents came back.
+func testRankWithoutCounts(t *testing.T, s store.Store) {
+	rk := ranker(t, s)
+	mustPut(t, s, corpus()...)
+
+	for _, r := range []store.Request{{}, {Terms: []string{"payments"}}, {Sources: []string{"gdrive"}}} {
+		counted := mustRank(t, rk, reader(), r, pool())
+		plain := mustRank(t, rk, reader(), r, store.Selection{Limit: 100})
+		if got, want := candidateIDs(plain), candidateIDs(counted); !slices.Equal(got, want) {
+			t.Fatalf("a selection with no counts ranked %v for %+v, and one with them ranked %v", got, r, want)
+		}
+		if plain.Total != 0 {
+			t.Fatalf("Total = %d for a selection that asked for no counts", plain.Total)
+		}
+		if plain.Truncated {
+			t.Fatal("Truncated is set for a selection with no total to compare the pool against")
+		}
+		for field, values := range plain.Facets {
+			if len(values) != 0 {
+				t.Fatalf("the %s facet was counted for a selection that asked for no counts: %v", field, values)
+			}
 		}
 	}
 }

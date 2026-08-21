@@ -60,6 +60,11 @@ var cases = []testCase{
 	{"content never rides along on a query path", testContentIsNotInTheDocument},
 	{"deleting a document deletes its content", testContentDelete},
 	{"writes are reported after they are visible", testNotifyWrites},
+	{"opens come back most recent first", testOpenLogOrder},
+	{"opens honour the limit", testOpenLogLimit},
+	{"an open is not a licence to keep reading", testOpenLogPermissions},
+	{"a deleted document leaves the history", testOpenLogDelete},
+	{"a history belongs to one tenant", testOpenLogTenants},
 }
 
 // contentStore skips a case for a driver that does not hold bytes.

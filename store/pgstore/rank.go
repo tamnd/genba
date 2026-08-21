@@ -25,7 +25,9 @@ import (
 // proportional to the corpus outside the index walk Postgres does for itself.
 //
 // Three statements: the candidates, their term frequencies, and one that
-// carries the total and every facet count over the same predicate.
+// carries the total and every facet count over the same predicate. The third
+// runs only for a caller that asked for the counts, because it is the only one
+// of the three whose cost follows the match set rather than the page.
 func (s *Store) Rank(ctx context.Context, p *acl.Principal, r store.Request, sel store.Selection) (store.Ranked, error) {
 	if err := s.ready(ctx); err != nil {
 		return store.Ranked{}, err
@@ -74,6 +76,13 @@ func (s *Store) Rank(ctx context.Context, p *acl.Principal, r store.Request, sel
 			if err := s.frequencies(ctx, cands, r.Terms); err != nil {
 				return err
 			}
+		}
+		if !sel.Counts {
+			// The counts are the one statement here whose cost follows the match
+			// set, so a caller that shows neither a total nor a sidebar does not
+			// run it.
+			out = store.Ranked{Candidates: cands}
+			return nil
 		}
 		total, facets, err := s.counts(ctx, c)
 		if err != nil {
