@@ -228,13 +228,20 @@ type searchResponse struct {
 	// Text is what was left of the query after the operators were parsed out of
 	// it, so the interface can show which part of what somebody typed became a
 	// filter rather than a search term.
-	Text    string             `json:"text"`
-	Filters searchFilters      `json:"filters"`
-	Total   int                `json:"total"`
-	Partial bool               `json:"partial,omitempty"`
-	TookMS  float64            `json:"took_ms"`
-	Hits    []searchHit        `json:"hits"`
-	Facets  map[string][]facet `json:"facets"`
+	Text    string        `json:"text"`
+	Filters searchFilters `json:"filters"`
+	Total   int           `json:"total"`
+	Partial bool          `json:"partial,omitempty"`
+	TookMS  float64       `json:"took_ms"`
+	Hits    []searchHit   `json:"hits"`
+
+	Facets map[string][]facet `json:"facets"`
+
+	// FacetsPartial says each facet count is a lower bound, because the counting
+	// stopped at [index.FacetPool] documents rather than reading every matching
+	// one. It is the same claim partial makes about the total, about the other
+	// number on the screen, and the interface writes both the same way.
+	FacetsPartial bool `json:"facets_partial,omitempty"`
 
 	// Correction is a spelling of the query that would have found something. It
 	// is only ever present on a search that found nothing, and it has already
@@ -306,13 +313,15 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Pri
 	s.metrics.observeSearch(res.Took, res.Candidates, res.Total)
 
 	out := searchResponse{
-		Query:      r.URL.Query().Get("q"),
-		Text:       query.Text,
-		Filters:    filtersOf(query),
-		Total:      res.Total,
-		Partial:    res.Truncated,
-		TookMS:     float64(res.Took.Microseconds()) / 1000,
-		Facets:     facets(res.Facets),
+		Query:         r.URL.Query().Get("q"),
+		Text:          query.Text,
+		Filters:       filtersOf(query),
+		Total:         res.Total,
+		Partial:       res.Truncated,
+		TookMS:        float64(res.Took.Microseconds()) / 1000,
+		Facets:        facets(res.Facets),
+		FacetsPartial: res.Approximate,
+
 		Hits:       []searchHit{},
 		Correction: res.Correction,
 	}

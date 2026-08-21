@@ -21,7 +21,12 @@ import * as urlState from "genba/state.js";
 export const VERTICALS = [
   { id: "all", title: "All", icon: "rows", kinds: [] },
   { id: "documents", title: "Documents", icon: "doc", kinds: ["page", "file"] },
-  { id: "messages", title: "Messages", icon: "chat", kinds: ["message", "email"] },
+  {
+    id: "messages",
+    title: "Messages",
+    icon: "chat",
+    kinds: ["message", "email"],
+  },
   { id: "tickets", title: "Tickets", icon: "ticket", kinds: ["ticket"] },
   { id: "code", title: "Code", icon: "code", kinds: ["code"] },
   { id: "images", title: "Images", icon: "image", kinds: ["image", "video"] },
@@ -48,7 +53,9 @@ export const VERTICALS = [
  */
 export function verticalsFor(kinds) {
   const counts = new Map((kinds || []).map((k) => [k.value, k.count]));
-  const held = VERTICALS.filter((v) => v.kinds.some((k) => (counts.get(k) || 0) > 0));
+  const held = VERTICALS.filter((v) =>
+    v.kinds.some((k) => (counts.get(k) || 0) > 0),
+  );
   return held.length > 1 ? [VERTICALS[0], ...held] : [];
 }
 
@@ -158,7 +165,13 @@ export class Results {
     this.hits = [];
     this.rows.skeleton();
     replace(this.chips);
-    replace(this.head, h("div", { class: "skeleton", style: { width: "180px", height: "16px" } }));
+    replace(
+      this.head,
+      h("div", {
+        class: "skeleton",
+        style: { width: "180px", height: "16px" },
+      }),
+    );
     replace(this.aside);
     replace(this.facets);
   }
@@ -237,7 +250,11 @@ export class Results {
     // is dropped here rather than carried. The spelling that would have worked
     // belongs to this answer for the same reason. What the index holds is a
     // fact about the corpus and survives.
-    this.context = { ...this.context, removed: null, correction: res.correction || null };
+    this.context = {
+      ...this.context,
+      removed: null,
+      correction: res.correction || null,
+    };
     this.hits = res.hits || [];
     // Kept because the paging keys have to know where the last page ends, and
     // the pager itself is rebuilt from the response every time.
@@ -256,6 +273,10 @@ export class Results {
       this.verticals.map((v) => {
         const active = (query.tab || "all") === v.id;
         const count = res ? countFor(res, v) : null;
+        // All is the total and the rest are added up out of the kind facet, so
+        // which of the two numbers is a lower bound depends on the tab.
+        const partial =
+          res && (v.kinds.length ? res.facets_partial : res.partial);
         return h(
           "button",
           {
@@ -263,10 +284,13 @@ export class Results {
             role: "tab",
             type: "button",
             "aria-selected": String(active),
-            onClick: () => this.onQuery({ ...query, tab: v.id, kind: [], offset: 0 }),
+            onClick: () =>
+              this.onQuery({ ...query, tab: v.id, kind: [], offset: 0 }),
           },
           v.title,
-          count !== null && count !== undefined && h("span", { class: "tab__count" }, number(count)),
+          count !== null &&
+            count !== undefined &&
+            h("span", { class: "tab__count" }, atLeast(count, partial)),
         );
       }),
     );
@@ -287,7 +311,8 @@ export class Results {
     // fraction and never reaches the far end exactly, so each end gets a pixel.
     const before = this.tabs.scrollLeft > 1;
     const after = room > 1 && this.tabs.scrollLeft < room - 1;
-    const state = before && after ? "both" : before ? "start" : after ? "end" : "none";
+    const state =
+      before && after ? "both" : before ? "start" : after ? "end" : "none";
     if (this.tabs.dataset.scroll !== state) this.tabs.dataset.scroll = state;
   }
 
@@ -299,7 +324,11 @@ export class Results {
       active.length > 0 &&
         h(
           "button",
-          { class: "chip", type: "button", onClick: () => this.onQuery(urlState.clear(query)) },
+          {
+            class: "chip",
+            type: "button",
+            onClick: () => this.onQuery(urlState.clear(query)),
+          },
           "Clear all",
         ),
     );
@@ -325,10 +354,15 @@ export class Results {
           "select",
           {
             class: "sort",
-            onChange: (e) => this.onQuery({ ...query, sort: e.target.value, offset: 0 }),
+            onChange: (e) =>
+              this.onQuery({ ...query, sort: e.target.value, offset: 0 }),
           },
           h("option", { value: "", selected: !query.sort }, "Most relevant"),
-          h("option", { value: "recent", selected: query.sort === "recent" }, "Most recent"),
+          h(
+            "option",
+            { value: "recent", selected: query.sort === "recent" },
+            "Most recent",
+          ),
         ),
       ),
     );
@@ -379,7 +413,10 @@ export class Results {
    */
   viewFor(query) {
     if (query.view) return query.view;
-    return this.hits.length > 0 && this.hits.every((hit) => shapeOf(hit) === "image") ? "grid" : "list";
+    return this.hits.length > 0 &&
+      this.hits.every((hit) => shapeOf(hit) === "image")
+      ? "grid"
+      : "list";
   }
 
   // The list holds results and nothing else. A list that also holds its own
@@ -387,8 +424,14 @@ export class Results {
   // item, so a reader on a screen reader is told there are twenty one results
   // and the last one is a pair of buttons.
   renderList(query, res) {
-    this.rows.render(this.hits, { view: this.viewFor(query), cursor: query.cursor });
-    replace(this.aside, this.hits.length ? pager(query, res, this.onQuery) : this.empty(query));
+    this.rows.render(this.hits, {
+      view: this.viewFor(query),
+      cursor: query.cursor,
+    });
+    replace(
+      this.aside,
+      this.hits.length ? pager(query, res, this.onQuery) : this.empty(query),
+    );
   }
 
   /** empty is why there is nothing here, with everything known so far in it. */
@@ -398,7 +441,9 @@ export class Results {
     // rather than a chip. On a page with nothing on it, a tab holding the whole
     // answer back while the state lists the filters and does not mention it is
     // the same dead end with better manners.
-    const vertical = this.verticals.find((v) => v.id === query.tab && v.id !== "all");
+    const vertical = this.verticals.find(
+      (v) => v.id === query.tab && v.id !== "all",
+    );
     if (vertical) chips.push(tabChip(vertical, query, this.onQuery));
     return nothingMatched(query, this.onQuery, { ...this.context, chips });
   }
@@ -427,11 +472,24 @@ export class Results {
                   class: "facet__item",
                   type: "button",
                   "aria-pressed": String(on),
-                  onClick: () => this.onQuery(urlState.toggle(query, key, v.value)),
+                  onClick: () =>
+                    this.onQuery(urlState.toggle(query, key, v.value)),
                 },
-                h("span", { class: "facet__box" }, on ? svg(icon("check"), 12) : null),
-                h("span", { class: "facet__label", title: v.value }, titled ? label(v.value) : v.value),
-                h("span", { class: "facet__count" }, number(v.count)),
+                h(
+                  "span",
+                  { class: "facet__box" },
+                  on ? svg(icon("check"), 12) : null,
+                ),
+                h(
+                  "span",
+                  { class: "facet__label", title: v.value },
+                  titled ? label(v.value) : v.value,
+                ),
+                h(
+                  "span",
+                  { class: "facet__count" },
+                  atLeast(v.count, res.facets_partial),
+                ),
               ),
             );
           }),
@@ -478,6 +536,20 @@ export class Results {
   }
 }
 
+/**
+ * atLeast writes a count, and says so when it is only a lower bound.
+ *
+ * The server counts the facets over the first thousand documents that matched
+ * rather than over all of them, because counting four fields of every matching
+ * document is the one part of a search with no bound on it. Past that the number
+ * under a filter is at least this many rather than exactly this many, and the
+ * plus is how the result count already says the same thing about a total it
+ * stopped counting.
+ */
+function atLeast(n, partial) {
+  return partial ? `${number(n)}+` : number(n);
+}
+
 function countFor(res, vertical) {
   if (!vertical.kinds.length) return res.total;
   const kinds = (res.facets && res.facets.kind) || [];
@@ -490,7 +562,11 @@ function countFor(res, vertical) {
 }
 
 function labelFor(field) {
-  return { source: "Source", kind: "Type", container: "In", author: "Person" }[field] || field;
+  return (
+    { source: "Source", kind: "Type", container: "In", author: "Person" }[
+      field
+    ] || field
+  );
 }
 
 function pager(query, res, onQuery) {
@@ -509,7 +585,8 @@ function pager(query, res, onQuery) {
         class: "button",
         type: "button",
         disabled: !hasPrev,
-        onClick: () => onQuery({ ...query, offset: Math.max(0, offset - limit) }),
+        onClick: () =>
+          onQuery({ ...query, offset: Math.max(0, offset - limit) }),
       },
       "Previous",
     ),

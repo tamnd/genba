@@ -79,6 +79,7 @@ type counters struct {
 	statements atomic.Int64
 	decodes    atomic.Int64
 	candidates atomic.Int64
+	faceted    atomic.Int64
 }
 
 // Counters reports the work this store has done since it was opened or last
@@ -89,6 +90,7 @@ func (s *Store) Counters() store.Counters {
 		Statements: s.counters.statements.Load(),
 		Decodes:    s.counters.decodes.Load(),
 		Candidates: s.counters.candidates.Load(),
+		Faceted:    s.counters.faceted.Load(),
 	}
 }
 
@@ -98,6 +100,7 @@ func (s *Store) ResetCounters() {
 	s.counters.statements.Store(0)
 	s.counters.decodes.Store(0)
 	s.counters.candidates.Store(0)
+	s.counters.faceted.Store(0)
 }
 
 // query and queryRow are the only two ways this driver reads, so that the

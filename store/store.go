@@ -123,6 +123,18 @@ type Counters struct {
 	// candidate pool rather than by the match set, which is the whole point of
 	// two phase retrieval.
 	Candidates int64
+
+	// Faceted is the documents the facet counts were counted over. It is
+	// bounded by [Selection.Facets] rather than by the match set.
+	//
+	// It counts rows the database read on the driver's behalf rather than rows
+	// it handed back, which is the one place the two have to be told apart. An
+	// aggregate returns the same handful of rows whether it counted fifty
+	// documents or fifty thousand, so Rows cannot see the difference and the
+	// regression this exists to catch is invisible in it: a facet count that
+	// goes back to walking the whole match set costs a second on a common term
+	// and looks free in every other counter here.
+	Faceted int64
 }
 
 // Counted is a store that reports the work it has done.

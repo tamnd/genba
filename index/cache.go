@@ -358,6 +358,14 @@ func writeRequest(key *strings.Builder, r store.Request, sel store.Selection) {
 	key.WriteString(strconv.Itoa(sel.Limit))
 	key.WriteByte('|')
 	key.WriteString(strconv.FormatBool(sel.Recent))
+	key.WriteByte('|')
+	// The counting is part of the key because it is part of the value. An entry
+	// produced for a screen that wanted no counts holds a zero total and no
+	// facets, and serving it to a search would draw a page of results above the
+	// words "0 results".
+	key.WriteString(strconv.FormatBool(sel.Counts))
+	key.WriteByte('|')
+	key.WriteString(strconv.Itoa(sel.Facets))
 }
 
 func kindStrings(kinds []doc.Kind) []string {

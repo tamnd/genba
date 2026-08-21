@@ -52,6 +52,23 @@ type Selection struct {
 	// it, which is visible. Defaulting the other way would mean a caller who
 	// forgets gets the slow query, which is not.
 	Counts bool
+
+	// Facets bounds how many matching documents the facet counts are counted
+	// over. Zero counts every one of them.
+	//
+	// The total and the facets are asked for together and they are not the same
+	// question. A total is one number and a driver answers it with a count over
+	// the predicate. The facets are four grouped counts over four display
+	// strings, so answering them exactly means reading four columns of every
+	// matching document, and on a term that most of the corpus carries that is
+	// a pass over most of the corpus to draw a sidebar.
+	//
+	// Past the bound the counts are a lower bound rather than a count, and
+	// [Ranked.Approximate] says which of the two came back. Zero is kept as the
+	// exact answer because a driver has to be able to produce it: the
+	// conformance suite checks a driver's arithmetic against the same counts
+	// computed in Go, and it can only do that against an exact one.
+	Facets int
 }
 
 // Ranked is one query's retrieval: the candidates worth scoring and the counts
@@ -69,10 +86,17 @@ type Ranked struct {
 	// nothing to compare the pool against, so it is false.
 	Truncated bool
 
-	// Facets are counted over the whole match set, which is what makes them
-	// usable as filters rather than as a description of the current page. They
-	// are empty when the selection did not ask for the counts.
+	// Facets are counted over the match set rather than over the page, which is
+	// what makes them usable as filters rather than as a description of what is
+	// on screen. They are empty when the selection did not ask for the counts,
+	// and bounded by [Selection.Facets] when it set a bound.
 	Facets map[string][]Facet
+
+	// Approximate reports that the facets were counted over the first
+	// [Selection.Facets] documents of the match set rather than over all of
+	// them, so each count is a lower bound on the true one. Total is exact
+	// either way, and a caller showing the counts is expected to say so.
+	Approximate bool
 }
 
 // Candidate is what a ranker needs to score a document without reading it.

@@ -1,6 +1,7 @@
 package index_test
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -34,16 +35,17 @@ import (
 const counterCorpus = 4_000
 
 const (
-	// maxStatements is the statement budget for one search. Four queries do the
-	// work: the candidate cut, the counts and facets, the corpus statistics and
-	// the fetch of the page. The budget is a little above that so an extra
-	// lookup is allowed, and far below one statement per result, which is the
-	// shape of every N plus one regression.
-	maxStatements = 8
+	// maxStatements is the statement budget for one search. The candidate cut,
+	// the term frequencies for the candidates, the total, the facet counts, two
+	// of corpus statistics and the fetch of the page. The budget is a little
+	// above that so an extra lookup is allowed, and far below one statement per
+	// result, which is the shape of every N plus one regression.
+	maxStatements = 9
 
-	// facetRows is the rows the facet counts return: four fields, each capped
-	// at the number of values a facet reports, and the total.
-	facetRows = 4*store.MaxFacetValues + 1
+	// countRows is the rows the counting returns: the total, then the size of
+	// the pool the facets were counted over and four fields each capped at the
+	// number of values a facet reports.
+	countRows = 1 + 1 + 4*store.MaxFacetValues
 )
 
 // rowBudget is every row one search is allowed to read, by where it is read.
@@ -59,8 +61,9 @@ func rowBudget(pool, terms, hits int) int64 {
 	// grows with the query: one row per candidate per term it carries.
 	rows += pool * terms
 	// The total and the facet counts, which are aggregates, so the rows are the
-	// values reported and not the documents behind them.
-	rows += facetRows
+	// values reported and not the documents behind them. What those aggregates
+	// read is counted separately: see [store.Counters.Faceted].
+	rows += countRows
 	// The corpus row and one row per term of statistics.
 	rows += 1 + terms
 	// A search that found nothing looks for a spelling that would have found
@@ -144,6 +147,12 @@ func TestSearchCounters(t *testing.T) {
 				if most := rowBudget(int(pool), len(query.Request().Terms), len(res.Hits)); c.Rows > most {
 					t.Errorf("Search(%q) read %d rows, at most %d", q.Text, c.Rows, most)
 				}
+
+				// The facet counts, which the rows counter cannot see because an
+				// aggregate returns the same handful of rows whatever it read.
+				if c.Faceted > int64(index.FacetPool) {
+					t.Errorf("Search(%q) counted facets over %d documents, the bound is %d", q.Text, c.Faceted, index.FacetPool)
+				}
 			}
 		})
 	}
@@ -170,11 +179,67 @@ func TestSearchCounters(t *testing.T) {
 			if c.Candidates != 0 || c.Decodes != 0 {
 				t.Errorf("Search(%q) ranked %d candidates and decoded %d documents for a reader who may see nothing", q.Text, c.Candidates, c.Decodes)
 			}
-			if c.Rows > facetRows {
+			if c.Rows > countRows {
 				t.Errorf("Search(%q) read %d rows for a reader who may see nothing", q.Text, c.Rows)
 			}
 		}
 	})
+}
+
+// TestFacetCounters holds the sidebar to the facet pool, and holds the total to
+// the truth.
+//
+// The two are separate on purpose. A total is one count over the predicate and
+// there is no reason for it to be anything other than exact. The facets are four
+// grouped counts over four display strings of every matching document, which is
+// the one part of a search with no bound on it at all, so they get one and say
+// they got one. A search that reports approximate counts as though they were
+// counts is worse than either.
+func TestFacetCounters(t *testing.T) {
+	if testing.Short() {
+		t.Skip("generating the corpus takes a few seconds the first time")
+	}
+	s, p, st := counters(t)
+
+	byClass := benchcorpus.ByClass(benchcorpus.Queries())
+	queries := append(slices.Clone(byClass[benchcorpus.ClassCommon][:12]), byClass[benchcorpus.ClassPathological][:4]...)
+
+	var bounded int
+	for _, q := range queries {
+		st.ResetCounters()
+		res, err := s.Search(t.Context(), p, index.Parse(q.Text))
+		if err != nil {
+			t.Fatalf("Search(%q): %v", q.Text, err)
+		}
+		c := st.Counters()
+
+		if res.Total <= index.FacetPool {
+			// The match set fits, so the counts are the real ones and saying
+			// otherwise would teach everybody to ignore the flag.
+			if res.Approximate {
+				t.Errorf("Search(%q) matched %d documents and called its facets approximate", q.Text, res.Total)
+			}
+			if c.Faceted != int64(res.Total) {
+				t.Errorf("Search(%q) counted facets over %d of %d matching documents", q.Text, c.Faceted, res.Total)
+			}
+			continue
+		}
+		bounded++
+		if !res.Approximate {
+			t.Errorf("Search(%q) counted %d of %d matching documents and did not say the facets are a lower bound",
+				q.Text, c.Faceted, res.Total)
+		}
+		if c.Faceted != int64(index.FacetPool) {
+			t.Errorf("Search(%q) counted facets over %d documents, the pool is %d", q.Text, c.Faceted, index.FacetPool)
+		}
+	}
+
+	// Without this the assertions above are a bound nothing in the query set has
+	// ever reached, which is a test that passes on the implementation it was
+	// written to catch.
+	if bounded == 0 {
+		t.Fatalf("no query matched more than the facet pool of %d, so the bound was never exercised", index.FacetPool)
+	}
 }
 
 // TestDeepPageCounters holds the tenth page to the same bounds as the first.
