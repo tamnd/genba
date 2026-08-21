@@ -1510,7 +1510,7 @@ a.panel__row:hover .panel__row-title {
 /* Content ---------------------------------------------------------------- */
 
 /*
- * A document body, in whichever of its four shapes it turned out to be.
+ * A document body, in whichever of its six shapes it turned out to be.
  *
  * The rules here are the same type scale, the same spacing grid and the same
  * two hairlines as the rest of the interface. A preview that introduces its own
@@ -1697,6 +1697,138 @@ h6.prose__h {
 .prose__table th {
   font-weight: var(--weight-semibold);
   white-space: nowrap;
+}
+
+/* The region takes focus so it can be scrolled from the keyboard, and the ring
+   is drawn inside it because the box is as wide as the column it sits in. */
+.prose__scroll:focus-visible {
+  outline-offset: -2px;
+}
+
+.prose__folded {
+  margin: 0 0 var(--space-4);
+}
+
+.prose__folded .prose__scroll {
+  margin-bottom: var(--space-2);
+}
+
+.prose__more {
+  font-size: var(--text-small);
+}
+
+/* A sentence about the document rather than from it, so it reads as the
+   interface talking and not as the first paragraph. */
+.preview__note {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-size: var(--text-small);
+  line-height: var(--leading-small);
+}
+
+/* Notebooks --------------------------------------------------------------- */
+
+/*
+ * A notebook is prose and code alternating, and the only thing it needs beyond
+ * the two renderers it is made of is a way to see where one cell ends and the
+ * next begins. That is the execution count in the margin, which is what every
+ * notebook interface uses and what somebody reading one is already looking for.
+ */
+
+.notebook__prose {
+  margin-bottom: var(--space-5);
+}
+
+.notebook__cell {
+  position: relative;
+  margin-bottom: var(--space-5);
+}
+
+.notebook__count {
+  display: block;
+  margin-bottom: var(--space-1);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+}
+
+.notebook__outputs {
+  margin-top: var(--space-2);
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--border);
+}
+
+.notebook__out {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  line-height: 22px;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.notebook__out--err {
+  color: var(--danger-700);
+}
+
+.notebook__image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-bottom: var(--space-2);
+}
+
+.notebook__elided {
+  color: var(--text-muted);
+  font-size: var(--text-small);
+}
+
+/* Recordings -------------------------------------------------------------- */
+
+/*
+ * The transcript is the document and the player is underneath it, because the
+ * words are what was searched and the recording is what they came from.
+ */
+
+.media {
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border);
+}
+
+.media__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.media__size {
+  color: var(--text-muted);
+  font-size: var(--text-small);
+}
+
+.media__slot:empty {
+  display: none;
+}
+
+.media__player {
+  display: block;
+  width: 100%;
+  margin-top: var(--space-4);
+  border-radius: var(--radius-md);
+}
+
+.media__player--audio {
+  height: 44px;
+}
+
+.media__failed {
+  margin-top: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-small);
 }
 
 /* Code -------------------------------------------------------------------- */

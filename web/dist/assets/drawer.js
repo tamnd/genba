@@ -12,7 +12,7 @@ import { api } from "./api.js";
 import { cache } from "./cache.js";
 import { copies } from "./clipboard.js";
 import { icon, label, sourceColor, when, exact, followable, copyable } from "./format.js";
-import { body as renderBody, shapeOf } from "./content.js";
+import { body as renderBody, shapeOf, detailOf } from "./content.js";
 import { documentPath } from "./state.js";
 
 export class Drawer {
@@ -101,6 +101,7 @@ export class Drawer {
   }
 
   render(d) {
+    const detail = detailOf(d);
     replace(this.title, d.title || d.id);
     replace(
       this.meta,
@@ -112,6 +113,8 @@ export class Drawer {
       ),
       h("span", { class: "crumbs__sep" }, "·"),
       h("span", {}, label(d.kind)),
+      detail && h("span", { class: "crumbs__sep" }, "·"),
+      detail && h("span", {}, detail),
       d.container && h("span", { class: "crumbs__sep" }, "·"),
       d.container && h("span", {}, d.container),
     );

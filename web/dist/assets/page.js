@@ -24,7 +24,7 @@ import {
   followable,
   copyable,
 } from "./format.js";
-import { body as renderBody, shapeOf } from "./content.js";
+import { body as renderBody, shapeOf, detailOf } from "./content.js";
 import { documentPath } from "./state.js";
 
 export class Page {
@@ -120,6 +120,7 @@ export class Page {
 
   render(d) {
     const heading = d.title || d.id;
+    const detail = detailOf(d);
     replace(this.title, heading);
     document.title = `${heading} · genba`;
     replace(
@@ -132,6 +133,8 @@ export class Page {
       ),
       h("span", { class: "crumbs__sep" }, "·"),
       h("span", {}, label(d.kind)),
+      detail && h("span", { class: "crumbs__sep" }, "·"),
+      detail && h("span", {}, detail),
       d.container && h("span", { class: "crumbs__sep" }, "·"),
       d.container && h("span", { class: "crumbs" }, d.container),
       d.modified_at && h("span", { class: "crumbs__sep" }, "·"),

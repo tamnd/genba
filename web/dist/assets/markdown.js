@@ -13,6 +13,7 @@
 
 import { h } from "./dom.js";
 import { highlight } from "./highlight.js";
+import { frame } from "./table.js";
 
 /**
  * render turns markdown into nodes.
@@ -244,9 +245,7 @@ function table(rows, options) {
   const cell = (tag, text, i) =>
     h(tag, align[i] ? { style: { textAlign: align[i] } } : {}, inline(text, options));
 
-  return h(
-    "div",
-    { class: "prose__scroll" },
+  return frame(
     h(
       "table",
       { class: "prose__table" },
