@@ -219,10 +219,19 @@ var migrations = []step{
 	// document_modified is on the column alone and is no use to it, because the
 	// predicate fixes the tenant and the ordering follows, so the planner sorted
 	// every visible document into a temporary b-tree to answer a request for
-	// twenty rows. With the tenant and the queryable flag in front of the date
-	// the same request is a walk down the index that stops when the page is
-	// full. The id is in it so the tie break does not put the sort back.
-	ddl(`CREATE INDEX document_recent ON document (tenant, queryable, modified_at DESC, id)`),
+	// twenty rows. With the tenant in front of the date the same request is a
+	// walk down the index that stops when the page is full, and the id is in it
+	// so the tie break does not put the sort back.
+	//
+	// Partial, on the flag rather than with the flag in the key, and that is the
+	// whole difference between this index and one that made every filtered
+	// search slower. Written as (tenant, queryable, ...) it is two equality
+	// columns for the predicate every query in the product starts with, so the
+	// planner picked this index for filtered searches that have nothing to do
+	// with recency and walked a wider b-tree than the one it used to walk. As a
+	// partial index it offers one equality column, a source filter beats it on
+	// its own index, and the browse query still gets its ordering for free.
+	ddl(`CREATE INDEX document_recent ON document (tenant, modified_at DESC, id) WHERE queryable = 1`),
 }
 
 // backfill recomputes the ranking statistics for every document already stored.

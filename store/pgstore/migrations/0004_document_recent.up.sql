@@ -4,11 +4,19 @@
 -- document_modified is on the column alone and is no use to it, because the
 -- predicate fixes the tenant and the ordering follows, so the planner sorts
 -- every visible document to answer a request for twenty rows. With the tenant
--- and the queryable flag in front of the date the same request is a walk down
--- the index that stops when the page is full.
+-- in front of the date the same request is a walk down the index that stops
+-- when the page is full, and the id is in it so the tie break does not put the
+-- sort back.
 --
 -- The nulls ordering is part of the index rather than left to the default,
 -- because the query says DESC NULLS LAST and an index built the other way is an
--- index the planner will not use for it. The id is in it so the tie break does
--- not put the sort back.
-CREATE INDEX document_recent ON document (tenant, queryable, modified_at DESC NULLS LAST, id);
+-- index the planner will not use for it.
+--
+-- Partial, on the flag rather than with the flag in the key. Written as
+-- (tenant, queryable, ...) it is two equality columns for the predicate every
+-- query in the product starts with, which is an invitation to use it for
+-- filtered searches that have nothing to do with recency, and it is a wider
+-- index than the ones they use today. SQLite took that invitation and filtered
+-- searches got half again slower.
+CREATE INDEX document_recent ON document (tenant, modified_at DESC NULLS LAST, id)
+	WHERE queryable;
