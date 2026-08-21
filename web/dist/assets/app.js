@@ -5,21 +5,21 @@
 // rather than reaching back in here, which is what keeps a change to the result
 // row from being a change to routing.
 
-import { h, replace, svg } from "./dom.js";
-import { api, identity, setIdentity, ApiError } from "./api.js";
-import { cache } from "./cache.js";
-import { Live } from "./live.js";
-import { copies, copy } from "./clipboard.js";
-import * as urlState from "./state.js";
-import { followable, icon, initials, label, number, sourceColor, when } from "./format.js";
-import { Omnibox, modifierLabel, shortcutLabel } from "./omnibox.js";
-import { Results, VERTICALS, verticalsFor } from "./results.js";
-import { Drawer } from "./drawer.js";
-import { Page } from "./page.js";
-import { Home } from "./home.js";
-import { Recent } from "./recent.js";
-import { forget, remember } from "./queries.js";
-import { failed } from "./states.js";
+import { h, replace, svg } from "genba/dom.js";
+import { api, identity, setIdentity, ApiError } from "genba/api.js";
+import { cache } from "genba/cache.js";
+import { Live } from "genba/live.js";
+import { copies, copy } from "genba/clipboard.js";
+import * as urlState from "genba/state.js";
+import { followable, icon, initials, label, number, sourceColor, when } from "genba/format.js";
+import { Omnibox, modifierLabel, shortcutLabel } from "genba/omnibox.js";
+import { Results, VERTICALS, verticalsFor } from "genba/results.js";
+import { Drawer } from "genba/drawer.js";
+import { Page } from "genba/page.js";
+import { Home } from "genba/home.js";
+import { Recent } from "genba/recent.js";
+import { forget, remember } from "genba/queries.js";
+import { failed } from "genba/states.js";
 
 const THEME_KEY = "genba.theme";
 const DENSITY_KEY = "genba.density";

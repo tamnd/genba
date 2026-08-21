@@ -1,11 +1,11 @@
 // The results view: verticals, active filters, result rows and facets.
 
-import { h, replace, svg } from "./dom.js";
-import { label, number, duration, icon } from "./format.js";
-import { shapeOf } from "./content.js";
-import { RowList } from "./rows.js";
-import { nothingMatched, slow, stopped } from "./states.js";
-import * as urlState from "./state.js";
+import { h, replace, svg } from "genba/dom.js";
+import { label, number, duration, icon } from "genba/format.js";
+import { shapeOf } from "genba/content.js";
+import { RowList } from "genba/rows.js";
+import { nothingMatched, slow, stopped } from "genba/states.js";
+import * as urlState from "genba/state.js";
 
 /**
  * VERTICALS are the tabs above the results.

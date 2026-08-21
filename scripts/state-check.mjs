@@ -140,7 +140,7 @@ async function run(session) {
   await evaluate(
     session,
     expr(`
-      const { cache } = await import('/assets/cache.js');
+      const { cache } = await import('genba/cache.js');
       cache.invalidate('');
       window.dispatchEvent(new PopStateEvent('popstate'));
       return true;
@@ -221,7 +221,7 @@ async function run(session) {
     session,
     "a document that is not there and one nobody may read are the same page",
     expr(`
-      const { Page } = await import('/assets/page.js');
+      const { Page } = await import('genba/page.js');
       const drawn = (status, code, message) => {
         const page = new Page({ onBack: () => ({ href: '/', title: 'Search', go() {} }) });
         page.renderError({ status, code, message });
@@ -240,7 +240,7 @@ async function run(session) {
     session,
     "and the same two are the same preview",
     expr(`
-      const { Drawer } = await import('/assets/drawer.js');
+      const { Drawer } = await import('genba/drawer.js');
       const drawn = (status, message) => {
         const drawer = new Drawer({ onClose() {} });
         drawer.renderError({ status, message });
@@ -260,7 +260,7 @@ async function run(session) {
     session,
     "an index with nothing in it says how to fill it rather than that nothing matched",
     expr(`
-      const { nothingMatched } = await import('/assets/states.js');
+      const { nothingMatched } = await import('genba/states.js');
       const out = nothingMatched({ q: 'anything' }, () => {}, { documents: 0 });
       return out.classList.contains('state--first') &&
         out.textContent.includes('Nothing indexed yet') &&
@@ -272,7 +272,7 @@ async function run(session) {
     session,
     "and home is that screen too, rather than a dashboard reading zero in three places",
     expr(`
-      const { Home } = await import('/assets/home.js');
+      const { Home } = await import('genba/home.js');
       const home = new Home({ onQuery() {}, onOpen() {}, onVisit() {} });
       home.paint({ subject: 'dev' }, null, { documents: 0 });
       const first = Boolean(home.el.querySelector('.state--first')) && !home.el.querySelector('.panel');
@@ -285,7 +285,7 @@ async function run(session) {
     session,
     "the filters on a zero result page are the ones above the list, and clearing them keeps the words",
     expr(`
-      const { nothingMatched } = await import('/assets/states.js');
+      const { nothingMatched } = await import('genba/states.js');
       const chip = document.createElement('span');
       chip.textContent = 'Type: image';
       let cleared = null;
@@ -307,7 +307,7 @@ async function run(session) {
     session,
     "a request that failed says what kind of failure it was, with the request id and a way to try again",
     expr(`
-      const { failed } = await import('/assets/states.js');
+      const { failed } = await import('genba/states.js');
       let again = 0;
       const answered = failed({ status: 503, message: 'the server returned 503', requestID: 'r-1234' }, () => { again++; });
       answered.querySelector('.state__actions button').click();

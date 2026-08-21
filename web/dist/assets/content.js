@@ -6,14 +6,14 @@
 // Everything downstream of that decision is presentation, so adding a media
 // type is a line in a table here rather than a branch in three views.
 
-import { h, svg } from "./dom.js";
-import { api } from "./api.js";
-import { render as markdown, codeBlock } from "./markdown.js";
-import { render as htmlDocument } from "./html.js";
-import { parse as parseNotebook, render as notebookCells } from "./notebook.js";
-import { player } from "./media.js";
-import { terms, mark } from "./marks.js";
-import { kindIcon, sourceColor, bytes as formatBytes } from "./format.js";
+import { h, svg } from "genba/dom.js";
+import { api } from "genba/api.js";
+import { render as markdown, codeBlock } from "genba/markdown.js";
+import { render as htmlDocument } from "genba/html.js";
+import { parse as parseNotebook, render as notebookCells } from "genba/notebook.js";
+import { player } from "genba/media.js";
+import { terms, mark } from "genba/marks.js";
+import { kindIcon, sourceColor, bytes as formatBytes } from "genba/format.js";
 
 // Media types the interface knows how to draw as code, and the language each
 // one is highlighted as. A type that is not here and is not an image is drawn

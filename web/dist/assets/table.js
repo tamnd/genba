@@ -10,7 +10,7 @@
 // preview is showing somebody the spreadsheet instead of telling them whether
 // it is the one they wanted.
 
-import { h } from "./dom.js";
+import { h } from "genba/dom.js";
 
 // How much of a long table the preview shows, and the length at which it counts
 // as long. A table of thirty rows is read in one go and folding it would be an

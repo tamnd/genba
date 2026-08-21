@@ -8,10 +8,10 @@
 // that people drive with the keyboard and a screen reader has to be told what
 // the arrow keys are doing.
 
-import { h, replace, svg } from "./dom.js";
-import { api } from "./api.js";
-import { cache } from "./cache.js";
-import { icon } from "./format.js";
+import { h, replace, svg } from "genba/dom.js";
+import { api } from "genba/api.js";
+import { cache } from "genba/cache.js";
+import { icon } from "genba/format.js";
 
 // DEBOUNCE is how long the box waits before asking the server. The suggestion
 // budget is 80ms at the server, and this is the other half of feeling instant:

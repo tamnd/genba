@@ -16,12 +16,22 @@
 // else, and the assets in the repository are the assets in the binary, which
 // makes a diff of the interface readable in a review.
 //
-// The cost is that nothing renames a file when its contents change, so the
-// usual trick of caching hashed filenames forever is not available. Every file
-// is served with an ETag of its contents instead. A browser revalidates and
-// gets a 304 for anything it already has, which costs one conditional request
-// per asset and is always correct, including the case that matters: an operator
-// upgrading the binary under a browser that has the old one cached.
+// The usual thing a build step buys is a name that changes when the contents
+// change, so a browser can be told to keep the file for a year. That does not
+// need a bundler. This package hashes each file as it reads it and serves it
+// under both names: the plain one, revalidated, and assets/app.7f3a9c2e.js,
+// immutable for a year. The document is rewritten on the way out so that its
+// stylesheet links, its module preloads and its import map all point at the
+// addressed names, which is why no hash appears anywhere in the source. The
+// document itself is never cached, so an upgraded binary is picked up on the
+// next load and every asset it names is either already held or fetched once.
+//
+// Compression is the other thing a build step usually does. Each asset is
+// compressed once when it is first read, with brotli and with gzip, and the
+// request picks between them, so a body is compressed once for the life of the
+// process rather than once per request. A form that did not come out
+// meaningfully smaller is dropped rather than kept, since sending it would cost
+// a browser a decompression for nothing.
 //
 // # What the interface holds
 //
@@ -44,54 +54,155 @@ package web
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"io/fs"
+	"mime"
 	"net/http"
 	"path"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
-	"time"
 )
 
-// file is one asset with the validator it is served under.
-type file struct {
-	name string
-	etag string
+// The encodings that may be sent instead of the file itself, best first. There
+// are two and there will not be a third: everything else a browser advertises
+// is either older than gzip or not for text.
+var encodings = []string{"br", "gzip"}
+
+// asset is one file as it is served: its bytes, the compressed forms worth
+// sending instead of them, and the validator that names this version of it.
+type asset struct {
+	ctype   string
+	etag    string
+	body    []byte
+	encoded map[string][]byte
+}
+
+// servable is an asset under one of the names it answers to. The same bytes are
+// reachable at a plain name and at a content addressed one, and which of the
+// two was asked for is the whole difference between a file a browser checks
+// every minute and a file it keeps for a year.
+type servable struct {
+	*asset
+	name      string
+	immutable bool
 }
 
 // index is built once, lazily, over the embedded tree. It is small, it never
 // changes for the life of the process, and computing it up front would make an
-// API only build pay for a frontend it does not serve.
-var index = sync.OnceValue(func() map[string]file {
+// API only build pay for a frontend it does not serve. Reading, hashing and
+// compressing all happen here, so a request does none of them.
+var index = sync.OnceValue(func() map[string]servable {
 	root, ok := assets()
 	if !ok {
 		return nil
 	}
-	out := map[string]file{}
+
+	type entry struct {
+		name string
+		body []byte
+	}
+	var files []entry
 	_ = fs.WalkDir(root, ".", func(name string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil || d.IsDir() || name == "index.html" {
 			return err
 		}
-		b, err := fs.ReadFile(root, name)
+		body, err := fs.ReadFile(root, name)
 		if err != nil {
 			return err
 		}
-		sum := sha256.Sum256(b)
-		out[name] = file{name: name, etag: `"` + base64.RawURLEncoding.EncodeToString(sum[:12]) + `"`}
+		files = append(files, entry{name: name, body: body})
 		return nil
 	})
+
+	// One goroutine per file, because compressing twenty five modules one after
+	// another is most of the time a process spends starting up and they have
+	// nothing to say to each other.
+	built := make([]*asset, len(files))
+	var wg sync.WaitGroup
+	for i, f := range files {
+		wg.Go(func() { built[i] = read(f.name, f.body) })
+	}
+	wg.Wait()
+
+	out := map[string]servable{}
+	addressed := map[string]string{}
+	for i, f := range files {
+		addr := address(f.name, f.body)
+		out[f.name] = servable{asset: built[i], name: f.name}
+		out[addr] = servable{asset: built[i], name: addr, immutable: true}
+		addressed["/"+f.name] = "/" + addr
+	}
+
+	// The document is built last, because what it says depends on the names
+	// every other file ended up with.
+	body, err := fs.ReadFile(root, "index.html")
+	if err != nil {
+		return out
+	}
+	out["index.html"] = servable{asset: read("index.html", point(body, addressed)), name: "index.html"}
 	return out
 })
+
+// read turns bytes into the asset they are served as.
+func read(name string, body []byte) *asset {
+	sum := sha256.Sum256(body)
+	return &asset{
+		ctype:   contentType(name),
+		etag:    `"` + base64.RawURLEncoding.EncodeToString(sum[:12]) + `"`,
+		body:    body,
+		encoded: squeeze(name, body),
+	}
+}
+
+// address is the name a file is cached under for a year. Eight hex characters
+// of the hash of the contents is four thousand million buckets, which is more
+// than enough to tell two versions of a twenty kilobyte module apart, and short
+// enough to read in a network panel.
+func address(name string, body []byte) string {
+	sum := sha256.Sum256(body)
+	ext := path.Ext(name)
+	return strings.TrimSuffix(name, ext) + "." + hex.EncodeToString(sum[:4]) + ext
+}
+
+// point rewrites the document so that every asset it names is named by its
+// content addressed URL instead. The committed document is written with plain
+// URLs and works as it stands, which is what keeps it reviewable, and this is a
+// substitution rather than a parse because the thing being replaced is a
+// filename and there is exactly one spelling of each.
+func point(body []byte, addressed map[string]string) []byte {
+	if len(addressed) == 0 {
+		return body
+	}
+	names := make([]string, 0, len(addressed))
+	for from := range addressed {
+		names = append(names, from)
+	}
+	// Longest first, so that a name which is a prefix of another cannot claim
+	// the match. Nothing in the tree is named that way today and nothing should
+	// have to remember that when adding a file.
+	sort.Slice(names, func(i, j int) bool {
+		if len(names[i]) != len(names[j]) {
+			return len(names[i]) > len(names[j])
+		}
+		return names[i] < names[j]
+	})
+	pairs := make([]string, 0, 2*len(names))
+	for _, from := range names {
+		pairs = append(pairs, from, addressed[from])
+	}
+	return []byte(strings.NewReplacer(pairs...).Replace(string(body)))
+}
 
 // Handler serves the interface, or nil when the binary was built without it.
 // Callers should check for nil rather than assume: an API only build is a
 // supported build, not a broken one.
 func Handler() http.Handler {
-	root, ok := assets()
-	if !ok {
+	if _, ok := assets(); !ok {
 		return nil
 	}
 	files := index()
-	server := http.FileServerFS(root)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
@@ -100,29 +211,109 @@ func Handler() http.Handler {
 		}
 		f, ok := files[name]
 		if !ok {
-			// An unknown path is a client route, not a missing file. The shell
-			// loads and the client decides what the path meant.
-			serveIndex(w, r, root, files)
-			return
+			// An asset that is not there is missing, and saying so is the
+			// useful answer. This is the address of a file from a build that is
+			// no longer running, and answering it with the document would hand
+			// a browser a page where it asked for a module.
+			if strings.HasPrefix(name, "assets/") {
+				http.NotFound(w, r)
+				return
+			}
+			// Anything else is a client route rather than a missing file. The
+			// shell loads and the client decides what the path meant.
+			f, ok = files["index.html"]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
 		}
-
-		w.Header().Set("ETag", f.etag)
-		w.Header().Set("Cache-Control", cacheControl(name))
-		if match(r, f.etag) {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-		server.ServeHTTP(w, r)
+		serve(w, r, f)
 	})
 }
 
-// cacheControl lets a browser hold an asset briefly without asking, and never
-// lets it hold the document that names the assets.
-func cacheControl(name string) string {
-	if strings.HasPrefix(name, "assets/") {
-		return "public, max-age=60, must-revalidate"
+// serve writes one asset in whichever encoding the request allows.
+func serve(w http.ResponseWriter, r *http.Request, f servable) {
+	encoding, body := f.pick(r.Header.Get("Accept-Encoding"))
+	etag := f.etag
+	if encoding != "" {
+		// A compressed body is a different representation of the same file, so
+		// it gets a validator of its own. A browser that held the gzip and then
+		// asked without it must not be told that what it holds is current.
+		etag = strings.TrimSuffix(f.etag, `"`) + "+" + encoding + `"`
 	}
-	return "no-cache"
+
+	h := w.Header()
+	h.Set("ETag", etag)
+	h.Set("Cache-Control", f.cacheControl())
+	h.Set("Vary", "Accept-Encoding")
+	h.Set("Content-Type", f.ctype)
+	if encoding != "" {
+		h.Set("Content-Encoding", encoding)
+	}
+	if match(r, etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
+	h.Set("Content-Length", strconv.Itoa(len(body)))
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	_, _ = w.Write(body)
+}
+
+// pick is the encoding to send and the bytes to send in it.
+func (f servable) pick(accept string) (encoding string, body []byte) {
+	for _, candidate := range encodings {
+		encoded, ok := f.encoded[candidate]
+		if ok && accepts(accept, candidate) {
+			return candidate, encoded
+		}
+	}
+	return "", f.body
+}
+
+// cacheControl lets a browser keep a file forever when the name it asked for
+// says what is in it, keep it briefly when the name does not, and never keep
+// the document that names the rest.
+func (f servable) cacheControl() string {
+	switch {
+	case f.immutable:
+		return "public, max-age=31536000, immutable"
+	case strings.HasPrefix(f.name, "assets/"):
+		return "public, max-age=60, must-revalidate"
+	default:
+		return "no-cache"
+	}
+}
+
+// accepts reports whether a request allows an encoding. A quality of zero is a
+// refusal, which is how a client asks for a file as it is without saying so.
+func accepts(header, encoding string) bool {
+	for part := range strings.SplitSeq(header, ",") {
+		token, params, _ := strings.Cut(part, ";")
+		if !strings.EqualFold(strings.TrimSpace(token), encoding) {
+			continue
+		}
+		return quality(params) > 0
+	}
+	return false
+}
+
+func quality(params string) float64 {
+	for param := range strings.SplitSeq(params, ";") {
+		key, value, ok := strings.Cut(param, "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(key), "q") {
+			continue
+		}
+		q, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		if err != nil {
+			return 0
+		}
+		return q
+	}
+	return 1
 }
 
 func match(r *http.Request, etag string) bool {
@@ -134,26 +325,30 @@ func match(r *http.Request, etag string) bool {
 	return false
 }
 
+// contentType is stated rather than sniffed. The tree holds text, the extension
+// says which kind, and a module served as anything but JavaScript is a page
+// that does not load at all.
+func contentType(name string) string {
+	switch path.Ext(name) {
+	case ".js":
+		return "text/javascript; charset=utf-8"
+	case ".css":
+		return "text/css; charset=utf-8"
+	case ".html":
+		return "text/html; charset=utf-8"
+	case ".json":
+		return "application/json"
+	case ".svg":
+		return "image/svg+xml"
+	}
+	if ctype := mime.TypeByExtension(path.Ext(name)); ctype != "" {
+		return ctype
+	}
+	return "application/octet-stream"
+}
+
 // Enabled reports whether the binary carries the interface.
 func Enabled() bool {
 	_, ok := assets()
 	return ok
-}
-
-func serveIndex(w http.ResponseWriter, r *http.Request, root fs.FS, files map[string]file) {
-	b, err := fs.ReadFile(root, "index.html")
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	if f, ok := files["index.html"]; ok {
-		w.Header().Set("ETag", f.etag)
-		if match(r, f.etag) {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
-	http.ServeContent(w, r, "index.html", time.Time{}, strings.NewReader(string(b)))
 }

@@ -10,11 +10,11 @@
 // inside the storage driver like everything else, so a document somebody lost
 // access to leaves this screen silently.
 
-import { h, replace, svg } from "./dom.js";
-import { api } from "./api.js";
-import { cache } from "./cache.js";
-import { icon } from "./format.js";
-import { RowList } from "./rows.js";
+import { h, replace, svg } from "genba/dom.js";
+import { api } from "genba/api.js";
+import { cache } from "genba/cache.js";
+import { icon } from "genba/format.js";
+import { RowList } from "genba/rows.js";
 
 // LIMIT is how many rows each half carries, and it is the server's own default.
 // Twenty is a screen of them, and this list is read at a glance rather than

@@ -11,10 +11,10 @@
 // primary target on a row behave like a link on the web rather than like a
 // widget that happens to look like one.
 
-import { h, replace, svg } from "./dom.js";
-import { api } from "./api.js";
-import { cache } from "./cache.js";
-import { copies } from "./clipboard.js";
+import { h, replace, svg } from "genba/dom.js";
+import { api } from "genba/api.js";
+import { cache } from "genba/cache.js";
+import { copies } from "genba/clipboard.js";
 import {
   icon,
   label,
@@ -23,11 +23,11 @@ import {
   exact,
   followable,
   copyable,
-} from "./format.js";
-import { body as renderBody, shapeOf, detailOf } from "./content.js";
-import { reveal, toLine } from "./marks.js";
-import { notPermitted, failedBody, failureTitle, NOT_AVAILABLE } from "./states.js";
-import { documentPath } from "./state.js";
+} from "genba/format.js";
+import { body as renderBody, shapeOf, detailOf } from "genba/content.js";
+import { reveal, toLine } from "genba/marks.js";
+import { notPermitted, failedBody, failureTitle, NOT_AVAILABLE } from "genba/states.js";
+import { documentPath } from "genba/state.js";
 
 export class Page {
   constructor({ onBack, onSay }) {

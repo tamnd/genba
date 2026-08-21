@@ -109,6 +109,13 @@ Every filter, the sort, the page and the open document live in the address bar, 
 The identity switcher at the bottom of the rail sends a different subject, tenant and set of groups with every request.
 It is there because the permission model is the part of this system worth checking by hand, and the fastest way to check it is to run the same query as two different people and watch the results change.
 
+The whole interface is hand written HTML, CSS and ES modules, committed exactly as they are served, so a clone builds a working interface with the Go toolchain and nothing else.
+There is no bundler and there is not going to be one, since the graph is twenty five modules of our own with no third party dependency anywhere in it.
+What a bundler would have bought is done by the server instead.
+Every file is hashed as it is read and served under a second name that says what is in it, cacheable for a year, and the document is rewritten on the way out so that its import map and its preload list point at those names.
+Bodies are compressed with brotli and gzip once at startup rather than once per request.
+`web/graph_test.go` walks the import graph on every build, so a module added without a preload fails the build instead of costing every visitor a round trip.
+
 ## HTTP API
 
 Everything the interface does is an HTTP call, and there is nothing it can reach that a client cannot.

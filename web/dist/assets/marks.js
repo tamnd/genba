@@ -17,7 +17,7 @@
 // disagree the marks are missing rather than wrong, and a document with no
 // marks in it opens at the top the way it always did.
 
-import { h } from "./dom.js";
+import { h } from "genba/dom.js";
 
 // The most marks worth drawing. A one word query against a file that repeats
 // that word on every line is a thousand elements nobody is going to look at,

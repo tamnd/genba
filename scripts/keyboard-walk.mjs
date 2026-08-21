@@ -90,7 +90,7 @@ async function walk(session) {
   await check(
     session,
     "images are a vertical, and an empty index has none at all",
-    `import('/assets/results.js').then(({ verticalsFor }) => {
+    `import('genba/results.js').then(({ verticalsFor }) => {
       const withImages = verticalsFor([
         { value: 'page', count: 4 },
         { value: 'image', count: 912 },

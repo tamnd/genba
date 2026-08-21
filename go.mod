@@ -3,6 +3,7 @@ module github.com/tamnd/genba
 go 1.26.6
 
 require (
+	github.com/andybalholm/brotli v1.2.2
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/jackc/pgx/v5 v5.10.0
 	golang.org/x/sys v0.47.0

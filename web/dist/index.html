@@ -9,9 +9,80 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Ctext x='16' y='22' font-family='system-ui,sans-serif' font-size='18' font-weight='700' fill='white' text-anchor='middle'%3EG%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/assets/tokens.css" />
     <link rel="stylesheet" href="/assets/app.css" />
+    <!--
+      Every module by name, so that an importer says genba/dom.js and never says
+      where dom.js lives. The server rewrites these targets to the content
+      addressed name of each file as it serves this document, which is how a
+      module gets a URL that can be cached for a year without a build step and
+      without a hash appearing anywhere in the source.
+
+      The prefix at the end is the fallback for a module with no entry of its
+      own. It resolves, it is simply not addressed by content, and graph_test.go
+      fails the build when one turns up.
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "genba/api.js": "/assets/api.js",
+          "genba/app.js": "/assets/app.js",
+          "genba/cache.js": "/assets/cache.js",
+          "genba/clipboard.js": "/assets/clipboard.js",
+          "genba/content.js": "/assets/content.js",
+          "genba/dom.js": "/assets/dom.js",
+          "genba/drawer.js": "/assets/drawer.js",
+          "genba/format.js": "/assets/format.js",
+          "genba/highlight.js": "/assets/highlight.js",
+          "genba/home.js": "/assets/home.js",
+          "genba/html.js": "/assets/html.js",
+          "genba/live.js": "/assets/live.js",
+          "genba/markdown.js": "/assets/markdown.js",
+          "genba/marks.js": "/assets/marks.js",
+          "genba/media.js": "/assets/media.js",
+          "genba/notebook.js": "/assets/notebook.js",
+          "genba/omnibox.js": "/assets/omnibox.js",
+          "genba/page.js": "/assets/page.js",
+          "genba/queries.js": "/assets/queries.js",
+          "genba/recent.js": "/assets/recent.js",
+          "genba/results.js": "/assets/results.js",
+          "genba/rows.js": "/assets/rows.js",
+          "genba/state.js": "/assets/state.js",
+          "genba/states.js": "/assets/states.js",
+          "genba/table.js": "/assets/table.js",
+          "genba/": "/assets/"
+        }
+      }
+    </script>
+    <!--
+      The whole module graph, flattened. Without this the browser learns about
+      markdown.js only after content.js has arrived, which is four levels deep
+      on a graph that is twenty five files wide. graph_test.go computes the
+      closure from app.js and fails if this list is not exactly it.
+    -->
     <link rel="modulepreload" href="/assets/api.js" />
+    <link rel="modulepreload" href="/assets/app.js" />
     <link rel="modulepreload" href="/assets/cache.js" />
+    <link rel="modulepreload" href="/assets/clipboard.js" />
+    <link rel="modulepreload" href="/assets/content.js" />
     <link rel="modulepreload" href="/assets/dom.js" />
+    <link rel="modulepreload" href="/assets/drawer.js" />
+    <link rel="modulepreload" href="/assets/format.js" />
+    <link rel="modulepreload" href="/assets/highlight.js" />
+    <link rel="modulepreload" href="/assets/home.js" />
+    <link rel="modulepreload" href="/assets/html.js" />
+    <link rel="modulepreload" href="/assets/live.js" />
+    <link rel="modulepreload" href="/assets/markdown.js" />
+    <link rel="modulepreload" href="/assets/marks.js" />
+    <link rel="modulepreload" href="/assets/media.js" />
+    <link rel="modulepreload" href="/assets/notebook.js" />
+    <link rel="modulepreload" href="/assets/omnibox.js" />
+    <link rel="modulepreload" href="/assets/page.js" />
+    <link rel="modulepreload" href="/assets/queries.js" />
+    <link rel="modulepreload" href="/assets/recent.js" />
+    <link rel="modulepreload" href="/assets/results.js" />
+    <link rel="modulepreload" href="/assets/rows.js" />
+    <link rel="modulepreload" href="/assets/state.js" />
+    <link rel="modulepreload" href="/assets/states.js" />
+    <link rel="modulepreload" href="/assets/table.js" />
     <script>
       // The theme and the density are read before the first paint. Doing it in
       // the module would put a white frame in front of somebody who chose a
