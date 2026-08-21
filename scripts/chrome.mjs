@@ -256,13 +256,17 @@ export async function evaluate(session, expression) {
   return result.value;
 }
 
-export async function press(session, key, code, keyCode) {
+/** SHIFT is the modifier bit the protocol wants, for a shifted key. */
+export const SHIFT = 8;
+
+export async function press(session, key, code, keyCode, modifiers = 0) {
   const text = key.length === 1 ? key : key === "Enter" ? "\r" : undefined;
   for (const type of ["keyDown", "keyUp"]) {
     await session("Input.dispatchKeyEvent", {
       type,
       key,
       code,
+      modifiers,
       text: type === "keyDown" ? text : undefined,
       windowsVirtualKeyCode: keyCode,
       nativeVirtualKeyCode: keyCode,

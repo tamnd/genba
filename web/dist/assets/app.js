@@ -852,9 +852,47 @@ class App {
     );
   }
 
-  open(id) {
+  /**
+   * open shows a document in the preview.
+   *
+   * ahead is the direction the reader is travelling in, which is down until
+   * they say otherwise. The document that way is fetched as soon as the preview
+   * opens, because the next thing somebody reading a candidate does is ask for
+   * the one under it.
+   */
+  open(id, ahead = 1) {
     this.record(id);
     this.go({ ...this.query, open: id }, { replace: true });
+    this.guessNeighbour(ahead);
+  }
+
+  /**
+   * step replaces what the open preview is showing with the row j or k moved to.
+   *
+   * The address moves with it, so the preview on screen is the preview a reload
+   * or a copied link gives back, and the row under it is fetched behind the
+   * paint so the next press has nothing to wait for.
+   */
+  step(delta) {
+    const rows = this.rows();
+    const hit = rows && rows.current();
+    if (!hit || hit.id === this.query.open) return;
+    this.open(hit.id, delta);
+  }
+
+  /**
+   * guessNeighbour fetches the document on the other side of the one on screen.
+   *
+   * One ahead and no further, in the direction of travel. Two ahead is a
+   * request for something most people never reach, and it goes through the same
+   * guess as every other prefetch, so one that fails is one that did not happen.
+   */
+  guessNeighbour(delta) {
+    const rows = this.rows();
+    if (!rows || rows.selected < 0) return;
+    const next = rows.hits[rows.selected + delta];
+    if (!next) return;
+    this.guess("document", { id: next.id }, (opts) => api.document(next.id, opts));
   }
 
   /**
@@ -945,6 +983,8 @@ class App {
       ["First result", ["Home"]],
       ["Last result", ["End"]],
       ["Open preview", ["Enter"]],
+      ["Next match in the preview", ["n"]],
+      ["Previous match in the preview", ["shift", "n"]],
       ["Open as a page, in a new tab", [modifierLabel(), "Enter"]],
       ["Open in source", ["o"]],
       ["Copy a link to this result", ["y"]],
@@ -1113,7 +1153,24 @@ class App {
           const rows = this.rows();
           if (!rows) return;
           e.preventDefault();
-          rows.move(e.key === "j" ? 1 : -1);
+          const delta = e.key === "j" ? 1 : -1;
+          // With the preview open these keys move the preview. Reading through
+          // five candidates used to be five open and close cycles, each of
+          // which lost the place in the list.
+          const stepping = this.drawer.open;
+          rows.move(delta, { focus: !stepping });
+          if (stepping) this.step(delta);
+          break;
+        }
+        // The matches inside the preview, in the same direction j and k move
+        // between documents. It is answered here rather than in the drawer so
+        // that it works wherever focus happens to be, which above the
+        // breakpoint is not necessarily inside the drawer.
+        case "n":
+        case "N": {
+          if (!this.drawer.open) return;
+          e.preventDefault();
+          this.drawer.toMatch(e.shiftKey ? -1 : 1);
           break;
         }
         // The arrow keys move inside the list and only inside it. A page has

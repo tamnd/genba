@@ -323,11 +323,18 @@ export class RowList {
     );
   }
 
-  /** move walks the cursor with j and k, or with the arrow keys. */
-  move(delta) {
+  /**
+   * move walks the cursor with j and k, or with the arrow keys.
+   *
+   * focus is false while the preview is open, because the cursor is then
+   * driving the preview and focus belongs to the document somebody is reading.
+   * Moving it to a row behind the drawer is a way out of the dialog that nobody
+   * asked for, and it costs the drawer the next key.
+   */
+  move(delta, opts = {}) {
     if (!this.hits.length) return;
     const next = Math.min(Math.max(this.selected + delta, 0), this.hits.length - 1);
-    this.select(next);
+    this.select(next, opts);
   }
 
   /** edge is Home and End: the first row and the last row on this page. */
@@ -337,12 +344,24 @@ export class RowList {
   }
 
   /** select moves the cursor to a row and puts focus on it. */
-  select(i) {
+  select(i, opts = {}) {
     this.at(i);
+    if (opts.focus === false) {
+      // What the browser would have done for a focused element, done by hand,
+      // so the list behind the preview still says where the eye is.
+      this.show(i);
+      return;
+    }
     // Focus rather than scrollIntoView: the browser brings a focused element
     // into view on its own, and a row that is highlighted but not focused is a
     // row a screen reader is not reading.
     this.focusCursor();
+  }
+
+  /** show scrolls a row into view without touching focus. */
+  show(i) {
+    const row = this.node(i);
+    if (row) row.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
 
   /**
@@ -354,9 +373,13 @@ export class RowList {
    * document any more. The cursor is, and it names the same row.
    */
   focusCursor(opts = {}) {
-    if (this.selected < 0) return;
-    const row = this.el.querySelector(`[data-index="${this.selected}"]`);
+    const row = this.node(this.selected);
     if (row) row.focus({ preventScroll: opts.scroll === false });
+  }
+
+  /** node is the element of a row, if the list is showing one at that index. */
+  node(i) {
+    return i < 0 ? null : this.el.querySelector(`[data-index="${i}"]`);
   }
 
   /** at records where the cursor is without touching focus. */
@@ -396,7 +419,7 @@ export class RowList {
 
   /** copyTarget is the copy button on the row under the cursor, if it has one. */
   copyTarget() {
-    const row = this.el.querySelector(`[data-index="${this.selected}"]`);
+    const row = this.node(this.selected);
     return row && row.querySelector(".icon-button--copy");
   }
 }
