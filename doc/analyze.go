@@ -1,8 +1,11 @@
 package doc
 
 import (
+	"iter"
+	"slices"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Span is one analysed term together with where it sits in the text it came
@@ -30,10 +33,9 @@ type Span struct {
 // match set for the same query, and the difference shows up as a document that
 // one deployment finds and another does not.
 func Tokenize(text string) []string {
-	spans := Analyze(text)
-	terms := make([]string, len(spans))
-	for i, s := range spans {
-		terms[i] = s.Term
+	var terms []string
+	for s := range Spans(text) {
+		terms = append(terms, s.Term)
 	}
 	return terms
 }
@@ -46,35 +48,113 @@ func Tokenize(text string) []string {
 // means knowing which characters of the original text became which term, and a
 // substring search after the fact gets that wrong, because it lights up the
 // "run" inside "runbook" that the index never matched.
-func Analyze(text string) []Span {
+func Analyze(text string) []Span { return slices.Collect(Spans(text)) }
+
+// Spans is [Analyze] one term at a time, for a caller that stops before the end.
+//
+// Finding where to cut a snippet means finding the first query term in a body,
+// and the body is the whole document. Analysing all of it to use the first
+// answer is the difference between reading a sentence and reading a file, and on
+// a page of twenty results it was most of what the page cost.
+func Spans(text string) iter.Seq[Span] {
+	return func(yield func(Span) bool) {
+		scan(text, func(term []byte, start, end int) bool {
+			return yield(Span{Term: string(term), Start: start, End: end})
+		})
+	}
+}
+
+// Find returns the offset of the first term in text that is one of want, or -1.
+//
+// It is here rather than written out at the caller because it is the analyzer
+// answering a question about its own output, and a caller that searched the text
+// for the words instead would find the ones the index never matched.
+//
+// It allocates nothing. That matters because the caller is snippet cutting on a
+// page of results, where the answer is one number and the input is the whole
+// document: building a string for every word of every result to throw all but
+// one of them away was most of what a page cost.
+func Find(text string, want map[string]bool) int {
+	at := -1
+	scan(text, func(term []byte, start, _ int) bool {
+		if !want[string(term)] {
+			return true
+		}
+		at = start
+		return false
+	})
+	return at
+}
+
+// scan is the analyzer. Everything else in this file is a way of asking it
+// something.
+//
+// The term it yields is the folded bytes and it is only valid until the next
+// one, because the buffer is reused. That is the reason it is unexported: a
+// caller that keeps the slice gets the next word. [Find] looks it up in a map,
+// which the compiler does without copying, and [Spans] makes a string of it.
+func scan(text string, yield func(term []byte, start, end int) bool) {
 	var (
-		out   []Span
-		cur   strings.Builder
+		cur   []byte
 		start = -1
 	)
-	flush := func(end int) {
-		if start >= 0 && cur.Len() > 0 {
-			out = append(out, Span{Term: cur.String(), Start: start, End: end})
+	// flush emits the term being built, if there is one, and reports whether the
+	// walk should carry on.
+	flush := func(end int) bool {
+		at := start
+		term := cur
+		cur, start = cur[:0], -1
+		if at < 0 || len(term) == 0 {
+			return true
 		}
-		cur.Reset()
-		start = -1
+		return yield(term, at, end)
 	}
 	for i, r := range text {
+		// The ASCII half of the same rules, written out. Every branch below asks a
+		// range table whether a rune is a letter, and a table lookup per character
+		// of a document is what a snippet was spending its time on. This is the
+		// same answer for the characters most text is made of.
+		if r < utf8.RuneSelf {
+			switch {
+			case 'a' <= r && r <= 'z' || '0' <= r && r <= '9':
+				if start < 0 {
+					start = i
+				}
+				cur = append(cur, byte(r))
+			case 'A' <= r && r <= 'Z':
+				if start < 0 {
+					start = i
+				}
+				cur = append(cur, byte(r)+'a'-'A')
+			default:
+				if !flush(i) {
+					return
+				}
+			}
+			continue
+		}
 		switch {
 		case unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hiragana, r) || unicode.Is(unicode.Katakana, r):
-			flush(i)
-			out = append(out, Span{Term: string(r), Start: i, End: i + len(string(r))})
+			if !flush(i) {
+				return
+			}
+			cur = utf8.AppendRune(cur, r)
+			if !yield(cur, i, i+len(cur)) {
+				return
+			}
+			cur = cur[:0]
 		case unicode.IsLetter(r) || unicode.IsDigit(r):
 			if start < 0 {
 				start = i
 			}
-			cur.WriteRune(unicode.ToLower(r))
+			cur = utf8.AppendRune(cur, unicode.ToLower(r))
 		default:
-			flush(i)
+			if !flush(i) {
+				return
+			}
 		}
 	}
 	flush(len(text))
-	return out
 }
 
 // Analyzed returns the document's searchable text as a single string of terms
@@ -123,21 +203,21 @@ type Analysis struct {
 
 // Analyze returns the document's statistics in one pass over its text.
 func (d Document) Analyze() Analysis {
-	title, body := Tokenize(d.Title), Tokenize(d.Body)
-	a := Analysis{
-		TitleTokens: len(title),
-		BodyTokens:  len(body),
-		Terms:       make(map[string]TermCount, len(title)+len(body)),
-	}
-	for _, t := range title {
-		c := a.Terms[t]
+	// Straight into the map rather than through two slices of terms, because this
+	// runs on every document that is written and the slices are the size of the
+	// corpus while the map is the size of its vocabulary.
+	a := Analysis{Terms: make(map[string]TermCount)}
+	for s := range Spans(d.Title) {
+		a.TitleTokens++
+		c := a.Terms[s.Term]
 		c.Title++
-		a.Terms[t] = c
+		a.Terms[s.Term] = c
 	}
-	for _, t := range body {
-		c := a.Terms[t]
+	for s := range Spans(d.Body) {
+		a.BodyTokens++
+		c := a.Terms[s.Term]
 		c.Body++
-		a.Terms[t] = c
+		a.Terms[s.Term] = c
 	}
 	return a
 }
