@@ -10,10 +10,11 @@ import { api, identity, setIdentity, ApiError } from "./api.js";
 import { cache } from "./cache.js";
 import { Live } from "./live.js";
 import * as urlState from "./state.js";
-import { icon, initials, label, sourceColor, when } from "./format.js";
-import { Omnibox, shortcutLabel } from "./omnibox.js";
+import { followable, icon, initials, label, sourceColor, when } from "./format.js";
+import { Omnibox, modifierLabel, shortcutLabel } from "./omnibox.js";
 import { Results, VERTICALS } from "./results.js";
 import { Drawer } from "./drawer.js";
+import { Page } from "./page.js";
 import { Home } from "./home.js";
 
 const THEME_KEY = "genba.theme";
@@ -57,6 +58,10 @@ class App {
     this.pageTimer = null;
     this.suggestionTimer = null;
     this.guessing = 0;
+    // The last results page this session painted, so that a document page has
+    // somewhere to go back to. It is empty in a tab that opened straight onto a
+    // document, which is the case the back link has to answer differently.
+    this.lastSearch = "";
 
     this.omnibox = new Omnibox({
       onSearch: (text) => this.go({ ...this.query, q: text, offset: 0, open: "" }),
@@ -67,6 +72,7 @@ class App {
       onQuery: (q) => this.go(q),
       onOpen: (id) => this.open(id),
       onHover: (id) => this.guessDocument(id),
+      onSay: (text) => this.say(text),
     });
     this.home = new Home({
       onQuery: (q) => this.go({ ...urlState.read(""), ...q }),
@@ -74,6 +80,11 @@ class App {
     });
     this.drawer = new Drawer({
       onClose: () => this.go({ ...this.query, open: "" }, { replace: true }),
+      onSay: (text) => this.say(text),
+    });
+    this.page = new Page({
+      onBack: () => this.backFromDocument(),
+      onSay: (text) => this.say(text),
     });
 
     this.main = h("main", {
@@ -223,7 +234,11 @@ class App {
           "a",
           {
             class: "rail__link",
-            href: "?sort=recent",
+            // Rooted. A query string on its own resolves against whatever path
+            // is showing, which was always the search until a document got a
+            // path of its own, and would otherwise make every rail entry a link
+            // back to the same document with a stray parameter on the end.
+            href: "/?sort=recent",
             title: "Recent",
             onClick: (e) => this.link(e, { q: "", sort: "recent" }),
           },
@@ -240,7 +255,7 @@ class App {
             "a",
             {
               class: "rail__link",
-              href: `?tab=${v.id}`,
+              href: `/?tab=${v.id}`,
               title: v.title,
               onClick: (e) => this.link(e, { ...this.query, tab: v.id, kind: [], offset: 0 }),
             },
@@ -302,7 +317,7 @@ class App {
           "a",
           {
             class: "rail__link",
-            href: `?source=${encodeURIComponent(s.value)}`,
+            href: `/?source=${encodeURIComponent(s.value)}`,
             title: label(s.value),
             onClick: (e) => this.link(e, { source: [s.value] }),
           },
@@ -325,6 +340,17 @@ class App {
 
   /** sync renders whatever the URL currently says. */
   sync() {
+    // Two routes: a document by path, and everything else by query string. A
+    // document is the only screen somebody links to from outside the product,
+    // which is why it is the only one with an address that does not carry the
+    // state of whoever found it.
+    const route = urlState.route();
+    if (route.name === "document") {
+      this.showDocument(route.id);
+      return;
+    }
+
+    document.title = "genba";
     this.omnibox.value = this.query.q;
     const searching = Boolean(this.query.q) || urlState.count(this.query) > 0 || Boolean(this.query.sort);
 
@@ -340,6 +366,41 @@ class App {
     }
   }
 
+  /**
+   * showDocument renders one document as the whole page.
+   *
+   * The preview is closed without telling the shell, because the URL has
+   * already moved to the document and the close handler would move it back.
+   */
+  async showDocument(id) {
+    this.currentKey = "";
+    this.drawer.currentId = null;
+    if (this.drawer.open) this.drawer.close({ notify: false, focus: false });
+    if (this.main.firstChild !== this.page.el) replace(this.main, this.page.el);
+    await this.page.show(id);
+  }
+
+  /**
+   * backFromDocument is where the way out of a document page leads.
+   *
+   * A document reached from a result list goes back to that list. A document
+   * opened in a new tab, or from a link somebody was sent, has no list behind
+   * it, and offering a back button that lands on whatever else was in that tab
+   * is worse than offering the search.
+   */
+  backFromDocument() {
+    const href = this.lastSearch || "/";
+    return {
+      href,
+      title: this.lastSearch ? "Back to results" : "Search",
+      // The destination rather than history.back(), so that the link and the
+      // click agree. The previous history entry is not reliably the search this
+      // page came from, and a back button that lands somewhere else is worse
+      // than one that costs an entry.
+      go: () => this.go(urlState.read(new URL(href, location.origin).search)),
+    };
+  }
+
   async showHome() {
     if (this.main.firstChild !== this.home.el) replace(this.main, this.home.el);
     await this.home.render(this.session);
@@ -348,6 +409,7 @@ class App {
   async search() {
     const showing = this.main.firstChild === this.results.el;
     if (!showing) replace(this.main, this.results.el);
+    this.lastSearch = urlState.write(this.query);
 
     const request = urlState.params(this.query, VERTICALS);
     const k = cache.key("search", request);
@@ -483,7 +545,18 @@ class App {
    */
   announce(res) {
     const n = res.total || 0;
-    replace(this.live, `${n} ${n === 1 ? "result" : "results"} for ${this.query.q || "the current filters"}`);
+    this.say(`${n} ${n === 1 ? "result" : "results"} for ${this.query.q || "the current filters"}`);
+  }
+
+  /**
+   * say puts one sentence in the polite region.
+   *
+   * Anything a view does that changes nothing on screen goes through here. A
+   * copy button is the clearest case: the tick it draws is invisible to a
+   * screen reader, so without this the action has no outcome at all.
+   */
+  say(text) {
+    replace(this.live, text);
   }
 
   fail(err) {
@@ -592,6 +665,7 @@ class App {
       ["Next result", ["j"]],
       ["Previous result", ["k"]],
       ["Open preview", ["Enter"]],
+      ["Open as a page, in a new tab", [modifierLabel(), "Enter"]],
       ["Open in source", ["o"]],
       ["Go home", ["g", "h"]],
       ["Close", ["Esc"]],
@@ -648,6 +722,15 @@ class App {
         this.omnibox.focus();
         return;
       }
+      // The modifier means the same thing here as it does on a link: open it
+      // over there and leave me where I am.
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !typing) {
+        const hit = this.results.current();
+        if (!hit) return;
+        e.preventDefault();
+        window.open(urlState.documentPath(hit.id), "_blank", "noreferrer");
+        return;
+      }
       if (e.key === "Escape") {
         if (this.drawer.open) return; // the drawer handles its own Escape
         if (typing) e.target.blur();
@@ -693,8 +776,11 @@ class App {
           break;
         }
         case "o": {
+          // Only where a browser would go there. Opening a file:// URL in a new
+          // tab from an HTTP page leaves somebody looking at a blank tab, which
+          // is worse than the key doing nothing.
           const hit = this.results.current();
-          if (!hit || !hit.url) return;
+          if (!hit || !followable(hit.url)) return;
           e.preventDefault();
           window.open(hit.url, "_blank", "noreferrer");
           break;

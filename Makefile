@@ -86,11 +86,12 @@ bench-gate-record:
 
 # The browser gate: asset budgets, markup safety, axe, and Lighthouse.
 #
-# The Go tests are the part that never flakes and they run first. The browser
-# half needs npx and a Chrome, and says so and stops rather than failing when
-# there is not one.
+# The Go tests are the part that never flakes and they run first. Then the
+# keyboard walk, which needs a Chrome, and then axe and Lighthouse, which also
+# need npx. Each says so and skips itself rather than failing when there is not
+# one.
 ui-gate: build
-	go test -count=1 -run 'Interface|Assets|Cache' ./web/
+	go test -count=1 -run 'Interface|Assets|Cache|Paths' ./web/
 	./scripts/ui-gate.sh
 
 vet:

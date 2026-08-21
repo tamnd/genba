@@ -7,6 +7,41 @@
 
 const LIST_KEYS = ["source", "kind", "container", "author", "owner"];
 
+// The one screen that is a path rather than a query string.
+//
+// A document is the thing somebody pastes into a message, so it gets an address
+// that survives being read out loud and does not carry the state of whoever
+// found it. Everything else is a view of a search and belongs in the query.
+const DOCUMENT = "/d/";
+
+/**
+ * route says which screen the path names.
+ *
+ * The server serves the shell for any path it does not recognise, so a reload
+ * of a document page reaches this function rather than a 404.
+ */
+export function route(pathname = location.pathname) {
+  if (!pathname.startsWith(DOCUMENT)) return { name: "search", id: "" };
+  const id = decode(pathname.slice(DOCUMENT.length));
+  return id ? { name: "document", id } : { name: "search", id: "" };
+}
+
+/** documentPath is the address of one document as a page of its own. */
+export function documentPath(id) {
+  return DOCUMENT + encodeURIComponent(id);
+}
+
+// A path somebody typed or a link somebody mangled can hold a percent sign that
+// is not an escape, and that is a request for a document we do not have rather
+// than an exception on the way to the first paint.
+function decode(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return "";
+  }
+}
+
 /** read parses the current location into a query. */
 export function read(search = location.search) {
   const params = new URLSearchParams(search);
@@ -33,8 +68,10 @@ export function write(query) {
   if (query.offset) params.set("offset", String(query.offset));
   if (query.tab && query.tab !== "all") params.set("tab", query.tab);
   if (query.open) params.set("open", query.open);
+  // Rooted rather than relative, because a search reached from a document page
+  // is a search and not a document with a query string stuck on the end of it.
   const s = params.toString();
-  return s ? `?${s}` : location.pathname;
+  return s ? `/?${s}` : "/";
 }
 
 /**

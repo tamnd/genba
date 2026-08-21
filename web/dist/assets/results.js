@@ -1,8 +1,20 @@
 // The results view: verticals, active filters, result rows and facets.
 
 import { h, replace, svg } from "./dom.js";
-import { kindIcon, sourceColor, label, when, exact, number, duration, icon } from "./format.js";
+import {
+  kindIcon,
+  sourceColor,
+  label,
+  when,
+  exact,
+  number,
+  duration,
+  icon,
+  followable,
+  copyable,
+} from "./format.js";
 import { tile } from "./content.js";
+import { copies } from "./clipboard.js";
 import * as urlState from "./state.js";
 
 /**
@@ -34,10 +46,11 @@ const FACETS = [
 const FACET_VISIBLE = 8;
 
 export class Results {
-  constructor({ onQuery, onOpen, onHover }) {
+  constructor({ onQuery, onOpen, onHover, onSay }) {
     this.onQuery = onQuery;
     this.onOpen = onOpen;
     this.onHover = onHover || (() => {});
+    this.onSay = onSay || (() => {});
     this.expanded = new Set();
     this.selected = -1;
     this.hits = [];
@@ -266,21 +279,37 @@ export class Results {
         onMouseenter: () => this.onHover(hit.id),
         onMouseleave: () => this.onHover(null),
         onClick: (e) => {
-          // A click on the title follows the source link. A click anywhere else
-          // on the row opens the preview, which is the cheaper of the two and
-          // the one people want when they are still scanning.
-          if (e.target.closest("a")) return;
+          // Anything that is already a control handles its own click. A click
+          // on the rest of the row opens the preview, which is what somebody
+          // scanning a list wants and is cheaper than loading a page.
+          if (e.target.closest("a, button")) return;
           open();
         },
       },
       tile(hit),
-      hit.url
-        ? h(
-            "a",
-            { class: "result__title", href: hit.url, rel: "noreferrer noopener", target: "_blank" },
-            hit.title || hit.id,
-          )
-        : h("button", { class: "result__title", type: "button", onClick: open }, hit.title || hit.id),
+      // The title is an anchor to this document's own page, and the default is
+      // prevented on a plain left click so that the preview opens instead.
+      //
+      // It is an anchor rather than a button so that a middle click, a command
+      // click, the context menu and copying the link address all do what they
+      // do everywhere else on the web. It points at us rather than at the
+      // document's source, because a source URL is whatever a connector found
+      // and for the file connector that is a file:// URL, which a browser
+      // served over HTTP will not navigate to. Clicking the primary target on
+      // every row of a file corpus did nothing at all.
+      h(
+        "a",
+        {
+          class: "result__title",
+          href: urlState.documentPath(hit.id),
+          onClick: (e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+            e.preventDefault();
+            open();
+          },
+        },
+        hit.title || hit.id,
+      ),
       h(
         "div",
         { class: "result__meta" },
@@ -309,19 +338,35 @@ export class Results {
           { class: "icon-button", type: "button", title: "Preview (p)", "aria-label": "Preview", onClick: open },
           svg(icon("preview"), 18),
         ),
-        hit.url &&
-          h(
-            "a",
-            {
-              class: "icon-button",
-              href: hit.url,
-              target: "_blank",
-              rel: "noreferrer noopener",
-              title: "Open in source",
-              "aria-label": "Open in source",
-            },
-            svg(icon("external"), 18),
-          ),
+        // Opening at the source is the secondary action, and it is only offered
+        // where it would work. Where it would not, the path is the useful thing
+        // to hand over, so the button copies it rather than pretending to be a
+        // link and doing nothing.
+        followable(hit.url)
+          ? h(
+              "a",
+              {
+                class: "icon-button",
+                href: hit.url,
+                target: "_blank",
+                rel: "noreferrer noopener",
+                title: "Open in source",
+                "aria-label": "Open in source",
+              },
+              svg(icon("external"), 18),
+            )
+          : hit.url &&
+            h(
+              "button",
+              {
+                class: "icon-button",
+                type: "button",
+                title: "Copy path",
+                "aria-label": "Copy path",
+                onClick: (e) => copies(e.currentTarget, copyable(hit.url), this.onSay),
+              },
+              svg(icon("copy"), 18),
+            ),
       ),
     );
   }

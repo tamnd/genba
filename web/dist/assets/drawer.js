@@ -10,12 +10,15 @@
 import { h, replace, svg } from "./dom.js";
 import { api } from "./api.js";
 import { cache } from "./cache.js";
-import { icon, label, sourceColor, when, exact } from "./format.js";
+import { copies } from "./clipboard.js";
+import { icon, label, sourceColor, when, exact, followable, copyable } from "./format.js";
 import { body as renderBody, shapeOf } from "./content.js";
+import { documentPath } from "./state.js";
 
 export class Drawer {
-  constructor({ onClose }) {
+  constructor({ onClose, onSay }) {
     this.onClose = onClose;
+    this.onSay = onSay || (() => {});
     this.returnTo = null;
     this.currentKey = "";
 
@@ -116,14 +119,41 @@ export class Drawer {
     // has to say where it goes and how wide it is.
     this.body.dataset.shape = shapeOf(d);
     replace(this.body, renderBody(d));
+    // Opening at the source is only offered where a browser would go there. For
+    // every document the file connector read it would not, so the path takes
+    // its place: a path somebody can paste into a terminal is worth something,
+    // and a link that silently does nothing is worth less than no link at all.
     replace(
       this.foot,
-      d.url &&
+      followable(d.url) &&
         h(
           "a",
           { class: "button button--primary", href: d.url, target: "_blank", rel: "noreferrer noopener" },
           "Open in source",
           svg(icon("external"), 16),
+        ),
+      h(
+        "button",
+        {
+          class: "button",
+          type: "button",
+          onClick: (e) =>
+            copies(e.currentTarget, new URL(documentPath(d.id), location.origin).href, this.onSay),
+        },
+        svg(icon("link"), 16),
+        "Copy link",
+      ),
+      d.url &&
+        !followable(d.url) &&
+        h(
+          "button",
+          {
+            class: "button",
+            type: "button",
+            onClick: (e) => copies(e.currentTarget, copyable(d.url), this.onSay),
+          },
+          svg(icon("copy"), 16),
+          "Copy path",
         ),
       d.modified_at &&
         h("span", { class: "meta", title: exact(d.modified_at) }, `Updated ${when(d.modified_at)}`),
@@ -135,7 +165,10 @@ export class Drawer {
   }
 
   renderError(err) {
-    const missing = err.status === 404;
+    // A document that is not there and a document this viewer may not read say
+    // the same thing, because a message that told them apart would let anybody
+    // enumerate what exists by reading the difference.
+    const missing = err.status === 404 || err.status === 403;
     replace(this.title, missing ? "Not available" : "Could not load this document");
     replace(this.meta);
     this.body.dataset.shape = "text";
@@ -148,7 +181,15 @@ export class Drawer {
     replace(this.foot);
   }
 
-  close() {
+  /**
+   * close hides the drawer and puts focus back where it came from.
+   *
+   * notify is false when the URL has already moved on, which is what happens
+   * when somebody follows a result title to its own page while the preview of
+   * another result is open. Telling the shell to clear the open parameter then
+   * would navigate away from the page they just asked for.
+   */
+  close(opts = {}) {
     if (!this.open) return;
     // A request already in flight is left to finish and fill the cache, because
     // reopening the same document is the most likely next thing to happen. It
@@ -156,8 +197,8 @@ export class Drawer {
     this.currentKey = "";
     this.el.hidden = true;
     this.scrim.hidden = true;
-    if (this.returnTo && this.returnTo.focus) this.returnTo.focus();
-    this.onClose();
+    if (opts.focus !== false && this.returnTo && this.returnTo.focus) this.returnTo.focus();
+    if (opts.notify !== false) this.onClose();
   }
 
   /** trap keeps Tab inside the dialog while it is open. */

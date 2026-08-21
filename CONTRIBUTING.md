@@ -31,9 +31,11 @@ It measures the search endpoint per query class in interleaved rounds, compares 
 The first run generates the corpus and takes a few minutes.
 If the baseline itself needs to move, `make bench-gate-record` writes a new one and it belongs in a commit of its own that says why the number moved.
 
-`ui-gate` checks the asset budgets, then starts the binary over this repository as a corpus and runs axe and Lighthouse against the home page, a results page and a results page with the drawer open.
-It needs `npx` and a Chrome, and it says so and stops rather than failing when there is not one.
-A chromedriver that does not match the Chrome next to it is the usual reason it will not start, and `CHROMEDRIVER` points it at a matching one.
+`ui-gate` checks the asset budgets, then starts the binary over this repository as a corpus and runs two things against it.
+The keyboard walk in `scripts/keyboard-walk.mjs` presses the keys and clicks the links a person would and asserts where each one led, which is the half an audit cannot see: markup can describe itself perfectly and still go nowhere when you click it.
+axe and Lighthouse then run against the home page, a results page, a results page with the drawer open, and a document on a page of its own.
+The walk needs a Chrome, axe and Lighthouse also need `npx`, and each says so and skips itself rather than failing when there is not one.
+A chromedriver that does not match the Chrome next to it is the usual reason axe will not start, and `CHROMEDRIVER` points it at a matching one.
 
 ## The rule that is not negotiable
 

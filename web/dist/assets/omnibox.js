@@ -223,7 +223,14 @@ export class Omnibox {
   }
 }
 
+const MAC = navigator.platform.toLowerCase().includes("mac");
+
+/** modifierLabel is the key a platform holds down for its own shortcuts. */
+export function modifierLabel() {
+  return MAC ? "⌘" : "Ctrl";
+}
+
 /** shortcutLabel matches the key the platform actually uses. */
 export function shortcutLabel() {
-  return navigator.platform.toLowerCase().includes("mac") ? "⌘K" : "Ctrl K";
+  return MAC ? "⌘K" : "Ctrl K";
 }
