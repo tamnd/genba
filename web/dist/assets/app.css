@@ -501,8 +501,18 @@ time {
   gap: var(--space-1);
 }
 
+/* Absent, rather than an empty strip holding a border and a row of height, on a
+   corpus with nothing to divide into verticals. */
+.tabs[hidden] {
+  display: none;
+}
+
 .tab {
   position: relative;
+  /* Never narrower than its own label. Without this the strip below the
+     breakpoint shrinks its tabs to fit instead of scrolling, and at 390 pixels
+     the last one read "Tick". */
+  flex: none;
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -2034,10 +2044,47 @@ h6.prose__h {
     min-width: 0;
     overflow-x: auto;
     scrollbar-width: none;
+    scroll-snap-type: x proximity;
   }
 
   .tabs::-webkit-scrollbar {
     display: none;
+  }
+
+  /* Proximity rather than mandatory, because mandatory takes a flick that was
+     meant to reveal the end of the strip and puts it back where it started. */
+  .tab {
+    scroll-snap-align: start;
+  }
+
+  /* The fade means there is more that way, so it is only drawn on a side where
+     there is. results.js sets the attribute from the scroll position, and a
+     strip that fits gets no fade at all. */
+  .tabs[data-scroll="end"] {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+  }
+
+  .tabs[data-scroll="start"] {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 32px);
+    mask-image: linear-gradient(to right, transparent, #000 32px);
+  }
+
+  .tabs[data-scroll="both"] {
+    -webkit-mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 32px,
+      #000 calc(100% - 32px),
+      transparent
+    );
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 32px,
+      #000 calc(100% - 32px),
+      transparent
+    );
   }
 
   .filterbar__toggle {
