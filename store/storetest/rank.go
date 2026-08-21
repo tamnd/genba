@@ -44,6 +44,7 @@ var rankCases = []rankCase{
 	{"the total counts the match set and not the pool", testRankTotal},
 	{"truncated says whether the ranking saw everything", testRankTruncated},
 	{"facets are counted over the match set and not over the pool", testRankFacets},
+	{"a facet count lifts its own filter and applies the others", testRankDrillDown},
 	{"a facet bound counts a sample and says the counts are a lower bound", testRankFacetBound},
 	{"a selection with no counts ranks the same documents", testRankWithoutCounts},
 	{"the principal is applied inside rank", testRankPermission},
@@ -117,28 +118,66 @@ func pool() store.Selection { return store.Selection{Limit: 100, Counts: true} }
 
 // wantFacets counts the facets the slow way, from the documents the principal
 // can actually read.
+//
+// Each field is counted with its own constraint lifted and every other
+// constraint applied, which is the contract in [store.Ranked.Facets]. A
+// document in the match set counts towards all four fields. One that fails
+// exactly one constraint counts towards that field alone, because it is a
+// result that ticking that value instead would have found. One that fails two
+// or more counts towards nothing: no single change to the query reaches it.
 func wantFacets(t *testing.T, s store.Store, p *acl.Principal, r store.Request) map[string]map[string]int {
 	t.Helper()
 	out := map[string]map[string]int{
 		"source": {}, "kind": {}, "container": {}, "author": {},
 	}
-	count := func(field, value string) {
-		if value != "" {
-			out[field][value]++
+	count := func(field string, d doc.Document) {
+		if v := facetValue(field, d); v != "" {
+			out[field][v]++
 		}
 	}
+	base := r.WithoutFacets()
 	if err := s.Scan(t.Context(), p, func(d doc.Document) bool {
-		if r.Matches(d) {
-			count("source", d.Source)
-			count("kind", string(d.Kind))
-			count("container", d.Container)
-			count("author", d.Author.Display())
+		if !base.Matches(d) {
+			return true
+		}
+		missing := ""
+		for _, field := range store.FacetFields {
+			if r.Passes(field, d) {
+				continue
+			}
+			if missing != "" {
+				return true
+			}
+			missing = field
+		}
+		if missing != "" {
+			count(missing, d)
+			return true
+		}
+		for _, field := range store.FacetFields {
+			count(field, d)
 		}
 		return true
 	}); err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
 	return out
+}
+
+// facetValue is the display string a facet counts a document under, which is
+// the string on the row somebody clicks to filter by.
+func facetValue(field string, d doc.Document) string {
+	switch field {
+	case "source":
+		return d.Source
+	case "kind":
+		return string(d.Kind)
+	case "container":
+		return d.Container
+	case "author":
+		return d.Author.Display()
+	}
+	return ""
 }
 
 // gotFacets turns a driver's answer into the same shape, which is also where a
@@ -225,6 +264,58 @@ func testRankFacets(t *testing.T, s store.Store) {
 		got := gotFacets(t, mustRank(t, rk, reader(), store.Request{}, sel))
 		if !maps.EqualFunc(got, want, maps.Equal) {
 			t.Fatalf("facets for a pool of %d are %v, expected %v", sel.Limit, got, want)
+		}
+	}
+}
+
+// A sidebar is only worth reading if the values nobody has ticked still carry
+// counts. Counted over the request as it stands, a ticked source reports its own
+// count and zero for every other source, and the one question somebody has at
+// that point, whether unticking it is going to find anything, has no answer on
+// the screen.
+//
+// So each field is counted with its own filter lifted and the rest applied, and
+// the three things checked here are that the driver's arithmetic agrees with the
+// same rule computed in Go, that the ticked value still reports the fully
+// constrained count, and that Total was left alone. Total is the one number that
+// does describe the current state, and a driver that lifted a filter out of it
+// as well would report more results than the page it is sitting above.
+func testRankDrillDown(t *testing.T, s store.Store) {
+	rk := ranker(t, s)
+	mustPut(t, s, corpus()...)
+
+	for _, r := range []store.Request{
+		{Sources: []string{"gdrive"}},
+		{Kinds: []doc.Kind{doc.KindPage, doc.KindFile}},
+		{Containers: []string{"Platform"}},
+		{Authors: []string{"mei@acme.com"}},
+		{Sources: []string{"gdrive"}, Kinds: []doc.Kind{doc.KindPage}},
+		{Terms: []string{"payments"}, Sources: []string{"gdrive", "slack"}},
+		{Sources: []string{"gdrive"}, Authors: []string{"kenji"}},
+	} {
+		ranked := mustRank(t, rk, reader(), r, pool())
+		got, want := gotFacets(t, ranked), wantFacets(t, s, reader(), r)
+		if !maps.EqualFunc(got, want, maps.Equal) {
+			t.Fatalf("facets for %+v are %v, expected %v", r, got, want)
+		}
+		if total := len(wantIDs(t, s, reader(), r)); ranked.Total != total {
+			t.Fatalf("Total = %d for %+v, the match set has %d documents in it", ranked.Total, r, total)
+		}
+		if ranked.Approximate {
+			t.Fatalf("Approximate is set for %+v, which was counted with no bound", r)
+		}
+	}
+
+	// The counts a lifted filter produces have to be the ones somebody would get
+	// by making that choice, so the sidebar is checked against the searches it is
+	// promising. Ticking a value that is already ticked changes nothing, which is
+	// how the ticked value's own count is pinned to the fully constrained one.
+	r := store.Request{Sources: []string{"gdrive"}}
+	for _, v := range mustRank(t, rk, reader(), r, pool()).Facets["source"] {
+		next := r
+		next.Sources = []string{v.Value}
+		if want := len(wantIDs(t, s, reader(), next)); v.Count != want {
+			t.Fatalf("the source facet promises %d results for %q and searching for it finds %d", v.Count, v.Value, want)
 		}
 	}
 }

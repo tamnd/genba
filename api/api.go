@@ -270,6 +270,17 @@ type searchFilters struct {
 type facet struct {
 	Value string `json:"value"`
 	Count int    `json:"count"`
+
+	// Selected says the query already narrows to this value, so the interface
+	// draws it ticked.
+	//
+	// The server says it rather than the client working it out, because working
+	// it out means comparing a filter somebody typed against a display string a
+	// connector produced, and the comparison that decided whether the document
+	// matched has already been made once, down in the store. A client that
+	// compared them a second time and got a different answer would draw a box
+	// unticked next to a count that only makes sense because it is ticked.
+	Selected bool `json:"selected,omitempty"`
 }
 
 type searchHit struct {
@@ -319,7 +330,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Pri
 		Total:         res.Total,
 		Partial:       res.Truncated,
 		TookMS:        float64(res.Took.Microseconds()) / 1000,
-		Facets:        facets(res.Facets),
+		Facets:        facets(res.Facets, query.Request()),
 		FacetsPartial: res.Approximate,
 
 		Hits:       []searchHit{},
@@ -773,16 +784,58 @@ func (s *Server) cacheStats() map[string]cache.Stats {
 	return out
 }
 
-func facets(in map[string][]index.Facet) map[string][]facet {
+// facets is the sidebar on the wire, with the values the query already narrows
+// to marked.
+//
+// The counts here are not all counted over the same set of documents. A field
+// the query narrows is counted with its own filter lifted, so its values say
+// what choosing them instead would find, and the value already chosen says what
+// is on the screen. Which of the two a number is depends entirely on the flag
+// next to it, which is why the flag is on the wire rather than inferred.
+func facets(in map[string][]index.Facet, r store.Request) map[string][]facet {
 	out := make(map[string][]facet, len(in))
 	for name, values := range in {
+		chosen := chosenValues(r, name)
 		fs := make([]facet, 0, len(values))
 		for _, v := range values {
-			fs = append(fs, facet{Value: v.Value, Count: v.Count})
+			fs = append(fs, facet{Value: v.Value, Count: v.Count, Selected: contains(chosen, v.Value)})
 		}
 		out[name] = fs
 	}
 	return out
+}
+
+// chosenValues is what the query narrows the field to, and nothing for a field
+// it leaves alone.
+func chosenValues(r store.Request, field string) []string {
+	switch field {
+	case "source":
+		return r.Sources
+	case "kind":
+		kinds := make([]string, 0, len(r.Kinds))
+		for _, k := range r.Kinds {
+			kinds = append(kinds, string(k))
+		}
+		return kinds
+	case "container":
+		return r.Containers
+	case "author":
+		return r.Authors
+	}
+	return nil
+}
+
+// contains compares the way the filters themselves compare, through
+// [store.Fold], so a link somebody typed in a different case still ticks the box
+// it filtered by.
+func contains(values []string, value string) bool {
+	folded := store.Fold(value)
+	for _, v := range values {
+		if store.Fold(v) == folded {
+			return true
+		}
+	}
+	return false
 }
 
 func intParam(v string) (int, error) {

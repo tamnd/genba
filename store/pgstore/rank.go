@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 
@@ -39,8 +41,19 @@ func (s *Store) Rank(ctx context.Context, p *acl.Principal, r store.Request, sel
 		return store.Ranked{}, errors.New("pgstore: rank: no candidate limit")
 	}
 
-	c := visible(p)
-	filters(r, c)
+	// The predicate for a request, built the same way whatever is being asked
+	// about. The counting asks about a request with one facet constraint lifted,
+	// and building that by hand somewhere else is how two predicates that are
+	// meant to be the same drift apart.
+	pred := func(r store.Request) *clause {
+		c := visible(p)
+		filters(r, c)
+		if q, ok := tsquery(r.Terms); ok {
+			c.add(`d.terms @@ ?::tsquery`, q)
+		}
+		return c
+	}
+	c := pred(r)
 
 	// The cut order. Ties break on the id so that two runs of the same query
 	// return the same page, which a client paging through results depends on and
@@ -53,7 +66,6 @@ func (s *Store) Rank(ctx context.Context, p *acl.Principal, r store.Request, sel
 		order = `d.modified_at DESC NULLS LAST, d.id`
 	}
 	if q, ok := tsquery(r.Terms); ok {
-		c.add(`d.terms @@ ?::tsquery`, q)
 		if !sel.Recent {
 			// ts_rank descending is best first. It is only the cut, not the
 			// ranking: the score that orders the results is computed in Go over
@@ -87,7 +99,7 @@ func (s *Store) Rank(ctx context.Context, p *acl.Principal, r store.Request, sel
 		if err != nil {
 			return err
 		}
-		counted, facets, err := s.counts(ctx, c, sel.Facets)
+		counted, stopped, facets, err := s.counts(ctx, r, pred, sel.Facets)
 		if err != nil {
 			return err
 		}
@@ -97,8 +109,10 @@ func (s *Store) Rank(ctx context.Context, p *acl.Principal, r store.Request, sel
 			Facets:     facets,
 			// Counted rather than the bound, because what makes the counts a
 			// lower bound is the statement having stopped early, and the
-			// statement is the only thing that knows whether it did.
-			Approximate: counted < total,
+			// statement is the only thing that knows whether it did. A lifted
+			// count has no total to be compared against, so stopped carries the
+			// same claim for those.
+			Approximate: counted < total || stopped,
 			Truncated:   total > len(cands),
 		}
 		return nil
@@ -208,76 +222,147 @@ func (s *Store) total(ctx context.Context, c *clause) (int, error) {
 	return n, nil
 }
 
-// counts is every facet over the same predicate, in one statement, and returns
-// how many documents it counted over.
+// counts is every facet, in one statement, and returns how many documents it
+// counted the match set over and whether any of the counting stopped at the
+// bound.
 //
-// One statement rather than four, because the predicate is the expensive part
-// and the common table expression is materialised so it is evaluated once. Four
-// statements would apply the permission rule to the match set four times over
-// to answer four questions about the same rows. MATERIALIZED is spelled out
+// One statement rather than one per field, because the predicate is the
+// expensive part and a materialised common table expression is evaluated once.
+// Four statements would apply the permission rule to the match set four times
+// over to answer four questions about the same rows. MATERIALIZED is spelled out
 // because Postgres inlines a common table expression referenced more than once
 // only when it is cheap to, and it has no way of knowing that this one is not.
 //
-// The bound is the LIMIT inside the expression, and it is what keeps this from
+// A field with a constraint on it gets a second expression with that constraint
+// lifted, because a count under its own filter is the number that made the
+// sidebar useless: tick one type and every other type reports zero. See
+// [store.Request.Without]. That is one extra expression per field somebody has
+// actually ticked, which is nearly always none or one, and never more than four.
+//
+// The bound is the LIMIT inside each expression, and it is what keeps this from
 // being proportional to the match set: the four columns are read for the first
 // bound documents and the scan stops there. They are the first in the order the
 // planner produces rather than the best matching, because ordering by the score
 // would mean reading those four columns of every matching document to find out
-// which ones to keep, which is the cost being removed. A sample of the match set
-// is what the sidebar gets, the number of documents behind it comes back so the
-// caller can say the counts are a lower bound, and the total above is exact.
-func (s *Store) counts(ctx context.Context, c *clause, bound int) (counted int, facets map[string][]store.Facet, err error) {
-	const fields = `
-		SELECT 'counted'::text AS field, ''::text AS value, count(*) AS n FROM m
-		UNION ALL SELECT * FROM (SELECT 'source'::text, source, count(*) FROM m WHERE source <> '' GROUP BY source ORDER BY 3 DESC, 2 LIMIT ?) f1
-		UNION ALL SELECT * FROM (SELECT 'kind'::text, kind, count(*) FROM m WHERE kind <> '' GROUP BY kind ORDER BY 3 DESC, 2 LIMIT ?) f2
-		UNION ALL SELECT * FROM (SELECT 'container'::text, container, count(*) FROM m WHERE container <> '' GROUP BY container ORDER BY 3 DESC, 2 LIMIT ?) f3
-		UNION ALL SELECT * FROM (SELECT 'author'::text, author, count(*) FROM m WHERE author <> '' GROUP BY author ORDER BY 3 DESC, 2 LIMIT ?) f4`
+// which ones to keep, which is the cost being removed. A sample is what the
+// sidebar gets, and the total above is exact.
+//
+// The values somebody has ticked are counted twice, once in the lifted
+// expression and once over the match set itself, and the second is the one that
+// is kept. Both are counts of the same documents, since a lifted field's bucket
+// for a ticked value is the match set, and the one taken over the smaller set is
+// the one the bound is less likely to have cut short.
+func (s *Store) counts(ctx context.Context, r store.Request, pred func(store.Request) *clause, bound int) (counted int, stopped bool, facets map[string][]store.Facet, err error) {
+	const columns = `SELECT d.source AS source, d.kind AS kind, d.container AS container, d.author_name AS author`
 
-	// No bound means no LIMIT rather than a limit large enough to stand in for
-	// one, because the exact answer is what a selection without a bound asked
-	// for and a very large number is not the same claim.
-	limit := ``
-	args := append([]any{}, c.args...)
-	if bound > 0 {
-		limit = ` LIMIT ?`
-		args = append(args, bound)
+	var (
+		ctes  []string
+		parts []string
+		args  []any
+		caps  []any
+	)
+	// pool declares one expression and the row that says how many documents it
+	// was allowed to see. No bound means no LIMIT rather than a limit large
+	// enough to stand in for one, because the exact answer is what a selection
+	// without a bound asked for and a very large number is not the same claim.
+	pool := func(name string, r store.Request) {
+		c := pred(r)
+		limit := ``
+		if bound > 0 {
+			limit = ` LIMIT ?`
+		}
+		ctes = append(ctes, name+` AS MATERIALIZED (`+columns+` FROM document d WHERE `+c.where()+limit+`)`)
+		args = append(args, c.args...)
+		if bound > 0 {
+			args = append(args, bound)
+		}
+		parts = append(parts, `SELECT 'counted:`+name+`'::text AS field, ''::text AS value, count(*) AS n FROM `+name)
 	}
-	for range 4 {
-		args = append(args, store.MaxFacetValues)
+	// The subquery is named because Postgres requires it, and the name is the
+	// position so that two counts of the same field are still two names.
+	group := func(label, name, column string) {
+		parts = append(parts, `SELECT * FROM (SELECT '`+label+`'::text, `+column+`, count(*) FROM `+name+
+			` WHERE `+column+` <> '' GROUP BY `+column+` ORDER BY 3 DESC, 2 LIMIT ?) f`+strconv.Itoa(len(caps)))
+		caps = append(caps, store.MaxFacetValues)
 	}
 
-	rows, err := s.query(ctx, `
-		WITH m AS MATERIALIZED (
-			SELECT d.source AS source, d.kind AS kind, d.container AS container, d.author_name AS author
-			FROM document d WHERE `+c.where()+limit+`
-		)`+fields, args...)
+	// The match set first, so that its counted row is the one carrying the
+	// column names the rest of the union inherits.
+	pool("m", r)
+	for _, field := range store.FacetFields {
+		over := "m"
+		if r.Constrains(field) {
+			over = "m_" + field
+			pool(over, r.Without(field))
+			// The ticked values, counted over the match set, which override the
+			// lifted counts of the same values below.
+			group(field+"!", "m", field)
+		}
+		group(field, over, field)
+	}
+
+	rows, err := s.query(ctx, `WITH `+strings.Join(ctes, `, `)+"\n"+
+		strings.Join(parts, "\nUNION ALL "), append(args, caps...)...)
 	if err != nil {
-		return 0, nil, err
+		return 0, false, nil, err
 	}
 	defer rows.Close()
 
-	facets = map[string][]store.Facet{}
+	var (
+		lifted  = map[string][]store.Facet{}
+		ticked  = map[string]map[string]int{}
+		scanned = map[string]int{}
+	)
 	for rows.Next() {
 		var (
 			field, value string
 			n            int
 		)
 		if err := rows.Scan(&field, &value, &n); err != nil {
-			return 0, nil, err
+			return 0, false, nil, err
 		}
 		s.counters.rows.Add(1)
-		if field == "counted" {
-			counted = n
+		switch {
+		case strings.HasPrefix(field, "counted:"):
+			scanned[strings.TrimPrefix(field, "counted:")] = n
 			// The documents the aggregate read, which no other counter can see:
 			// see [store.Counters.Faceted] for why it is counted separately from
 			// the rows the statement returned.
 			s.counters.faceted.Add(int64(n))
-			continue
+		case strings.HasSuffix(field, "!"):
+			field = strings.TrimSuffix(field, "!")
+			if ticked[field] == nil {
+				ticked[field] = map[string]int{}
+			}
+			ticked[field][value] = n
+		default:
+			lifted[field] = append(lifted[field], store.Facet{Value: value, Count: n})
 		}
-		facets[field] = append(facets[field], store.Facet{Value: value, Count: n})
 	}
-	return counted, facets, rows.Err()
+	if err := rows.Err(); err != nil {
+		return 0, false, nil, err
+	}
+
+	facets = make(map[string][]store.Facet, len(lifted))
+	for field, values := range lifted {
+		for i, v := range values {
+			if n, ok := ticked[field][v.Value]; ok {
+				values[i].Count = n
+			}
+		}
+		facets[field] = values
+	}
+	// A lifted expression counts over a larger set than the match set and there
+	// is no total to compare it against, so reaching the bound is what stands in
+	// for having stopped early. It says approximate on a count that landed
+	// exactly on the bound and was in fact exact, which is the harmless way to be
+	// wrong about it.
+	for name, n := range scanned {
+		if name != "m" && bound > 0 && n >= bound {
+			stopped = true
+		}
+	}
+	return scanned["m"], stopped, facets, nil
 }
 
 // Statistics reads the corpus numbers the scorer needs, in two key lookups.

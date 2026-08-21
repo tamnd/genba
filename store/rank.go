@@ -90,12 +90,24 @@ type Ranked struct {
 	// what makes them usable as filters rather than as a description of what is
 	// on screen. They are empty when the selection did not ask for the counts,
 	// and bounded by [Selection.Facets] when it set a bound.
+	//
+	// Each field is counted with its own constraint lifted and every other
+	// constraint applied: see [Request.Without]. A value somebody has already
+	// ticked is counted over the match set itself, because that is the same
+	// number arrived at from a smaller set and therefore the more accurate of
+	// the two under a bound.
 	Facets map[string][]Facet
 
 	// Approximate reports that the facets were counted over the first
 	// [Selection.Facets] documents of the match set rather than over all of
 	// them, so each count is a lower bound on the true one. Total is exact
 	// either way, and a caller showing the counts is expected to say so.
+	//
+	// A field counted with its own constraint lifted is counted over a larger
+	// set than the match set, so it reaches the bound sooner. When a driver
+	// cannot tell whether such a count stopped early it says approximate, which
+	// overstates the doubt on an exact count rather than understating it on an
+	// inexact one.
 	Approximate bool
 }
 

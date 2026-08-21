@@ -72,6 +72,67 @@ type Request struct {
 	Until time.Time
 }
 
+// FacetFields are the fields a sidebar is drawn from, in the order it shows
+// them.
+//
+// They are the four request fields somebody ticks rather than types, which is
+// why they are named here and the dates and the owner are not: a facet count is
+// a claim about what ticking a box would do, and nothing draws a box for a date
+// range. Both drivers and the Go fallback count exactly these, so the sidebar
+// does not depend on which driver answered.
+var FacetFields = []string{"source", "kind", "container", "author"}
+
+// Constrains reports whether the request restricts the given facet field.
+func (r Request) Constrains(field string) bool {
+	switch field {
+	case "source":
+		return len(r.Sources) > 0
+	case "kind":
+		return len(r.Kinds) > 0
+	case "container":
+		return len(r.Containers) > 0
+	case "author":
+		return len(r.Authors) > 0
+	}
+	return false
+}
+
+// Without is the request with one facet field's own constraint lifted, and
+// every other constraint left exactly where it was.
+//
+// This is what a facet count is counted over, and it is the whole of why a
+// sidebar is worth reading. Counted over the request as it stands, a ticked
+// type reports its own count and zero for every other type, which destroys the
+// one thing somebody needs in order to decide whether to untick it. Counted
+// with its own field lifted, each value answers the question the box is asking:
+// how many results there would be if this were what you had chosen.
+//
+// The other fields stay applied, because they are different questions. How many
+// pages there are is a useful answer; how many pages there are with every filter
+// in the query ignored is a fact about the corpus rather than about the search.
+func (r Request) Without(field string) Request {
+	switch field {
+	case "source":
+		r.Sources = nil
+	case "kind":
+		r.Kinds = nil
+	case "container":
+		r.Containers = nil
+	case "author":
+		r.Authors = nil
+	}
+	return r
+}
+
+// WithoutFacets is the request with all four facet constraints lifted, which is
+// the widest set any facet count is counted over.
+func (r Request) WithoutFacets() Request {
+	for _, field := range FacetFields {
+		r = r.Without(field)
+	}
+	return r
+}
+
 // Empty reports whether the request narrows anything at all.
 func (r Request) Empty() bool {
 	return len(r.Terms) == 0 && len(r.Sources) == 0 && len(r.Kinds) == 0 &&
@@ -113,6 +174,29 @@ func (r Request) Filters(d doc.Document) bool {
 	}
 	if !r.Until.IsZero() && d.ModifiedAt.After(r.Until) {
 		return false
+	}
+	return true
+}
+
+// Passes reports whether the document satisfies one facet field's constraint,
+// ignoring every other part of the request.
+//
+// It is [Request.Filters] taken apart, and it is here so that a caller counting
+// facets in Go can ask which single constraint a document failed. A document
+// that fails exactly one of them is what a drill down count is made of: it is
+// not in the match set, and it is in the match set that ticking that value
+// instead would produce. A field the request does not constrain is passed by
+// everything.
+func (r Request) Passes(field string, d doc.Document) bool {
+	switch field {
+	case "source":
+		return len(r.Sources) == 0 || slices.Contains(r.Sources, d.Source)
+	case "kind":
+		return len(r.Kinds) == 0 || slices.Contains(r.Kinds, d.Kind)
+	case "container":
+		return len(r.Containers) == 0 || containsFold(r.Containers, d.Container)
+	case "author":
+		return len(r.Authors) == 0 || matchesPerson(r.Authors, d.Author)
 	}
 	return true
 }
