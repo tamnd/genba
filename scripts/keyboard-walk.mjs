@@ -13,7 +13,8 @@
 // a browser download in it for a script that already has a browser.
 
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -62,6 +63,13 @@ if (typeof WebSocket === "undefined") {
   process.exit(0);
 }
 
+// A port of our own choosing, so two runs on one machine do not fight over
+// 9222. Asking Chrome for port zero and reading back the number it chose is the
+// other way to do that, and it means reading the DevToolsActivePort file, which
+// on the CI runner Chrome starts and then never writes. Picking the port here
+// costs one bind and leaves nothing to go looking for.
+const port = await freePort();
+
 const profile = mkdtempSync(join(tmpdir(), "genba-walk-"));
 const browser = spawn(
   chrome,
@@ -75,9 +83,7 @@ const browser = spawn(
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-extensions",
-    // Port zero, so two runs on one machine do not fight over 9222. Chrome
-    // writes the port it chose into the profile directory.
-    "--remote-debugging-port=0",
+    `--remote-debugging-port=${port}`,
     `--user-data-dir=${profile}`,
     "about:blank",
   ],
@@ -198,21 +204,38 @@ async function walk() {
 
 // The protocol ------------------------------------------------------------
 
-/** endpoint waits for Chrome to say which port it picked. */
+/** freePort asks the operating system for one and hands it straight back. */
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address();
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+/** endpoint waits for Chrome to start answering, and returns where to talk. */
 async function endpoint() {
-  const file = join(profile, "DevToolsActivePort");
   const until = Date.now() + DEADLINE;
   while (Date.now() < until) {
-    if (existsSync(file)) {
-      const [port, path] = readFileSync(file, "utf8").split("\n");
-      if (port && path) return `ws://127.0.0.1:${port.trim()}${path.trim()}`;
+    try {
+      const answer = await fetch(`http://127.0.0.1:${port}/json/version`);
+      if (answer.ok) {
+        const { webSocketDebuggerUrl } = await answer.json();
+        if (webSocketDebuggerUrl) return webSocketDebuggerUrl;
+      }
+    } catch {
+      // Nothing listening yet, which is the thing being waited for rather than
+      // an error.
     }
-    // A Chrome that has already stopped is never going to write the file, and
-    // waiting the rest of the deadline to say so only delays the reason.
+    // A Chrome that has already stopped is never going to answer, and waiting
+    // out the rest of the deadline to say so only delays the reason.
     if (stopped !== null) throw new Error(`Chrome exited (${stopped})${said()}`);
     await sleep(50);
   }
-  throw new Error(`Chrome never reported a debugging port${said()}`);
+  throw new Error(`Chrome never answered on port ${port}${said()}`);
 }
 
 /** said renders whatever Chrome put on stderr, for the error to carry. */
