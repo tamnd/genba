@@ -9,7 +9,8 @@
 # every accessibility bug this is meant to catch lives in the markup the
 # interface builds after a fetch.
 #
-# The keyboard walk and axe are the parts that fail a build. axe reports
+# The keyboard walk, the rendering check and axe are the parts that fail a
+# build. axe reports
 # violations of a standard rather than an opinion, it does not move when the
 # runner is busy, and a violation is a person who cannot use the page. The walk
 # presses the keys and clicks the links a person would and asserts where each
@@ -109,6 +110,14 @@ status=0
 # machine with no network. It skips itself when there is no Chrome to drive.
 echo "ui-gate: keyboard walk"
 if ! node scripts/keyboard-walk.mjs "$BASE"; then
+	status=1
+fi
+
+# The renderers, called directly with a fixture each, because five of the six
+# cannot be reached from this repository: it holds no notebook, no recording, no
+# PDF and no page of generated HTML. It needs nothing downloaded either.
+echo "ui-gate: rendering check"
+if ! node scripts/render-check.mjs "$BASE"; then
 	status=1
 fi
 

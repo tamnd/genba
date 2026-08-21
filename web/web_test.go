@@ -172,6 +172,35 @@ func TestTheCacheKeepsNothingOnDisk(t *testing.T) {
 	}
 }
 
+// One file parses markup, and it is the one written to be safe doing it.
+//
+// html.js parses a page from the corpus into a detached document and then
+// copies out the elements and attributes it recognises, so nothing an author
+// wrote reaches the screen except as a node this codebase built. That property
+// belongs to that file. A second caller of DOMParser somewhere else would be a
+// second parser with none of the allowlist behind it, and it would look
+// perfectly reasonable in review.
+func TestOnlyOneFileParsesMarkup(t *testing.T) {
+	err := fs.WalkDir(os.DirFS("dist"), ".", func(name string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || path.Ext(name) != ".js" || path.Base(name) == "html.js" {
+			return err
+		}
+		body, err := os.ReadFile(path.Join("dist", name))
+		if err != nil {
+			return err
+		}
+		for _, parser := range []string{"DOMParser", "createContextualFragment", "setHTML"} {
+			if strings.Contains(string(body), parser) {
+				t.Errorf("%s uses %s, and html.js is where markup from the corpus is parsed", name, parser)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the assets: %v", err)
+	}
+}
+
 func TestEnabledMatchesHandler(t *testing.T) {
 	if web.Enabled() != (web.Handler() != nil) {
 		t.Fatal("Enabled disagrees with Handler")
