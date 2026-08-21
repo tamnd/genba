@@ -19,6 +19,7 @@ import { Page } from "./page.js";
 import { Home } from "./home.js";
 import { Recent } from "./recent.js";
 import { forget, remember } from "./queries.js";
+import { failed } from "./states.js";
 
 const THEME_KEY = "genba.theme";
 const DENSITY_KEY = "genba.density";
@@ -31,6 +32,15 @@ const DENSITY_KEY = "genba.density";
 // response cancels: if the answer beats it, no loading state is ever mounted
 // and the transition is a single paint.
 const LOADING_DELAY = 120;
+
+// SLOW_DELAY is when a wait stops being a wait and becomes a question about
+// whether anything is happening at all.
+//
+// Five seconds is four hundred times the budget, so this is not a threshold any
+// healthy request comes near. It is for the ones that are never going to
+// answer, and what it buys is a way to stop them: an interface with no way to
+// abandon something has taken the machine away from the person using it.
+const SLOW_DELAY = 5_000;
 
 // How long each prefetch waits before it decides somebody meant it.
 //
@@ -56,6 +66,7 @@ class App {
     this.session = null;
     this.query = urlState.read();
     this.loadingTimer = null;
+    this.slowTimer = null;
     this.currentKey = "";
     this.hoverTimer = null;
     this.pageTimer = null;
@@ -347,6 +358,7 @@ class App {
       // it. Nothing cached under one identity is reachable from another.
       cache.as(this.session.view || "");
       this.results.verticals = verticalsFor(this.session.kinds);
+      this.results.knows({ sources: this.session.sources || [] });
       this.renderVerticals();
       this.renderSources();
     } catch (err) {
@@ -355,6 +367,27 @@ class App {
     }
     this.sync();
     this.refresher.start();
+    this.countCorpus();
+  }
+
+  /**
+   * countCorpus is how the interface tells nothing matched apart from nothing
+   * indexed.
+   *
+   * Not awaited, because the first paint does not need it and the one screen
+   * that turns on it repaints when it lands. Home asks the same question under
+   * the same key, so on the screen where both are true this is the request Home
+   * would have made rather than a second one.
+   */
+  async countCorpus() {
+    try {
+      await cache.swr(cache.key("stats", {}), (opts) => api.stats(opts), (d) => {
+        this.results.knows({ documents: d.documents });
+      });
+    } catch {
+      // An interface that cannot count what is indexed says nothing about it,
+      // which is what it said before this ran.
+    }
   }
 
   /** renderVerticals fills the rail with the verticals the corpus has. */
@@ -588,23 +621,33 @@ class App {
       // a question nobody is asking any more.
       if (this.currentKey !== k) return;
       painted = true;
-      clearTimeout(this.loadingTimer);
+      this.stopWaiting();
       this.results.revalidating(false);
       this.results.render(this.query, res);
       this.announce(res);
       this.guessNextPage(res);
+      if (!res.total) this.whyNothing(k);
     };
 
     // A first search has nothing on screen to keep, so it gets the skeleton
     // after the delay. A subsequent one keeps the previous answer visible and
     // shows a progress bar instead, because the previous answer is almost
     // always still the right one and dimming it says otherwise.
-    clearTimeout(this.loadingTimer);
+    this.stopWaiting();
     this.loadingTimer = setTimeout(() => {
       if (this.currentKey !== k) return;
       if (painted || showing) this.results.revalidating(true);
       else this.results.loading(this.query);
     }, LOADING_DELAY);
+
+    // Far later, and only for a request that is not coming back. The control it
+    // offers is only offered where there is nothing else on screen: a slow
+    // check behind an answer somebody is already reading is not something they
+    // asked for and not something they need a button for.
+    this.slowTimer = setTimeout(() => {
+      if (this.currentKey !== k || painted || showing) return;
+      this.results.waiting(true, () => this.stopSearch(k));
+    }, SLOW_DELAY);
 
     try {
       await cache.swr(k, (opts) => api.search(request, opts), paint);
@@ -616,8 +659,57 @@ class App {
       // and the banner already says the connection is gone.
       if (!painted && this.currentKey === k) this.fail(err);
     } finally {
-      clearTimeout(this.loadingTimer);
+      this.stopWaiting();
       if (this.currentKey === k) this.results.revalidating(false);
+    }
+  }
+
+  /** stopWaiting takes down both timers and anything either of them mounted. */
+  stopWaiting() {
+    clearTimeout(this.loadingTimer);
+    clearTimeout(this.slowTimer);
+    this.results.waiting(false);
+  }
+
+  /**
+   * stopSearch abandons a request somebody has given up on.
+   *
+   * The words stay in the box and the address bar does not move, so trying
+   * again is one key away and the link to this search is still the link to this
+   * search. What was cached is kept, because a request being abandoned says
+   * nothing about the answer that was already held.
+   */
+  stopSearch(k) {
+    cache.cancel(k);
+    this.stopWaiting();
+    this.results.revalidating(false);
+    this.results.cancelled(() => {
+      this.currentKey = "";
+      this.search();
+    });
+  }
+
+  /**
+   * whyNothing asks the one question the empty state cannot answer for itself.
+   *
+   * A zero that a filter caused is the most common way somebody decides a
+   * search product is broken, and the only way to know whether the filters
+   * caused it is to run the same words without them. It costs one request, in
+   * the one case where there is nothing on screen for it to slow down, and the
+   * state it adds a sentence to is already correct without it.
+   */
+  async whyNothing(k) {
+    const bare = urlState.clear(this.query);
+    const request = { ...urlState.params(bare, VERTICALS), limit: 1 };
+    if (urlState.same(request, { ...urlState.params(this.query, VERTICALS), limit: 1 })) return;
+    try {
+      const res = await cache.swr(cache.key("search", request), (opts) => api.search(request, opts), () => {});
+      if (this.currentKey !== k || !res) return;
+      this.results.knows({ removed: res.total || 0 });
+    } catch {
+      // A sentence that does not appear. The state reads correctly without it,
+      // and a second failure on a screen that is already empty is not worth
+      // reporting twice.
     }
   }
 
@@ -731,34 +823,30 @@ class App {
     // The one failure that empties the cache. Everything in it was read under a
     // session that is now over, and the next session is not entitled to it.
     if (unauthenticated) cache.clear();
+    if (!unauthenticated) {
+      replace(this.main, failed(err, () => this.sync()));
+      return;
+    }
     replace(
       this.main,
       h(
         "div",
         { class: "state state--error" },
-        h("span", { class: "state__icon" }, svg(icon(unauthenticated ? "people" : "close"), 40)),
-        h("p", { class: "state__title" }, unauthenticated ? "Not signed in" : "Something went wrong"),
+        h("span", { class: "state__icon" }, svg(icon("people"), 40)),
+        h("p", { class: "state__title" }, "Not signed in"),
         h(
           "p",
           { class: "state__body" },
-          unauthenticated
-            ? "This build authenticates from a request header. Pick who to search as and try again."
-            : err.message,
+          "This build authenticates from a request header. Pick who to search as and try again.",
         ),
         h(
           "div",
           { class: "state__actions" },
-          unauthenticated
-            ? h(
-                "button",
-                { class: "button button--primary", type: "button", onClick: () => this.switchIdentity() },
-                "Choose an identity",
-              )
-            : h(
-                "button",
-                { class: "button button--primary", type: "button", onClick: () => this.sync() },
-                "Try again",
-              ),
+          h(
+            "button",
+            { class: "button button--primary", type: "button", onClick: () => this.switchIdentity() },
+            "Choose an identity",
+          ),
         ),
       ),
     );

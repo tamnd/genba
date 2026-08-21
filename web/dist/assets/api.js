@@ -47,12 +47,20 @@ function headers() {
   return out;
 }
 
-/** ApiError carries the server's own error code, so a caller can branch on it. */
+/**
+ * ApiError carries the server's own error code, so a caller can branch on it.
+ *
+ * The request id is whatever names this request in a log, when something in
+ * front of the server names it. Nothing in this program sends one and a proxy
+ * in front of it may, and where there is one it is the only thread between what
+ * somebody saw on screen and the line that explains it.
+ */
 export class ApiError extends Error {
-  constructor(status, code, message) {
+  constructor(status, code, message, requestID = "") {
     super(message);
     this.status = status;
     this.code = code;
+    this.requestID = requestID;
   }
 }
 
@@ -91,7 +99,7 @@ async function get(path, params, opts = {}) {
       // A response that is not JSON is still a failure, and the status line
       // above is a better message than a parse error.
     }
-    throw new ApiError(res.status, code, message);
+    throw new ApiError(res.status, code, message, res.headers.get("X-Request-Id") || "");
   }
   return { modified: true, etag: res.headers.get("ETag") || "", data: await res.json() };
 }
@@ -168,7 +176,9 @@ async function events(onEvent, signal) {
  */
 async function bytes(path, opts = {}) {
   const res = await fetch(BASE + path, { headers: headers(), signal: opts.signal });
-  if (!res.ok) throw new ApiError(res.status, "error", `the server returned ${res.status}`);
+  if (!res.ok) {
+    throw new ApiError(res.status, "error", `the server returned ${res.status}`, res.headers.get("X-Request-Id") || "");
+  }
   const dims = (res.headers.get("X-Content-Dimensions") || "").split("x");
   return {
     blob: await res.blob(),

@@ -2110,6 +2110,55 @@ h6.prose__h {
   margin-top: var(--space-2);
 }
 
+/* The failure under a heading the screen around it has already written. */
+.state__detail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.state__body--quiet {
+  color: var(--text-muted);
+  font-size: var(--text-small);
+}
+
+/* The filters that are the reason a search came back with nothing, offered
+   where somebody is looking rather than only above the list they are not. */
+.state__filters {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+/* The first screen anybody sees, which is a page rather than a remark. */
+.state--first .state__title {
+  font-size: var(--text-display);
+}
+
+.state__command {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  text-align: left;
+}
+
+/* A remark about a wait, under the shape of the answer that has not arrived. */
+.state__slow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-4);
+  color: var(--text-secondary);
+}
+
 /* A line of secondary information that is not part of a named component. */
 .meta {
   color: var(--text-secondary);
@@ -2223,7 +2272,6 @@ h6.prose__h {
   display: grid;
   grid-template-columns: 56px minmax(0, 1fr);
   column-gap: var(--space-4);
-  row-gap: var(--space-2);
   align-items: start;
   padding: var(--row-padding-block) var(--space-4);
   border-bottom: 1px solid var(--border);
@@ -2239,6 +2287,30 @@ h6.prose__h {
   width: 56px;
   height: 56px;
   border-radius: var(--radius-md);
+}
+
+/* Every bar is one part of the row it stands in for, measured in the tokens
+   that part is set in rather than in numbers of its own. A title is one line
+   of body text, the meta line is one line of small text, and the snippet is
+   the two lines a snippet is clamped to, so the skeleton and the row it
+   becomes are the same height and the list does not jump when the answer
+   arrives. */
+.skeleton-result__title {
+  height: var(--leading-body);
+  margin-bottom: var(--space-1);
+}
+
+.skeleton-result__meta {
+  height: var(--leading-small);
+  margin-bottom: var(--space-1);
+}
+
+.skeleton-result__line {
+  height: calc((var(--leading-small) * 2 - var(--space-1)) / 2);
+}
+
+.skeleton-result__line + .skeleton-result__line {
+  margin-top: var(--space-1);
 }
 
 [data-density="compact"] .skeleton-result {

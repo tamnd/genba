@@ -161,10 +161,15 @@ async function endpoint(port, exited, said) {
  *
  * Flat mode, so a message for the tab carries its session id rather than being
  * wrapped in an envelope for the browser to forward.
+ *
+ * What comes back is a function to send a command with, carrying an on for the
+ * events the tab sends unasked. Only one script needs those, and it is the one
+ * that holds a request open to see what the interface does while it waits.
  */
 async function attach(url) {
   const socket = new WebSocket(url);
   const pending = new Map();
+  const listeners = new Map();
   let next = 0;
 
   await new Promise((resolve, reject) => {
@@ -176,6 +181,11 @@ async function attach(url) {
 
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(event.data);
+    // An event has a method and no id, and is for whoever asked for it.
+    if (message.method) {
+      for (const handler of listeners.get(message.method) || []) handler(message.params || {});
+      return;
+    }
     const waiting = pending.get(message.id);
     if (!waiting) return;
     pending.delete(message.id);
@@ -193,7 +203,11 @@ async function attach(url) {
   const { targetId } = await send("Target.createTarget", { url: "about:blank" });
   const { sessionId } = await send("Target.attachToTarget", { targetId, flatten: true });
   await send("Page.bringToFront", {}, sessionId);
-  return (method, params) => send(method, params, sessionId);
+  const session = (method, params) => send(method, params, sessionId);
+  session.on = (method, handler) => {
+    listeners.set(method, (listeners.get(method) || []).concat(handler));
+  };
+  return session;
 }
 
 /** narrow tells the page it is on a small screen, media queries and all. */

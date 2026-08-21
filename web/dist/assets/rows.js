@@ -96,6 +96,11 @@ export class RowList {
    * The placeholders go inside the list and carry the role its children are
    * supposed to carry, because a placeholder that is not an item makes the list
    * itself invalid for as long as it is loading.
+   *
+   * Each bar stands for one part of a row and takes its height from that part's
+   * own type scale, so a screen of these is exactly as tall as the screen of
+   * results that replaces it. Only the widths are written here, because a width
+   * is the one thing about a placeholder that is arbitrary.
    */
   skeleton(n = 6) {
     this.render([]);
@@ -106,10 +111,10 @@ export class RowList {
           "div",
           { class: "skeleton-result", role: "listitem" },
           h("div", { class: "skeleton skeleton-result__tile" }),
-          h("div", { class: "skeleton", style: { width: "60%", height: "20px" } }),
-          h("div", { class: "skeleton", style: { width: "40%", height: "14px" } }),
-          h("div", { class: "skeleton", style: { width: "100%", height: "14px" } }),
-          h("div", { class: "skeleton", style: { width: "82%", height: "14px" } }),
+          h("div", { class: "skeleton skeleton-result__title", style: { width: "60%" } }),
+          h("div", { class: "skeleton skeleton-result__meta", style: { width: "40%" } }),
+          h("div", { class: "skeleton skeleton-result__line" }),
+          h("div", { class: "skeleton skeleton-result__line", style: { width: "82%" } }),
         ),
       ),
     );

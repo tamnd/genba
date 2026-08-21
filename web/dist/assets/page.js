@@ -26,6 +26,7 @@ import {
 } from "./format.js";
 import { body as renderBody, shapeOf, detailOf } from "./content.js";
 import { reveal, toLine } from "./marks.js";
+import { notPermitted, failedBody, failureTitle, NOT_AVAILABLE } from "./states.js";
 import { documentPath } from "./state.js";
 
 export class Page {
@@ -33,6 +34,7 @@ export class Page {
     this.onBack = onBack;
     this.onSay = onSay || (() => {});
     this.currentKey = "";
+    this.currentId = "";
     this.query = "";
 
     this.back = h("div", { class: "page__back" });
@@ -53,6 +55,7 @@ export class Page {
 
   async show(id, query = "") {
     this.query = query;
+    this.currentId = id;
     const k = cache.key("document", { id });
     if (this.currentKey === k) return;
     this.currentKey = k;
@@ -186,20 +189,26 @@ export class Page {
    */
   renderError(err) {
     const missing = err.status === 404 || err.status === 403;
-    replace(this.title, missing ? "Not available" : "Could not load this document");
+    replace(this.title, missing ? NOT_AVAILABLE : failureTitle(err));
     document.title = "genba";
     replace(this.meta);
     this.content.dataset.shape = "text";
+    // A way out of both. Somebody who followed a link to a document they cannot
+    // read is somewhere they did not choose to be, and an apology with no exit
+    // is a dead end with good typography.
     replace(
       this.content,
-      h(
-        "p",
-        { class: "preview__empty" },
-        missing ? "This document no longer exists, or you do not have access to it." : err.message,
-      ),
+      missing ? notPermitted(this.onBack()) : failedBody(err, () => this.retry()),
     );
     replace(this.foot);
     this.title.focus();
+  }
+
+  /** retry reads the document again, as if the address had just been opened. */
+  retry() {
+    const id = this.currentId;
+    this.currentKey = "";
+    if (id) this.show(id, this.query);
   }
 }
 

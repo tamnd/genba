@@ -170,6 +170,23 @@ export class Store {
     }
   }
 
+  /**
+   * cancel abandons the request for one key, because somebody asked it to stop.
+   *
+   * Nothing held is dropped. A request being abandoned says nothing about the
+   * answer that was already cached, and the next thing to ask for this key
+   * should get that answer rather than a fresh wait. Anything joined to the
+   * same request stops with it, which is single flight working as intended:
+   * there was only ever one request and this is it.
+   */
+  cancel(k) {
+    const running = this.running.get(k);
+    if (!running) return false;
+    running.controller.abort();
+    this.running.delete(k);
+    return true;
+  }
+
   /** clear drops everything and abandons what is in flight. */
   clear() {
     this.entries.clear();
