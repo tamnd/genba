@@ -26,13 +26,7 @@ const CONFIRM = 1600;
  * the person can select it themselves.
  */
 export async function copies(button, text, say = () => {}) {
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    say(`Could not copy ${text}`);
-    return;
-  }
-  say(`Copied ${text}`);
+  if (!(await copy(text, say))) return;
 
   const held = Array.from(button.childNodes);
   const labelled = button.hasAttribute("aria-label");
@@ -46,4 +40,22 @@ export async function copies(button, text, say = () => {}) {
     replace(button, held);
     if (labelled) button.setAttribute("aria-label", label);
   }, CONFIRM);
+}
+
+/**
+ * copy is the same write without a control to change.
+ *
+ * The keyboard shortcut for copying a link has no button under it, so the
+ * sentence in the live region is the whole of the feedback. It reports whether
+ * it worked so that a caller with a control can decide what to draw.
+ */
+export async function copy(text, say = () => {}) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    say(`Could not copy ${text}`);
+    return false;
+  }
+  say(`Copied ${text}`);
+  return true;
 }

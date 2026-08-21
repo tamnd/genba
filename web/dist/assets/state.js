@@ -57,9 +57,25 @@ export function read(search = location.search) {
     // has to stop happening the moment somebody says they want the list, so the
     // absence of an answer and the answer list cannot be the same value.
     view: params.get("view") === "grid" || params.get("view") === "list" ? params.get("view") : "",
+    // Which row the eye is on. Minus one is no row, which is what a search
+    // starts as and what anything typed into the box goes back to.
+    cursor: cursorOf(params.get("cursor")),
   };
   for (const key of LIST_KEYS) query[key] = params.getAll(key).filter(Boolean);
   return query;
+}
+
+/**
+ * cursorOf reads the row index out of the address bar.
+ *
+ * Anything that is not a whole number at or above zero is no cursor at all,
+ * because this parameter is as editable as the rest of the URL and a cursor of
+ * "four" or of minus six would otherwise reach the roving tabindex.
+ */
+function cursorOf(value) {
+  if (value === null) return -1;
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 0 ? n : -1;
 }
 
 /** write turns a query back into a query string, leaving out the defaults. */
@@ -73,6 +89,7 @@ export function write(query) {
   if (query.offset) params.set("offset", String(query.offset));
   if (query.tab && query.tab !== "all") params.set("tab", query.tab);
   if (query.view) params.set("view", query.view);
+  if (query.cursor >= 0) params.set("cursor", String(query.cursor));
   if (query.open) params.set("open", query.open);
   // Rooted rather than relative, because a search reached from a document page
   // is a search and not a document with a query string stuck on the end of it.

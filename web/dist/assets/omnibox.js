@@ -27,6 +27,10 @@ export class Omnibox {
     this.active = -1;
     this.timer = null;
     this.latest = "";
+    // What the live region last said, so that eight suggestions followed by
+    // eight more suggestions is announced once. A region that repeats itself on
+    // every keystroke is a region people turn off.
+    this.said = "";
 
     this.input = h("input", {
       class: "omnibox__input",
@@ -54,6 +58,17 @@ export class Omnibox {
       hidden: true,
     });
 
+    // A list that appears under a text field is invisible to a screen reader
+    // unless something says so. The combobox attributes describe the highlight
+    // once somebody arrows onto it, and this is the sentence that tells them
+    // there is anything to arrow onto in the first place.
+    this.status = h("div", {
+      class: "visually-hidden",
+      role: "status",
+      "aria-live": "polite",
+      "aria-atomic": "true",
+    });
+
     this.el = h(
       "div",
       { class: "omnibox", role: "search" },
@@ -65,6 +80,7 @@ export class Omnibox {
         h("kbd", { class: "kbd" }, shortcutLabel()),
       ),
       this.list,
+      this.status,
     );
   }
 
@@ -147,6 +163,14 @@ export class Omnibox {
     );
     this.list.hidden = false;
     this.input.setAttribute("aria-expanded", "true");
+    this.announce(`${items.length} ${items.length === 1 ? "suggestion" : "suggestions"}`);
+  }
+
+  /** announce says one thing in the polite region, and never says it twice. */
+  announce(text) {
+    if (this.said === text) return;
+    this.said = text;
+    replace(this.status, text);
   }
 
   close() {
@@ -154,6 +178,10 @@ export class Omnibox {
     this.input.setAttribute("aria-expanded", "false");
     this.input.removeAttribute("aria-activedescendant");
     this.active = -1;
+    // Emptied rather than left saying eight suggestions after the list has
+    // gone, and reset so that the same count is announced again next time.
+    this.said = "";
+    replace(this.status);
   }
 
   highlight(i) {
@@ -210,12 +238,26 @@ export class Omnibox {
         this.close();
         this.onSearch(this.input.value);
         break;
+      // Escape in three steps, which is the order every address bar uses. The
+      // reference implementations of this pattern clear the text on the first
+      // press, and losing what somebody typed because they dismissed a dropdown
+      // is how people learn not to use the keyboard here.
       case "Escape":
         if (open) {
           e.preventDefault();
           e.stopPropagation();
           this.close();
+          return;
         }
+        if (this.input.value) {
+          e.preventDefault();
+          e.stopPropagation();
+          this.input.value = "";
+          this.announce("Search cleared");
+          return;
+        }
+        // Empty and closed, so this one belongs to the shell, which blurs the
+        // field and closes whatever else is open.
         break;
       default:
         break;

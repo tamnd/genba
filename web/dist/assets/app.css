@@ -724,6 +724,16 @@ time {
   border-left-color: var(--focus-ring);
 }
 
+/* A row is a focus target, because the list is one tab stop and the cursor
+   carries focus with it. The ring is drawn inside the row rather than around
+   it: a full width outline offset outwards is clipped on both sides by the
+   scroller, which reads as a broken line rather than as a focus ring. */
+.result:focus-visible,
+.cell:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
 /*
  * The tile is the only part of a row that is not words.
  *

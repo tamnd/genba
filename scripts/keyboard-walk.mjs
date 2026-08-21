@@ -236,6 +236,131 @@ async function walk() {
     })`,
   );
 
+  // The keyboard on its own. Everything above uses it in passing; this is the
+  // part an audit finds and the part somebody using it all day notices.
+  await visit(session, `${BASE}/?q=cache`, "document.querySelectorAll('.result').length > 0");
+
+  await check(
+    session,
+    "the result list is one tab stop rather than twenty",
+    `(() => {
+      const rows = [...document.querySelectorAll('.results__list [data-index]')];
+      const stops = rows.filter((r) => r.tabIndex === 0);
+      const inside = [...document.querySelectorAll('.results__list a[href], .results__list button')];
+      return rows.length > 1 && stops.length === 1 && stops[0] === rows[0] &&
+        inside.length > 0 && inside.every((el) => el.tabIndex === -1);
+    })()`,
+  );
+
+  await press(session, "j", "KeyJ", 74);
+  await check(
+    session,
+    "the cursor takes focus with it and writes itself into the URL",
+    `document.activeElement.dataset.index === '0' &&
+      document.activeElement.dataset.active === 'true' &&
+      new URLSearchParams(location.search).get('cursor') === '0'`,
+  );
+
+  await press(session, "End", "End", 35);
+  await check(
+    session,
+    "End moves the cursor to the last result on the page",
+    `(() => {
+      const rows = [...document.querySelectorAll('.results__list [data-index]')];
+      const last = String(rows.length - 1);
+      return document.activeElement.dataset.index === last &&
+        new URLSearchParams(location.search).get('cursor') === last;
+    })()`,
+  );
+
+  await press(session, "Home", "Home", 36);
+  await check(session, "Home moves it back to the first", "document.activeElement.dataset.index === '0'");
+
+  await press(session, "Tab", "Tab", 9);
+  await check(
+    session,
+    "Tab leaves the list in one press",
+    "!document.querySelector('.results__list').contains(document.activeElement)",
+  );
+
+  // A row named in the URL is the row the page opens on, which is what makes
+  // the cursor survive a repaint and a link to a particular result work.
+  await visit(session, `${BASE}/?q=cache&cursor=2`, "document.querySelectorAll('.result').length > 2");
+  await check(
+    session,
+    "a cursor in the URL is where the page opens",
+    "document.querySelector('.result[data-active=\"true\"]').dataset.index === '2'",
+  );
+
+  const opened = await evaluate(session, "document.querySelector('.result__title').getAttribute('href')");
+  await visit(session, BASE + opened, "document.querySelector('.page__title').textContent.trim().length > 0");
+  await evaluate(session, "history.back()");
+  await settle(session, "document.querySelectorAll('.result').length > 2");
+  await check(
+    session,
+    "back from a document returns to the row the eye was on",
+    "document.querySelector('.result[data-active=\"true\"]').dataset.index === '2'",
+  );
+
+  // The omnibox as a screen reader meets it. axe cannot type, so the list is
+  // opened here and the relationships it would check are asserted directly.
+  await press(session, "/", "Slash", 191);
+  await type(session, "cache");
+  await settle(session, "document.querySelectorAll('.suggestion').length > 0");
+  await check(
+    session,
+    "an open suggestion list is a combobox that describes itself",
+    `(() => {
+      const input = document.querySelector('.omnibox__input');
+      const list = document.getElementById(input.getAttribute('aria-controls'));
+      const options = [...list.querySelectorAll('[role="option"]')];
+      return input.getAttribute('role') === 'combobox' &&
+        input.getAttribute('aria-expanded') === 'true' &&
+        list.getAttribute('role') === 'listbox' &&
+        Boolean(list.getAttribute('aria-label')) &&
+        options.length > 0 && options.every((o) => o.id);
+    })()`,
+  );
+  await check(
+    session,
+    "the suggestion count is announced politely",
+    `(() => {
+      const region = document.querySelector('.omnibox [role="status"]');
+      const options = document.querySelectorAll('.omnibox [role="option"]').length;
+      return region.getAttribute('aria-live') === 'polite' &&
+        region.textContent.trim() === options + (options === 1 ? ' suggestion' : ' suggestions');
+    })()`,
+  );
+
+  await press(session, "ArrowDown", "ArrowDown", 40);
+  await check(
+    session,
+    "the arrow keys move a highlight the input points at",
+    `(() => {
+      const input = document.querySelector('.omnibox__input');
+      const id = input.getAttribute('aria-activedescendant');
+      const option = id && document.getElementById(id);
+      return Boolean(option) && option.getAttribute('aria-selected') === 'true' &&
+        document.activeElement === input;
+    })()`,
+  );
+
+  await press(session, "Escape", "Escape", 27);
+  await check(
+    session,
+    "Escape closes the list and keeps what was typed",
+    `document.querySelector('.suggestions').hidden &&
+      document.querySelector('.omnibox__input').value === 'cache' &&
+      document.querySelector('.omnibox__input').getAttribute('aria-expanded') === 'false'`,
+  );
+
+  await press(session, "Escape", "Escape", 27);
+  await check(
+    session,
+    "a second Escape clears the field",
+    "document.querySelector('.omnibox__input').value === ''",
+  );
+
   // The grid. The pictures behind this query are written into the corpus by the
   // gate before the server starts, because the repository itself holds none.
   await visit(session, `${BASE}/?q=gatepix`, "document.querySelectorAll('.cell').length > 0");
@@ -456,6 +581,14 @@ async function press(session, key, code, keyCode) {
   }
   // One frame for the handler to run and the paint to land.
   await sleep(150);
+}
+
+/** type presses one key per character, which is how text reaches an input. */
+async function type(session, text) {
+  for (const ch of text) {
+    const upper = ch.toUpperCase();
+    await press(session, ch, `Key${upper}`, upper.charCodeAt(0));
+  }
 }
 
 /**
