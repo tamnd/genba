@@ -5,8 +5,8 @@
 // nothing is a copy somebody does twice, and a spoken one, because a tick
 // appearing is not something a screen reader announces.
 
-import { replace, svg } from "./dom.js";
-import { icon } from "./format.js";
+import { replace, svg } from "genba/dom.js";
+import { icon } from "genba/format.js";
 
 // How long the tick stays. Long enough to be seen after the eye has moved back
 // to the button, short enough that the control is itself again before anybody

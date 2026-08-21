@@ -92,7 +92,7 @@ async function run(session) {
     session,
     "every media type in the corpus lands on a renderer that suits it",
     expr(`
-      const { shapeOf } = await import('/assets/content.js');
+      const { shapeOf } = await import('genba/content.js');
       const of = (media, id) => shapeOf({ media_type: media, id: id || 'repo:x' });
       return of('image/png') === 'image' &&
         of('audio/mpeg') === 'media' && of('video/mp4') === 'media' &&
@@ -110,7 +110,7 @@ async function run(session) {
     session,
     "nothing that can run survives the HTML renderer",
     expr(`
-      const { render } = await import('/assets/html.js');
+      const { render } = await import('genba/html.js');
       const box = document.createElement('div');
       box.appendChild(render(${JSON.stringify(HOSTILE)}));
       const has = (sel) => Boolean(box.querySelector(sel));
@@ -126,7 +126,7 @@ async function run(session) {
     session,
     "everything in that page that was a document survives it",
     expr(`
-      const { render } = await import('/assets/html.js');
+      const { render } = await import('genba/html.js');
       const box = document.createElement('div');
       box.appendChild(render(${JSON.stringify(HOSTILE)}));
       const link = box.querySelector('a[href="https://example.com/detail"]');
@@ -146,7 +146,7 @@ async function run(session) {
     session,
     "a PDF is prose with its length beside it rather than a wall of text",
     expr(`
-      const { body, detailOf } = await import('/assets/content.js');
+      const { body, detailOf } = await import('genba/content.js');
       const out = body({
         id: 'repo:report.pdf',
         media_type: 'application/pdf',
@@ -166,7 +166,7 @@ async function run(session) {
     session,
     "a notebook is prose and code cells with the outputs it produced",
     expr(`
-      const { body } = await import('/assets/content.js');
+      const { body } = await import('genba/content.js');
       const out = body({
         id: 'repo:analysis.ipynb',
         media_type: 'application/x-ipynb+json',
@@ -187,7 +187,7 @@ async function run(session) {
     session,
     "a notebook that is not valid JSON falls back to being shown as it is",
     expr(`
-      const { body } = await import('/assets/content.js');
+      const { body } = await import('genba/content.js');
       const out = body({ id: 'repo:broken.ipynb', media_type: 'application/x-ipynb+json', body: '{oops' });
       return Boolean(out.querySelector('.plain')) && out.textContent.includes('{oops');
     `),
@@ -197,7 +197,7 @@ async function run(session) {
     session,
     "a recording is its transcript, with a player that has not loaded anything yet",
     expr(`
-      const { body } = await import('/assets/content.js');
+      const { body } = await import('genba/content.js');
       const out = body({
         id: 'repo:standup.mp3',
         media_type: 'audio/mpeg',
@@ -216,7 +216,7 @@ async function run(session) {
     session,
     "a recording with nothing transcribed says so rather than looking empty",
     expr(`
-      const { body } = await import('/assets/content.js');
+      const { body } = await import('genba/content.js');
       const out = body({ id: 'repo:clip.mp4', media_type: 'video/mp4', body: '' });
       return out.querySelector('.preview__empty').textContent.includes('Nothing was transcribed') &&
         out.querySelector('.media__bar button').textContent === 'Play the video';
@@ -227,7 +227,7 @@ async function run(session) {
     session,
     "code is highlighted with its language named, and everything else is shown plainly",
     expr(`
-      const { body } = await import('/assets/content.js');
+      const { body } = await import('genba/content.js');
       const code = body({ id: 'repo:main.go', media_type: 'text/x-go', body: 'package main\\n' });
       const plain = body({ id: 'repo:data.bin', media_type: 'application/octet-stream', body: 'raw\\nbytes' });
       return code.querySelector('.code__lang').textContent === 'go' &&
@@ -240,7 +240,7 @@ async function run(session) {
     session,
     "a long table is folded to a screenful in a region the keyboard can scroll",
     expr(`
-      const { body } = await import('/assets/content.js');
+      const { body } = await import('genba/content.js');
       const out = body({ id: 'repo:notes.md', media_type: 'text/markdown', body: ${JSON.stringify(TABLE)} });
       const region = out.querySelector('.prose__scroll');
       const shown = () => [...out.querySelectorAll('tbody tr')].filter((r) => !r.hidden).length;
@@ -255,7 +255,7 @@ async function run(session) {
     session,
     "a file shows a number on every line and each one is a link to that line",
     expr(`
-      const { body } = await import('/assets/content.js');
+      const { body } = await import('genba/content.js');
       const out = body({ id: 'repo:main.go', media_type: 'text/x-go', body: 'package main\\n\\nfunc main() {}\\n' });
       const numbers = [...out.querySelectorAll('.line__no')];
       return numbers.length === 4 &&
@@ -273,7 +273,7 @@ async function run(session) {
     session,
     "a comment that runs over several lines is one comment on all of them",
     expr(`
-      const { rows } = await import('/assets/highlight.js');
+      const { rows } = await import('genba/highlight.js');
       const lines = rows('/*\\n one\\n two\\n*/\\nfunc main() {}', 'go');
       return lines.length === 5 &&
         lines.slice(0, 4).every((line) => line.querySelector('.tok--comment')) &&
@@ -285,8 +285,8 @@ async function run(session) {
     session,
     "an address that names a line opens the file at it and marks which one",
     expr(`
-      const { body } = await import('/assets/content.js');
-      const { reveal } = await import('/assets/marks.js');
+      const { body } = await import('genba/content.js');
+      const { reveal } = await import('genba/marks.js');
       const source = Array.from({ length: 60 }, (_, i) => 'line ' + i).join('\\n');
       const out = body({ id: 'repo:main.go', media_type: 'text/x-go', body: source });
       const at = reveal(out, '#L42');
@@ -302,8 +302,8 @@ async function run(session) {
     session,
     "a line address that arrives on an open file moves to that line and no further",
     expr(`
-      const { body } = await import('/assets/content.js');
-      const { reveal, toLine } = await import('/assets/marks.js');
+      const { body } = await import('genba/content.js');
+      const { reveal, toLine } = await import('genba/marks.js');
       const source = Array.from({ length: 60 }, (_, i) => 'line ' + i).join('\\n');
       const out = body({ id: 'repo:main.go', media_type: 'text/x-go', body: source });
       reveal(out, '#L42');
@@ -319,8 +319,8 @@ async function run(session) {
     session,
     "a document opened from a search opens at the first of the words somebody typed",
     expr(`
-      const { body } = await import('/assets/content.js');
-      const { reveal, terms } = await import('/assets/marks.js');
+      const { body } = await import('genba/content.js');
+      const { reveal, terms } = await import('genba/marks.js');
       const out = body(
         {
           id: 'repo:notes.md',
@@ -342,7 +342,7 @@ async function run(session) {
     session,
     "a search for a number marks the code and not the line numbers",
     expr(`
-      const { body } = await import('/assets/content.js');
+      const { body } = await import('genba/content.js');
       const lines = Array.from({ length: 60 }, () => 'const x = 1');
       lines[2] = 'const limit = 42';
       const out = body(
@@ -359,7 +359,7 @@ async function run(session) {
     session,
     "a body the extractor could not read to the end says which half is missing",
     expr(`
-      const { body } = await import('/assets/content.js');
+      const { body } = await import('genba/content.js');
       const out = body({
         id: 'repo:big.pdf',
         media_type: 'application/pdf',

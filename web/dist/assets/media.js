@@ -11,9 +11,9 @@
 // means the whole file. Starting that automatically would spend two hundred
 // megabytes to show somebody a page they opened to read one sentence of.
 
-import { h, replace } from "./dom.js";
-import { api } from "./api.js";
-import { bytes as formatBytes } from "./format.js";
+import { h, replace } from "genba/dom.js";
+import { api } from "genba/api.js";
+import { bytes as formatBytes } from "genba/format.js";
 
 /**
  * player is the control that fetches a recording and plays it.

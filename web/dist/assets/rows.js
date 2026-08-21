@@ -12,11 +12,11 @@
 // query in here, no paging, no facets and no empty state, because those are
 // different questions on every screen that uses this one.
 
-import { h, replace, svg } from "./dom.js";
-import { kindIcon, sourceColor, label, when, exact, icon, followable, copyable } from "./format.js";
-import { tile, cover } from "./content.js";
-import { copies } from "./clipboard.js";
-import * as urlState from "./state.js";
+import { h, replace, svg } from "genba/dom.js";
+import { kindIcon, sourceColor, label, when, exact, icon, followable, copyable } from "genba/format.js";
+import { tile, cover } from "genba/content.js";
+import { copies } from "genba/clipboard.js";
+import * as urlState from "genba/state.js";
 
 /**
  * asked is the words in the address bar.

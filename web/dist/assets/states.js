@@ -11,9 +11,9 @@
 // not read are the same words, and the only way to keep them the same words is
 // for there to be one copy of them.
 
-import { h, svg } from "./dom.js";
-import { icon, label, number } from "./format.js";
-import * as urlState from "./state.js";
+import { h, svg } from "genba/dom.js";
+import { icon, label, number } from "genba/format.js";
+import * as urlState from "genba/state.js";
 
 /**
  * NO_ACCESS is what a 403 and a 404 on a document both say.

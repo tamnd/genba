@@ -7,15 +7,15 @@
 // It is a modal dialog as far as assistive technology is concerned: focus goes
 // in, Tab stays inside, Escape closes it and focus goes back where it was.
 
-import { h, replace, svg } from "./dom.js";
-import { api } from "./api.js";
-import { cache } from "./cache.js";
-import { copies } from "./clipboard.js";
-import { icon, label, sourceColor, when, exact, followable, copyable } from "./format.js";
-import { body as renderBody, shapeOf, detailOf } from "./content.js";
-import { reveal } from "./marks.js";
-import { NOT_AVAILABLE, NO_ACCESS } from "./states.js";
-import { documentPath } from "./state.js";
+import { h, replace, svg } from "genba/dom.js";
+import { api } from "genba/api.js";
+import { cache } from "genba/cache.js";
+import { copies } from "genba/clipboard.js";
+import { icon, label, sourceColor, when, exact, followable, copyable } from "genba/format.js";
+import { body as renderBody, shapeOf, detailOf } from "genba/content.js";
+import { reveal } from "genba/marks.js";
+import { NOT_AVAILABLE, NO_ACCESS } from "genba/states.js";
+import { documentPath } from "genba/state.js";
 
 export class Drawer {
   constructor({ onClose, onSay }) {

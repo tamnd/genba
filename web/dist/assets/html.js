@@ -18,9 +18,9 @@
 // second sanitiser sitting beside this one, and two sanitisers that disagree is
 // a worse position than one that is tested everywhere.
 
-import { h } from "./dom.js";
-import { codeBlock, safeURL } from "./markdown.js";
-import { frame } from "./table.js";
+import { h } from "genba/dom.js";
+import { codeBlock, safeURL } from "genba/markdown.js";
+import { frame } from "genba/table.js";
 
 // The elements that survive, and what each becomes. Presentational tags are
 // folded into the one element that means what they meant, so b and strong are

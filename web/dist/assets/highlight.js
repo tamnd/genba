@@ -10,7 +10,7 @@
 // correct answer rather than a failure. Highlighting the wrong thing is worse
 // than highlighting nothing.
 
-import { h } from "./dom.js";
+import { h } from "genba/dom.js";
 
 // Blocks under this many characters are highlighted as they are built. Anything
 // longer waits until it is near the viewport, so a document holding a thousand

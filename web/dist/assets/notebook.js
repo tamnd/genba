@@ -12,8 +12,8 @@
 // notebook emitted is a preview that renders whatever anybody put in a
 // notebook.
 
-import { h } from "./dom.js";
-import { render as markdown, codeBlock } from "./markdown.js";
+import { h } from "genba/dom.js";
+import { render as markdown, codeBlock } from "genba/markdown.js";
 
 // Image outputs that are drawn. They are decoded by the browser as pictures and
 // cannot be anything else, which is not true of the fifth entry every notebook

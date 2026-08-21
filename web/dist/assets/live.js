@@ -11,7 +11,7 @@
 // arrives while nobody is looking marks the cache stale, and the refresh
 // happens when somebody looks.
 
-import { api } from "./api.js";
+import { api } from "genba/api.js";
 
 // INTERVAL is the ceiling on how stale a visible page can get with nothing
 // else happening. Sixty seconds because that is the point at which somebody

@@ -11,10 +11,10 @@
 // containing the text of a script tag. That is the whole security argument for
 // this file and it is the reason it is hand written rather than pulled in.
 
-import { h } from "./dom.js";
-import { highlight, rows } from "./highlight.js";
-import { current } from "./marks.js";
-import { frame } from "./table.js";
+import { h } from "genba/dom.js";
+import { highlight, rows } from "genba/highlight.js";
+import { current } from "genba/marks.js";
+import { frame } from "genba/table.js";
 
 /**
  * render turns markdown into nodes.

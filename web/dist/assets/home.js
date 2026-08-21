@@ -7,13 +7,13 @@
 // page uses, so nothing here can show a document the person could not have found
 // by searching for it.
 
-import { h, replace } from "./dom.js";
-import { api } from "./api.js";
-import { cache } from "./cache.js";
-import { queries } from "./queries.js";
-import { LIMIT as RECENT_LIMIT } from "./recent.js";
-import { label, sourceColor, when, number, initials } from "./format.js";
-import { firstRun } from "./states.js";
+import { h, replace } from "genba/dom.js";
+import { api } from "genba/api.js";
+import { cache } from "genba/cache.js";
+import { queries } from "genba/queries.js";
+import { LIMIT as RECENT_LIMIT } from "genba/recent.js";
+import { label, sourceColor, when, number, initials } from "genba/format.js";
+import { firstRun } from "genba/states.js";
 
 // How many rows a panel on this screen carries. Home is a summary and the whole
 // answer is one click away, so six is a panel somebody reads rather than one
