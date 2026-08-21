@@ -4,8 +4,9 @@
 // the time somebody wants to check whether this is the right document, and the
 // drawer answers that without leaving the results.
 //
-// It is a modal dialog as far as assistive technology is concerned: focus goes
-// in, Tab stays inside, Escape closes it and focus goes back where it was.
+// Escape closes it and focus goes back to the row it was opened from. Whether
+// it is modal depends on how wide the window is, which is what [Drawer.modal]
+// is about.
 
 import { h, replace, svg } from "genba/dom.js";
 import { api } from "genba/api.js";
@@ -17,6 +18,11 @@ import { reveal } from "genba/marks.js";
 import { NOT_AVAILABLE, NO_ACCESS } from "genba/states.js";
 import { documentPath } from "genba/state.js";
 
+// The width at which the drawer stops being a panel beside the list and becomes
+// the whole window. It is the drawer's own width from app.css, and it is the
+// line between a dialog that has to trap focus and one that must not.
+const COVERS = "(max-width: 720px)";
+
 export class Drawer {
   constructor({ onClose, onSay }) {
     this.onClose = onClose;
@@ -24,11 +30,44 @@ export class Drawer {
     this.returnTo = null;
     this.currentKey = "";
     this.query = "";
+    // The marked words in the body, and which of them is the current one.
+    this.marks = [];
+    this.at = -1;
+    // Whether focus has been put where this document wants it yet.
+    this.landed = false;
 
-    this.title = h("h2", { class: "drawer__title", id: "drawer-title" });
+    this.title = h("h2", { class: "drawer__title", id: "drawer-title", tabindex: "-1" });
     this.meta = h("div", { class: "drawer__meta" });
     this.body = h("div", { class: "drawer__body" });
     this.foot = h("div", { class: "drawer__foot" });
+    this.count = h("span", { class: "matches__count" });
+    this.matches = h(
+      "div",
+      { class: "matches", hidden: true },
+      this.count,
+      h(
+        "button",
+        {
+          class: "icon-button",
+          type: "button",
+          title: "Previous match (shift+N)",
+          "aria-label": "Previous match",
+          onClick: () => this.toMatch(-1),
+        },
+        svg(icon("arrow-up"), 16),
+      ),
+      h(
+        "button",
+        {
+          class: "icon-button",
+          type: "button",
+          title: "Next match (n)",
+          "aria-label": "Next match",
+          onClick: () => this.toMatch(1),
+        },
+        svg(icon("arrow-down"), 16),
+      ),
+    );
 
     this.scrim = h("div", { class: "scrim", hidden: true, onClick: () => this.close() });
     this.el = h(
@@ -36,8 +75,12 @@ export class Drawer {
       {
         class: "drawer",
         role: "dialog",
-        "aria-modal": "true",
+        "aria-modal": "false",
         "aria-labelledby": "drawer-title",
+        // So that focus can be taken the moment it opens, before the document
+        // it is opening has arrived. Without it the first Tab out of a loading
+        // preview lands on the next row behind it.
+        tabindex: "-1",
         hidden: true,
         onKeydown: (e) => this.trap(e),
       },
@@ -45,6 +88,7 @@ export class Drawer {
         "div",
         { class: "drawer__head" },
         h("div", { class: "drawer__heading" }, this.meta, this.title),
+        this.matches,
         h(
           "button",
           { class: "icon-button", type: "button", "aria-label": "Close preview", onClick: () => this.close() },
@@ -54,6 +98,13 @@ export class Drawer {
       this.body,
       this.foot,
     );
+
+    // A window resized across the breakpoint while the preview is open changes
+    // the answer, and a drawer that claims to be modal while a list is visible
+    // beside it is the case this exists to avoid.
+    window.matchMedia(COVERS).addEventListener("change", () => {
+      if (this.open) this.modal();
+    });
   }
 
   get open() {
@@ -62,10 +113,16 @@ export class Drawer {
 
   async show(id, query = "") {
     this.query = query;
-    this.returnTo = document.activeElement;
+    // Only on the way in. Stepping from one result to the next with j replaces
+    // what is in an open drawer, and the row to go back to is still the row it
+    // was opened from rather than the heading inside it.
+    if (!this.open) this.returnTo = document.activeElement;
     this.el.hidden = false;
     this.scrim.hidden = false;
+    this.modal();
+    this.landed = false;
     this.el.focus();
+    this.matches.hidden = true;
 
     const k = cache.key("document", { id });
     this.currentKey = k;
@@ -129,6 +186,7 @@ export class Drawer {
     // Once the body is on the page and not before, because scrolling to a match
     // that is still in a fragment scrolls to nothing.
     reveal(this.body);
+    this.matched();
     // Opening at the source is only offered where a browser would go there. For
     // every document the file connector read it would not, so the path takes
     // its place: a path somebody can paste into a terminal is worth something,
@@ -168,10 +226,84 @@ export class Drawer {
       d.modified_at &&
         h("span", { class: "meta", title: exact(d.modified_at) }, `Updated ${when(d.modified_at)}`),
     );
-    // Focus lands on the first thing worth acting on once the content is in,
-    // rather than on a spinner.
-    const first = this.el.querySelector("a, button");
-    if (first) first.focus();
+    this.land();
+  }
+
+  /**
+   * land moves focus to the heading, once, on the way in.
+   *
+   * The heading rather than the first button, because the first thing somebody
+   * asked for is the document and a screen reader should say what it is before
+   * it says what can be done to it. It carries tabindex="-1" so it can be
+   * focused without becoming a tab stop.
+   *
+   * Once only, because a background revalidation paints the same document again
+   * with focus already somewhere in here, and pulling it back to the top then
+   * would take a reader out of the sentence they were on.
+   */
+  land() {
+    if (this.landed) return;
+    this.landed = true;
+    this.title.focus();
+  }
+
+  /**
+   * matched wires the header controls to the words marked in the body.
+   *
+   * The count is read off the page rather than off the query, because marks.js
+   * is allowed to find nothing: it does not stem, so a search for cache in a
+   * document that only says caching marks nothing at all, and a header offering
+   * to walk zero matches is worse than a header that says nothing.
+   */
+  matched() {
+    this.marks = [...this.body.querySelectorAll("mark.hit")];
+    this.at = -1;
+    this.matches.hidden = this.marks.length === 0;
+    if (!this.marks.length) {
+      replace(this.count);
+      return;
+    }
+    // reveal has already brought the first one into view, so the count opens by
+    // saying which one that is rather than starting at nothing.
+    this.point(0);
+  }
+
+  /**
+   * toMatch is n and shift+N, and the two buttons beside the count.
+   *
+   * It wraps at both ends. Somebody who has walked to the last match in a file
+   * wants the first one again, not a key that stops working.
+   */
+  toMatch(delta) {
+    const n = this.marks.length;
+    if (!n) return;
+    this.point((((this.at + delta) % n) + n) % n).scrollIntoView({ block: "center", inline: "nearest" });
+    this.onSay(`Match ${this.at + 1} of ${n}`);
+  }
+
+  /** point makes one mark the current one and says which of how many it is. */
+  point(i) {
+    for (const was of this.marks) was.classList.remove("hit--current");
+    this.at = i;
+    this.marks[i].classList.add("hit--current");
+    replace(this.count, `${i + 1} of ${this.marks.length}`);
+    return this.marks[i];
+  }
+
+  /**
+   * modal says whether the drawer covers the list, and tells assistive
+   * technology the same thing.
+   *
+   * Under the breakpoint the drawer is the whole window and everything behind
+   * it is out of reach, which is what aria-modal means and what a focus trap is
+   * for. Above it there is a list beside the drawer that is still on screen and
+   * still worth reading, and claiming to be modal there takes that list away
+   * from a screen reader in exchange for nothing.
+   */
+  modal() {
+    const covers = window.matchMedia(COVERS).matches;
+    this.el.setAttribute("aria-modal", String(covers));
+    return covers;
   }
 
   renderError(err) {
@@ -185,6 +317,8 @@ export class Drawer {
     this.body.dataset.shape = "text";
     replace(this.body, h("p", { class: "preview__empty" }, missing ? NO_ACCESS : err.message));
     replace(this.foot);
+    this.matched();
+    this.land();
   }
 
   /**
@@ -201,13 +335,20 @@ export class Drawer {
     // reopening the same document is the most likely next thing to happen. It
     // is the key that is dropped, so nothing it returns is painted.
     this.currentKey = "";
+    this.marks = [];
+    this.at = -1;
     this.el.hidden = true;
     this.scrim.hidden = true;
     if (opts.focus !== false && this.returnTo && this.returnTo.focus) this.returnTo.focus();
     if (opts.notify !== false) this.onClose();
   }
 
-  /** trap keeps Tab inside the dialog while it is open. */
+  /**
+   * trap keeps Tab inside the dialog while it is the only thing on screen.
+   *
+   * Above the breakpoint it does not, because the list is beside the drawer and
+   * a trap there is the one way of making a visible list unreachable.
+   */
   trap(e) {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -215,7 +356,7 @@ export class Drawer {
       this.close();
       return;
     }
-    if (e.key !== "Tab") return;
+    if (e.key !== "Tab" || !this.modal()) return;
     const focusable = this.el.querySelectorAll(
       'a[href], button:not([disabled]), input, [tabindex]:not([tabindex="-1"])',
     );

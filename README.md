@@ -105,6 +105,8 @@ Anything the grammar does not recognise is treated as text, because a colon in a
 Every filter, the sort, the page and the open document live in the address bar, so a search can be linked, bookmarked and reloaded, and the back button does what a back button should.
 
 `⌘K` or `/` focuses the box, `j` and `k` walk the results, `Enter` or `p` opens a preview, `o` opens the document in its source, `g` then `h` goes home, and `?` lists all of it.
+`j` and `k` keep working inside the preview, so reading through five candidates is five keystrokes rather than five open and close cycles, and the one below is fetched while the current one is being read.
+The words that were searched for are marked in the body with a count beside them, and `n` and `shift` `n` walk between them.
 
 The identity switcher at the bottom of the rail sends a different subject, tenant and set of groups with every request.
 It is there because the permission model is the part of this system worth checking by hand, and the fastest way to check it is to run the same query as two different people and watch the results change.

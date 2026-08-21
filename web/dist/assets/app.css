@@ -864,6 +864,21 @@ mark::after {
   background: var(--mark);
 }
 
+/*
+ * The match somebody has walked to, among the ones they have not.
+ *
+ * The same rule grown to cover the word rather than a different colour, a
+ * bigger size or a border. Any of those three would change the metrics of a run
+ * of text in the middle of a paragraph, and the paragraph would reflow on every
+ * press of n.
+ */
+mark.hit--current::after {
+  bottom: 0;
+  height: 100%;
+  border-radius: 3px;
+  opacity: 0.35;
+}
+
 .result__actions {
   position: absolute;
   top: var(--space-2);
@@ -1323,6 +1338,14 @@ a.panel__row:hover .panel__row-title {
   display: none;
 }
 
+/* The panel takes focus for the moment between opening and having something to
+   read, and a ring around the whole window is not what that moment should look
+   like. Everything inside it keeps its own. */
+.drawer:focus,
+.drawer:focus-visible {
+  outline: none;
+}
+
 @keyframes slide-in {
   from {
     transform: translateX(16px);
@@ -1330,11 +1353,38 @@ a.panel__row:hover .panel__row-title {
   }
 }
 
+/*
+ * The head is outside the part that scrolls, so the title of what somebody is
+ * reading, the way between the matches in it and the way out of it are all
+ * still there at the bottom of a four thousand word document.
+ */
 .drawer__head {
   display: flex;
+  flex: none;
   align-items: flex-start;
   gap: var(--space-3);
   padding: var(--space-6);
+}
+
+/* Which match of how many, and the two ways between them. */
+.matches {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.matches[hidden] {
+  display: none;
+}
+
+.matches__count {
+  /* Tabular figures, so the count does not shift the two buttons sideways as
+     it counts past nine. */
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding-inline: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--text-small);
 }
 
 .drawer__heading {
@@ -1357,6 +1407,15 @@ a.panel__row:hover .panel__row-title {
   font-weight: var(--weight-bold);
   line-height: var(--leading-heading);
   letter-spacing: var(--display-tracking);
+}
+
+/* Focus lands here when a preview opens, for the reason the document page does
+   it, and without a ring for the reason it does not draw one: a heading with a
+   ring around it reads as something to press, and what says the preview opened
+   is that a preview opened. */
+.drawer__title:focus,
+.drawer__title:focus-visible {
+  outline: none;
 }
 
 /*

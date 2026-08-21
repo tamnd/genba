@@ -16,6 +16,7 @@ import {
   press,
   reporter,
   settle,
+  SHIFT,
   type,
   visit,
 } from "./chrome.mjs";
@@ -117,12 +118,112 @@ async function walk(session) {
     "the preview took focus",
     "document.querySelector('.drawer').contains(document.activeElement)",
   );
+  await check(
+    session,
+    "focus is on the heading rather than on the first thing to press",
+    `document.activeElement === document.querySelector('.drawer__title') &&
+      document.activeElement.tabIndex === -1`,
+  );
+
+  // Wide enough that the list is beside the drawer rather than behind it, which
+  // is the case where saying the drawer is modal takes a visible list away from
+  // a screen reader.
+  await check(
+    session,
+    "beside a visible list the preview does not claim to be modal",
+    `window.innerWidth > 720 &&
+      document.querySelector('.drawer').getAttribute('aria-modal') === 'false'`,
+  );
+
+  // The words that were searched for, in the document that came back. This
+  // query matches the corpus in the hundreds, so a preview with no marks in it
+  // at all is the marking having stopped working.
+  await check(
+    session,
+    "the query is marked in the preview, with a count of how many",
+    `(() => {
+      const marks = document.querySelectorAll('.drawer__body mark.hit');
+      const count = document.querySelector('.matches__count').textContent;
+      return marks.length > 1 &&
+        !document.querySelector('.matches').hidden &&
+        count === '1 of ' + marks.length &&
+        document.querySelectorAll('.drawer__body mark.hit--current').length === 1;
+    })()`,
+  );
+
+  const first = await evaluate(
+    session,
+    "document.querySelector('.drawer__body mark.hit--current').textContent",
+  );
+  await press(session, "n", "KeyN", 78);
+  await check(
+    session,
+    "n moves to the next match and says which one it is on",
+    `(() => {
+      const marks = [...document.querySelectorAll('.drawer__body mark.hit')];
+      const current = document.querySelector('.drawer__body mark.hit--current');
+      return marks.indexOf(current) === 1 &&
+        document.querySelector('.matches__count').textContent === '2 of ' + marks.length;
+    })()`,
+  );
+
+  await press(session, "N", "KeyN", 78, SHIFT);
+  await check(
+    session,
+    "shift and n goes back to the one before it",
+    `document.querySelector('.matches__count').textContent.startsWith('1 of') &&
+      document.querySelector('.drawer__body mark.hit--current').textContent === ${JSON.stringify(first)}`,
+  );
+
+  // The interaction the drawer exists for. Reading through five candidates used
+  // to be five open and close cycles.
+  const showing = await evaluate(session, "document.querySelector('.drawer__title').textContent");
+  await press(session, "j", "KeyJ", 74);
+  await check(
+    session,
+    "j moves the preview to the next result without closing it",
+    `!document.querySelector('.drawer').hidden &&
+      document.querySelector('.drawer__title').textContent !== ${JSON.stringify(showing)} &&
+      document.querySelector('.result[data-active="true"]').dataset.index === '1' &&
+      new URLSearchParams(location.search).get('cursor') === '1'`,
+  );
+  await check(
+    session,
+    "the keys stay with the preview rather than moving focus behind it",
+    "document.querySelector('.drawer').contains(document.activeElement)",
+  );
+
+  // One ahead, so the next press paints from memory rather than from the
+  // network. The cache is the app's own, reached the way the app reaches it.
+  await check(
+    session,
+    "the result under the one on screen has already been fetched",
+    `import('genba/cache.js').then(({ cache }) => {
+      const rows = [...document.querySelectorAll('.result__title')];
+      const next = rows[2].getAttribute('href').replace('/d/', '').split('?')[0];
+      return cache.read(cache.key('document', { id: decodeURIComponent(next) })).state !== 'miss';
+    })`,
+  );
+
+  await press(session, "k", "KeyK", 75);
+  await check(
+    session,
+    "k moves it back",
+    `document.querySelector('.drawer__title').textContent === ${JSON.stringify(showing)} &&
+      document.querySelector('.result[data-active="true"]').dataset.index === '0'`,
+  );
 
   await press(session, "Escape", "Escape", 27);
   await check(
     session,
     "Escape closes the preview",
     "document.querySelector('.drawer').hidden && !location.search.includes('open=')",
+  );
+  await check(
+    session,
+    "closing puts focus back on the row the preview was opened from",
+    `document.activeElement.dataset.index === '0' &&
+      document.activeElement.classList.contains('result')`,
   );
 
   // A plain click on the title opens the preview rather than following the
@@ -458,5 +559,16 @@ async function walk(session) {
       );
       return whole && tabs.scrollWidth > tabs.clientWidth && tabs.dataset.scroll === 'end';
     })()`,
+  );
+
+  // At this width the drawer is the window and there is nothing behind it to
+  // read, which is the half of the breakpoint where a dialog is a dialog.
+  await settle(session, "document.querySelectorAll('.result').length > 0");
+  await evaluate(session, "document.querySelector('.result__title').click()");
+  await settle(session, "!document.querySelector('.drawer').hidden");
+  await check(
+    session,
+    "at 390 pixels the preview covers the list and says it is modal",
+    "document.querySelector('.drawer').getAttribute('aria-modal') === 'true'",
   );
 }
