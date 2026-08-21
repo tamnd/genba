@@ -328,6 +328,32 @@ async function walk(session) {
       new URLSearchParams(location.search).get('cursor') === '0'`,
   );
 
+  // Five presses down the list. Moving the cursor is a move through an answer
+  // the page already has, so nothing on screen is asked for a second time. Two
+  // requests are allowed to go out and both are ahead of where somebody is: the
+  // document under the cursor, which is why the preview opens instantly, and
+  // the next page of results, which is why the end of the list is not a wait.
+  await evaluate(
+    session,
+    `(() => {
+      window.__walk = { searches: [] };
+      const sent = window.fetch;
+      window.fetch = function (input) {
+        const url = String((input && input.url) || input);
+        if (url.includes('/api/v1/search')) window.__walk.searches.push(url);
+        return sent.apply(this, arguments);
+      };
+      return true;
+    })()`,
+  );
+  for (let i = 0; i < 5; i++) await press(session, "ArrowDown", "ArrowDown", 40);
+  await check(
+    session,
+    "five presses down land on the sixth result and ask again for nothing already on screen",
+    `document.activeElement.dataset.index === '5' &&
+      window.__walk.searches.every((u) => Number(new URL(u).searchParams.get('offset') || 0) > 0)`,
+  );
+
   await press(session, "End", "End", 35);
   await check(
     session,
