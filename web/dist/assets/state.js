@@ -11,9 +11,11 @@ const LIST_KEYS = ["source", "kind", "container", "author", "owner"];
 //
 // A document is the thing somebody pastes into a message, so it gets an address
 // that survives being read out loud and does not carry the state of whoever
-// found it. Recent is a path because it is not a view of a search: it answers
-// what has been going on rather than what matches, and a rail entry that ran a
-// recency sorted search was answering the wrong question with the right rows.
+// found it. The words they searched for are the one exception, and the reason
+// is written on documentPath below. Recent is a path because it is not a view
+// of a search: it answers what has been going on rather than what matches, and
+// a rail entry that ran a recency sorted search was answering the wrong
+// question with the right rows.
 const DOCUMENT = "/d/";
 export const RECENT = "/recent";
 
@@ -30,9 +32,22 @@ export function route(pathname = location.pathname) {
   return id ? { name: "document", id } : { name: "search", id: "" };
 }
 
-/** documentPath is the address of one document as a page of its own. */
-export function documentPath(id) {
-  return DOCUMENT + encodeURIComponent(id);
+/**
+ * documentPath is the address of one document as a page of its own.
+ *
+ * The words somebody searched for are the one piece of the state around a
+ * result that belongs on this address, and every link on a result row carries
+ * them. They are not how that person found the document, which is what this
+ * address deliberately leaves out: no filters, no sort, no page and no cursor.
+ * They are where in the document to start reading, and a middle click on a
+ * result has to land in the same place a plain click does.
+ *
+ * Nothing that offers this address to be copied passes them, because a link
+ * somebody sends is about the document rather than about the search behind it.
+ */
+export function documentPath(id, q = "") {
+  const path = DOCUMENT + encodeURIComponent(id);
+  return q ? `${path}?q=${encodeURIComponent(q)}` : path;
 }
 
 // A path somebody typed or a link somebody mangled can hold a percent sign that

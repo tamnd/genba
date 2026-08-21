@@ -156,6 +156,14 @@ class App {
       this.query = urlState.read();
       this.sync();
     });
+
+    // A line address is the one link that lands on the screen it was sent from.
+    // Nothing above reacts to it: the path is the same, so sync would repaint
+    // the document it is already showing, and the document itself only looks at
+    // the address when it paints. This asks it to look again.
+    window.addEventListener("hashchange", () => {
+      if (urlState.route().name === "document") this.page.toLine();
+    });
   }
 
   build() {
@@ -477,7 +485,7 @@ class App {
 
     if (this.query.open && this.drawer.currentId !== this.query.open) {
       this.drawer.currentId = this.query.open;
-      this.drawer.show(this.query.open);
+      this.drawer.show(this.query.open, this.query.q);
     } else if (!this.query.open) {
       this.drawer.currentId = null;
       if (this.drawer.open) this.drawer.close();
@@ -499,7 +507,9 @@ class App {
     this.drawer.currentId = null;
     if (this.drawer.open) this.drawer.close({ notify: false, focus: false });
     if (this.main.firstChild !== this.page.el) replace(this.main, this.page.el);
-    await this.page.show(id);
+    // A document page carries the words that found it, so it opens where they
+    // are. A link somebody was sent carries none and opens at the top.
+    await this.page.show(id, this.query.q);
   }
 
   /**
@@ -972,7 +982,7 @@ class App {
         const hit = rows && rows.current();
         if (!hit) return;
         e.preventDefault();
-        window.open(urlState.documentPath(hit.id), "_blank", "noreferrer");
+        window.open(urlState.documentPath(hit.id, this.query.q), "_blank", "noreferrer");
         return;
       }
       if (e.key === "Escape") {

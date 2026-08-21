@@ -1881,6 +1881,51 @@ h6.prose__h {
   tab-size: 4;
 }
 
+/* A whole file, one line at a time, with its number beside it.
+ *
+ * The gutter stays put while a long line scrolls past it, which is the only
+ * reason to number lines at all: a number that scrolls off the left edge is
+ * gone exactly when somebody is reading the line it belongs to. It sits on the
+ * block's own background so the code passes underneath rather than through it.
+ */
+.code--file .code__pre {
+  padding-left: 0;
+}
+
+.line {
+  display: block;
+}
+
+.line__no {
+  position: sticky;
+  left: 0;
+  display: inline-block;
+  width: 6ch;
+  padding-right: var(--space-3);
+  border-right: 1px solid var(--border);
+  margin-right: var(--space-4);
+  background: var(--bg-subtle);
+  color: var(--code-muted);
+  text-align: right;
+  text-decoration: none;
+  /* A line number is a coordinate rather than part of the file, so selecting
+     the code and copying it does not take the numbers along with it. */
+  user-select: none;
+}
+
+.line__no:hover {
+  color: var(--text);
+}
+
+.line--current {
+  background: var(--bg-active);
+}
+
+.line--current .line__no {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
 .tok--keyword {
   color: var(--code-keyword);
 }

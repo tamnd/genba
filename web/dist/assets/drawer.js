@@ -13,6 +13,7 @@ import { cache } from "./cache.js";
 import { copies } from "./clipboard.js";
 import { icon, label, sourceColor, when, exact, followable, copyable } from "./format.js";
 import { body as renderBody, shapeOf, detailOf } from "./content.js";
+import { reveal } from "./marks.js";
 import { documentPath } from "./state.js";
 
 export class Drawer {
@@ -21,6 +22,7 @@ export class Drawer {
     this.onSay = onSay || (() => {});
     this.returnTo = null;
     this.currentKey = "";
+    this.query = "";
 
     this.title = h("h2", { class: "drawer__title", id: "drawer-title" });
     this.meta = h("div", { class: "drawer__meta" });
@@ -57,7 +59,8 @@ export class Drawer {
     return !this.el.hidden;
   }
 
-  async show(id) {
+  async show(id, query = "") {
+    this.query = query;
     this.returnTo = document.activeElement;
     this.el.hidden = false;
     this.scrim.hidden = false;
@@ -121,7 +124,10 @@ export class Drawer {
     // The body decides its own shape from the media type, so the drawer only
     // has to say where it goes and how wide it is.
     this.body.dataset.shape = shapeOf(d);
-    replace(this.body, renderBody(d));
+    replace(this.body, renderBody(d, { query: this.query }));
+    // Once the body is on the page and not before, because scrolling to a match
+    // that is still in a fragment scrolls to nothing.
+    reveal(this.body);
     // Opening at the source is only offered where a browser would go there. For
     // every document the file connector read it would not, so the path takes
     // its place: a path somebody can paste into a terminal is worth something,

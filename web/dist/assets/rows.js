@@ -18,6 +18,18 @@ import { tile, cover } from "./content.js";
 import { copies } from "./clipboard.js";
 import * as urlState from "./state.js";
 
+/**
+ * asked is the words in the address bar.
+ *
+ * A row does not hold a query and is not about to start. It reads the address
+ * when it builds a link, which is the same thing every other reader of this
+ * state does: the address bar is the state, and a copy of it kept in here would
+ * be a copy that could disagree.
+ */
+function asked() {
+  return urlState.read().q;
+}
+
 export class RowList {
   constructor({ onOpen, onHover, onSay, onCursor, label: name } = {}) {
     this.onOpen = onOpen || (() => {});
@@ -153,7 +165,7 @@ export class RowList {
         "a",
         {
           class: "cell__title",
-          href: urlState.documentPath(hit.id),
+          href: urlState.documentPath(hit.id, asked()),
           title: hit.title || hit.id,
           onClick: (e) => {
             if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
@@ -218,7 +230,7 @@ export class RowList {
         "a",
         {
           class: "result__title",
-          href: urlState.documentPath(hit.id),
+          href: urlState.documentPath(hit.id, asked()),
           onClick: (e) => {
             if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
             e.preventDefault();

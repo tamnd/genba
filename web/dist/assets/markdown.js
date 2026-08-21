@@ -12,7 +12,8 @@
 // this file and it is the reason it is hand written rather than pulled in.
 
 import { h } from "./dom.js";
-import { highlight } from "./highlight.js";
+import { highlight, rows } from "./highlight.js";
+import { current } from "./marks.js";
 import { frame } from "./table.js";
 
 /**
@@ -259,20 +260,36 @@ function table(rows, options) {
   );
 }
 
+// A file longer than this is shown without a gutter.
+//
+// Every numbered line is two more elements and the whole file is built in one
+// go, so this is where the one screen in the interface that could jank would
+// be. It is well past what anybody reads in a preview, the copy button still
+// hands over all of it, and a generated file of a hundred thousand lines is not
+// worth making every other file wait for.
+const NUMBERED_MAX = 4000;
+
 /**
- * codeBlock renders a fenced block, with its language named and a copy button.
+ * codeBlock renders a block of code, with its language named and a copy button.
  *
  * The head is only drawn when there is something to put in it, so a two line
  * snippet does not grow a bar of chrome taller than the code inside it.
+ *
+ * options.numbers draws the gutter, and only the shape that is a whole file
+ * passes it. A fenced block inside a document is an excerpt somebody quoted and
+ * its first line is not line one of anything, so a number beside it would be a
+ * fact about the code block rather than about the file it came from.
  */
-export function codeBlock(source, lang) {
-  const code = h("code", { class: "code__text" }, highlight(source, lang));
+export function codeBlock(source, lang, options = {}) {
+  const lines = source.split("\n");
+  const numbered = Boolean(options.numbers) && lines.length <= NUMBERED_MAX;
+  const code = h("code", { class: "code__text" }, numbered ? gutter(source, lang) : highlight(source, lang));
   // A code block scrolls sideways when a line is long, and a region that
   // scrolls has to be reachable by keyboard or the only way to read the end of
   // that line is a mouse.
   const pre = h("pre", { class: "code__pre", tabindex: "0" }, code);
-  const long = source.split("\n").length > 6;
-  if (!lang && !long) return h("div", { class: "code" }, pre);
+  const long = lines.length > 6;
+  if (!lang && !long && !numbered) return h("div", { class: "code" }, pre);
 
   const copy = h(
     "button",
@@ -296,10 +313,45 @@ export function codeBlock(source, lang) {
   );
   return h(
     "div",
-    { class: "code" },
+    { class: numbered ? "code code--file" : "code" },
     h("div", { class: "code__head" }, h("span", { class: "code__lang" }, lang || "text"), copy),
     pre,
   );
+}
+
+/**
+ * gutter is the file, one line at a time, each with its number beside it.
+ *
+ * The number is a link to itself. That is the whole of the feature: a line
+ * somebody wants to talk about has an address, and pasting that address opens
+ * the file there. The click is handled rather than followed because this
+ * document was painted after a fetch, so by the time the browser would have
+ * jumped to the fragment there was nothing on the page to jump to.
+ */
+function gutter(source, lang) {
+  const out = document.createDocumentFragment();
+  rows(source, lang).forEach((text, i) => {
+    const at = String(i + 1);
+    const number = h(
+      "a",
+      {
+        class: "line__no",
+        href: `#L${at}`,
+        "aria-label": `Line ${at}`,
+        onClick: (e) => {
+          e.preventDefault();
+          // replace rather than push, because reading down a file and tapping
+          // numbers as you go should not fill the back button with lines.
+          history.replaceState(null, "", `#L${at}`);
+          const line = e.currentTarget.closest(".line");
+          current(line.closest(".code"), line);
+        },
+      },
+      at,
+    );
+    out.appendChild(h("span", { class: "line", "data-line": at }, number, text));
+  });
+  return out;
 }
 
 // Inline ------------------------------------------------------------------
