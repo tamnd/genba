@@ -154,12 +154,18 @@ async function walk(session) {
   // A link written as a bare query string resolves against whatever path is
   // showing, which was harmless while every path was the search and is not any
   // more. This catches the next one written that way.
+  //
+  // A link to a line is a fragment, so it keeps the address it is written on and
+  // the words on the end of it with it, which is the whole point of it. What
+  // this rules out is a link that puts anything else on a document address.
   await check(
     session,
-    "no link on the document page is the same document with a parameter on the end",
+    "no link on the document page hangs the state of a search off the document",
     `[...document.querySelectorAll('a[href]')].every((a) => {
+      if (a.getAttribute('href').startsWith('#')) return true;
       const u = new URL(a.href, location.href);
-      return !(u.pathname.startsWith('/d/') && u.search);
+      if (!u.pathname.startsWith('/d/')) return true;
+      return [...new URLSearchParams(u.search).keys()].every((k) => k === 'q');
     })`,
   );
 

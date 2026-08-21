@@ -253,6 +253,110 @@ async function run(session) {
 
   await check(
     session,
+    "a file shows a number on every line and each one is a link to that line",
+    expr(`
+      const { body } = await import('/assets/content.js');
+      const out = body({ id: 'repo:main.go', media_type: 'text/x-go', body: 'package main\\n\\nfunc main() {}\\n' });
+      const numbers = [...out.querySelectorAll('.line__no')];
+      return numbers.length === 4 &&
+        numbers.map((a) => a.textContent).join(',') === '1,2,3,4' &&
+        numbers[3].getAttribute('href') === '#L4' &&
+        numbers[0].getAttribute('aria-label') === 'Line 1';
+    `),
+  );
+
+  // The reason the whole file goes through the lexer in one pass. Highlighting
+  // a file a line at a time is faster to write and gets this wrong from the
+  // second line of the comment onwards, along with every raw string and every
+  // docstring.
+  await check(
+    session,
+    "a comment that runs over several lines is one comment on all of them",
+    expr(`
+      const { rows } = await import('/assets/highlight.js');
+      const lines = rows('/*\\n one\\n two\\n*/\\nfunc main() {}', 'go');
+      return lines.length === 5 &&
+        lines.slice(0, 4).every((line) => line.querySelector('.tok--comment')) &&
+        lines[4].querySelector('.tok--keyword').textContent === 'func';
+    `),
+  );
+
+  await check(
+    session,
+    "an address that names a line opens the file at it and marks which one",
+    expr(`
+      const { body } = await import('/assets/content.js');
+      const { reveal } = await import('/assets/marks.js');
+      const source = Array.from({ length: 60 }, (_, i) => 'line ' + i).join('\\n');
+      const out = body({ id: 'repo:main.go', media_type: 'text/x-go', body: source });
+      const at = reveal(out, '#L42');
+      return Boolean(at) && at.dataset.line === '42' &&
+        at.classList.contains('line--current') &&
+        out.querySelectorAll('.line--current').length === 1;
+    `),
+  );
+
+  // Following a link to a line in the file already on screen changes nothing but
+  // the address, so the move to that line is the only thing that can answer it.
+  await check(
+    session,
+    "a line address that arrives on an open file moves to that line and no further",
+    expr(`
+      const { body } = await import('/assets/content.js');
+      const { reveal, toLine } = await import('/assets/marks.js');
+      const source = Array.from({ length: 60 }, (_, i) => 'line ' + i).join('\\n');
+      const out = body({ id: 'repo:main.go', media_type: 'text/x-go', body: source });
+      reveal(out, '#L42');
+      const moved = toLine(out, '#L7');
+      const stayed = toLine(out, '#main');
+      return moved.dataset.line === '7' && stayed === null &&
+        out.querySelectorAll('.line--current').length === 1 &&
+        out.querySelector('.line--current').dataset.line === '7';
+    `),
+  );
+
+  await check(
+    session,
+    "a document opened from a search opens at the first of the words somebody typed",
+    expr(`
+      const { body } = await import('/assets/content.js');
+      const { reveal, terms } = await import('/assets/marks.js');
+      const out = body(
+        {
+          id: 'repo:notes.md',
+          media_type: 'text/markdown',
+          body: '# Notes\\n\\nThe first paragraph.\\n\\nThe cache is warmed at start up.\\n',
+        },
+        { query: 'source:repo cache -cold' },
+      );
+      const marks = [...out.querySelectorAll('mark.hit')];
+      return terms('source:repo cache -cold').join() === 'cache' &&
+        marks.length === 1 && marks[0].textContent === 'cache' &&
+        reveal(out, '') === marks[0];
+    `),
+  );
+
+  // A line number is a coordinate rather than a word in the file, so a query
+  // that happens to be a number must not paint the gutter with itself.
+  await check(
+    session,
+    "a search for a number marks the code and not the line numbers",
+    expr(`
+      const { body } = await import('/assets/content.js');
+      const lines = Array.from({ length: 60 }, () => 'const x = 1');
+      lines[2] = 'const limit = 42';
+      const out = body(
+        { id: 'repo:main.go', media_type: 'text/x-go', body: lines.join('\\n') },
+        { query: '42' },
+      );
+      const marks = [...out.querySelectorAll('mark.hit')];
+      return out.querySelectorAll('.line').length === 60 &&
+        marks.length === 1 && marks[0].closest('.line').dataset.line === '3';
+    `),
+  );
+
+  await check(
+    session,
     "a body the extractor could not read to the end says which half is missing",
     expr(`
       const { body } = await import('/assets/content.js');

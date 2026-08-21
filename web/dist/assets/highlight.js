@@ -37,8 +37,54 @@ export function highlight(source, lang) {
   }
 
   root.textContent = source;
+  // Whatever is in here now is thrown away when the highlighter reaches it, so
+  // nothing else may write into it in the meantime. marks.js is the one that
+  // would, and this is how it knows to leave this block alone.
+  root.dataset.lazy = "1";
   watch(root, () => fill(root, source, spec));
   return root;
+}
+
+/**
+ * rows returns one element per line of the source, highlighted.
+ *
+ * A whole file is read by line number, so it has to be built line by line, and
+ * the tempting way to do that is to highlight each line on its own. That gets a
+ * block comment wrong from its second line onwards, and a raw string, and a
+ * triple quoted docstring, which between them are most of what colour is for.
+ * So the scan is over the whole source, exactly as it is for a block, and the
+ * tokens it returns are cut at the newlines afterwards.
+ *
+ * This is eager where the block renderer is lazy. A file is one block and it is
+ * the thing somebody opened the page to read, so there is nothing to defer it
+ * behind, and the numbers in the gutter have to be there before anything can
+ * scroll to line four hundred.
+ */
+export function rows(source, lang) {
+  const spec = LANGS[alias(lang)];
+  const lines = source.split("\n").map((text) => h("span", { class: "line__text" }, text));
+  if (spec) split(lines, scan(source, spec));
+  return lines;
+}
+
+/** split lays a scan of the whole source back out over its lines. */
+function split(lines, tokens) {
+  const built = lines.map(() => document.createDocumentFragment());
+  let at = 0;
+  for (const token of tokens) {
+    const parts = token.text.split("\n");
+    for (let i = 0; i < parts.length; i++) {
+      if (i) at++;
+      if (at >= built.length || !parts[i]) continue;
+      built[at].appendChild(
+        token.cls ? h("span", { class: `tok tok--${token.cls}` }, parts[i]) : document.createTextNode(parts[i]),
+      );
+    }
+  }
+  lines.forEach((line, i) => {
+    line.textContent = "";
+    line.appendChild(built[i]);
+  });
 }
 
 /** languages returns the names highlighting is available for. */
@@ -53,6 +99,7 @@ function fill(root, source, spec) {
   }
   root.textContent = "";
   root.appendChild(frag);
+  delete root.dataset.lazy;
 }
 
 let observer = null;

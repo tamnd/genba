@@ -12,6 +12,7 @@ import { render as markdown, codeBlock } from "./markdown.js";
 import { render as htmlDocument } from "./html.js";
 import { parse as parseNotebook, render as notebookCells } from "./notebook.js";
 import { player } from "./media.js";
+import { terms, mark } from "./marks.js";
 import { kindIcon, sourceColor, bytes as formatBytes } from "./format.js";
 
 // Media types the interface knows how to draw as code, and the language each
@@ -132,8 +133,20 @@ export function languageOf(d) {
  * Every branch produces the same reading experience at a different density:
  * one measure, one type scale, and no case where the reader has to work out
  * what they are looking at.
+ *
+ * options.query is what somebody typed to get here. Those words are marked
+ * wherever they appear in the text, whatever shape the document turned out to
+ * be, which is why it happens once out here rather than six times in there. The
+ * caller reveals the first of them once the nodes are on the page, because
+ * scrolling to something that is not in a document yet scrolls to nothing.
  */
-export function body(d) {
+export function body(d, options = {}) {
+  const node = draw(d);
+  mark(node, terms(options.query));
+  return node;
+}
+
+function draw(d) {
   const shape = shapeOf(d);
 
   if (shape === "image") {
@@ -168,10 +181,10 @@ export function body(d) {
     }
   }
   if (shape === "prose") {
-    const options = { imageNode: (src, alt) => inlineImage(d, src, alt) };
+    const imaging = { imageNode: (src, alt) => inlineImage(d, src, alt) };
     const media = (d.media_type || "").toLowerCase();
     const nodes =
-      PROSE[media] === "html" ? htmlDocument(d.body, options) : markdown(d.body, options);
+      PROSE[media] === "html" ? htmlDocument(d.body, imaging) : markdown(d.body, imaging);
     // A document whose first line is its own title would otherwise show that
     // title twice, once in the head of the drawer and once at the top of the
     // body, which reads as a rendering bug rather than as a document.
@@ -180,7 +193,14 @@ export function body(d) {
     return h("div", { class: "prose" }, truncated(d), nodes);
   }
   if (shape === "code") {
-    return h("div", { class: "preview preview--code" }, codeBlock(d.body, languageOf(d)));
+    // Numbers here and nowhere else. This is the whole file, so its first line
+    // is line one and every line below it has an address somebody can send.
+    return h(
+      "div",
+      { class: "preview preview--code" },
+      truncated(d),
+      codeBlock(d.body, languageOf(d), { numbers: true }),
+    );
   }
   // Reachable by keyboard for the same reason a code block is: the preview
   // scrolls, and a scrolling region a keyboard cannot reach is a document a

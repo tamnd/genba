@@ -25,6 +25,7 @@ import {
   copyable,
 } from "./format.js";
 import { body as renderBody, shapeOf, detailOf } from "./content.js";
+import { reveal, toLine } from "./marks.js";
 import { documentPath } from "./state.js";
 
 export class Page {
@@ -32,6 +33,7 @@ export class Page {
     this.onBack = onBack;
     this.onSay = onSay || (() => {});
     this.currentKey = "";
+    this.query = "";
 
     this.back = h("div", { class: "page__back" });
     this.meta = h("div", { class: "page__meta" });
@@ -49,7 +51,8 @@ export class Page {
     );
   }
 
-  async show(id) {
+  async show(id, query = "") {
+    this.query = query;
     const k = cache.key("document", { id });
     if (this.currentKey === k) return;
     this.currentKey = k;
@@ -75,6 +78,19 @@ export class Page {
       if (err.name === "AbortError") return;
       if (!painted && this.currentKey === k) this.renderError(err);
     }
+  }
+
+  /**
+   * toLine moves to a line named by an address that arrived while this page was
+   * already open.
+   *
+   * Following a link to a line in the file being read is not a navigation as far
+   * as the browser is concerned. The path does not change, so nothing is fetched
+   * and nothing is painted, and without this the page would sit exactly where it
+   * was while the address bar claimed otherwise.
+   */
+  toLine() {
+    toLine(this.content);
   }
 
   /**
@@ -143,14 +159,20 @@ export class Page {
     );
 
     this.content.dataset.shape = shapeOf(d);
-    replace(this.content, renderBody(d));
+    replace(this.content, renderBody(d, { query: this.query }));
     replace(this.foot, actions(d, this.onSay));
 
     // Focus goes to the heading rather than to the first control, because this
     // is a document somebody came to read and the top of it is where reading
     // starts. It carries tabindex="-1" so it can take focus without joining the
     // tab order.
-    this.title.focus();
+    //
+    // Without preventScroll it would also put the top of the document on the
+    // screen, which is the one place a page opened at line four hundred must
+    // not be. Focus and the scroll position are two different questions here:
+    // reading starts at the heading and the eye starts at the match.
+    this.title.focus({ preventScroll: true });
+    if (!reveal(this.content)) this.el.scrollIntoView({ block: "start" });
   }
 
   /**
