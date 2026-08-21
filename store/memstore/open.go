@@ -75,6 +75,13 @@ func (s *Store) Opens(ctx context.Context, p *acl.Principal, limit int) ([]store
 	if limit <= 0 {
 		return nil, nil
 	}
+	// Nobody can be given more history than a driver keeps, so a caller asking
+	// for a thousand is asking for all of it. Clamping here rather than trusting
+	// the number makes the allocation below a fact about this driver instead of
+	// a fact about whatever arrived in a query string.
+	if limit > store.OpenHistory {
+		limit = store.OpenHistory
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
