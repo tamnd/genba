@@ -622,6 +622,15 @@ async function walk(session) {
   );
 
   await settle(session, "document.querySelectorAll('.admin .stat__value').length >= 2");
+  // The screen opens on a held copy and repaints when the server answers, which
+  // is a fifth of a second later and is where the cursor used to be dropped.
+  // The check above ran in that window and passed, so this is the same claim
+  // made after the answer has landed rather than before it.
+  await check(
+    session,
+    "the answer landing leaves the cursor where opening the screen put it",
+    "document.activeElement === document.querySelector('.admin__title')",
+  );
   await check(
     session,
     "the corpus is reported as what is servable and what is held back",

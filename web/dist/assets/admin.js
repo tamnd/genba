@@ -157,9 +157,13 @@ export class Admin {
 
   paint() {
     // Whether the cursor is on something here, read before the paint takes it
-    // away. The heading is left out because that is where the cursor is put
-    // when the screen opens rather than somewhere anybody chose to be.
-    const held = this.el.contains(document.activeElement) && document.activeElement !== this.title;
+    // away. The heading counts. It is not somewhere anybody chose to be, it is
+    // where this screen puts the cursor when it opens, and the first thing that
+    // happens after it opens is the server answering and this painting again.
+    // Leaving the heading out of this dropped the cursor to the document a
+    // fifth of a second after landing, so a keyboard arriving on the screen was
+    // put back at the top of the page without having pressed anything.
+    const held = this.el.contains(document.activeElement);
     // Which element, and where the caret was in it. The access panel below is
     // the same node across repaints, so its contents survive, but a node that
     // is detached and reattached loses focus and a five second timer that takes
