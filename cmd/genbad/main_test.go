@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -147,6 +148,30 @@ func freeAddr(t *testing.T) string {
 		t.Fatalf("releasing the port: %v", err)
 	}
 	return addr
+}
+
+// waitForIndex waits until the server has finished reading its sources for the
+// first time.
+//
+// A test that asserts on what is in the index needs this and not the health
+// check. The server answers from the moment it binds, and everything a
+// connector is doing it is doing behind that, so a query sent the microsecond
+// the port opens is a query against an index that is legitimately empty.
+func waitForIndex(t *testing.T, base string) {
+	t.Helper()
+	waitForHealth(t, base+"/healthz")
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		var ready struct {
+			Indexing bool `json:"indexing"`
+		}
+		body := get(t, base+"/readyz")
+		if body != "" && json.Unmarshal([]byte(body), &ready) == nil && !ready.Indexing {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("the server was still indexing after thirty seconds")
 }
 
 func waitForHealth(t *testing.T, url string) {

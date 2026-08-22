@@ -54,6 +54,7 @@ type Pipeline struct {
 	batchSize   int
 	clock       func() time.Time
 	log         *slog.Logger
+	progress    func(Progress)
 
 	// maint is the same store when the driver can do the two things a
 	// maintenance job needs and a query path must never have: list what is
@@ -81,6 +82,25 @@ func WithLogger(l *slog.Logger) Option {
 	return func(p *Pipeline) {
 		if l != nil {
 			p.log = l
+		}
+	}
+}
+
+// WithProgress sets what to tell about a run while it is still going.
+//
+// It is called once when the run starts and again after every store write, on
+// the goroutine doing the work, so it must not block: whatever it does is time
+// the sync is not spending on documents. Handing over a snapshot rather than a
+// pointer is deliberate, since the caller is usually publishing it to a reader
+// on another goroutine.
+//
+// The alternative was to have the caller read the returned [Stats], and that
+// only ever arrives after the run is over, which is exactly when nobody needs
+// to be told how far it has got.
+func WithProgress(fn func(Progress)) Option {
+	return func(p *Pipeline) {
+		if fn != nil {
+			p.progress = fn
 		}
 	}
 }
@@ -116,6 +136,33 @@ func New(s store.Store, cp connector.Checkpoints, opts ...Option) (*Pipeline, er
 	}
 	p.maint, _ = s.(store.Maintenance)
 	return p, nil
+}
+
+// Progress is how far a run has got, reported while it is still running.
+//
+// It is a subset of [Stats] rather than the whole of it, because the numbers
+// left out are ones that are not meaningful until a run is over and would
+// invite somebody to draw a conclusion from a half finished one.
+type Progress struct {
+	// Source is the connector being synced.
+	Source string
+
+	// Tenant is whose corpus it is going into.
+	Tenant string
+
+	// Done is how many documents have been stored so far, whether they are
+	// queryable or quarantined. Both are documents this run has got through, and
+	// somebody watching a count climb is asking how far along it is rather than
+	// how many of them they will be allowed to read.
+	Done int
+
+	// Resumed says the run started from a checkpoint, so the index already held
+	// documents from this source before it began.
+	//
+	// It is the difference between a corpus being read for the first time and
+	// one being caught up, and only the first of those means the answers on
+	// screen are incomplete.
+	Resumed bool
 }
 
 // Stats is what one run did.
@@ -191,8 +238,12 @@ func (p *Pipeline) Run(ctx context.Context, tenant genba.TenantID, c connector.C
 		return Stats{}, err
 	}
 
-	run := &run{pipeline: p, tenant: string(tenant), source: source}
+	run := &run{pipeline: p, tenant: string(tenant), source: source, resumed: !from.IsZero()}
 	run.stats.Cursor = from
+	// Said before a single document has been read, so that whoever is watching
+	// learns a run has started rather than learning it half a batch later. On a
+	// source with nothing new in it this is the only report there will be.
+	run.report()
 
 	final, syncErr := c.Sync(ctx, from, run.emit)
 
@@ -268,6 +319,22 @@ type run struct {
 	// is saved only once that batch is stored.
 	pending connector.Cursor
 	stats   Stats
+
+	// resumed says this run started from a checkpoint rather than from nothing.
+	resumed bool
+}
+
+// report tells the pipeline's progress function how far this run has got.
+func (r *run) report() {
+	if r.pipeline.progress == nil {
+		return
+	}
+	r.pipeline.progress(Progress{
+		Source:  r.source,
+		Tenant:  r.tenant,
+		Done:    r.stats.Indexed + r.stats.Quarantined,
+		Resumed: r.resumed,
+	})
 }
 
 // emit takes one change from a connector.
@@ -380,6 +447,11 @@ func (r *run) flush(ctx context.Context) error {
 		}
 	}
 	r.stats.Batches++
+	// Reported here rather than per document, because a batch is the unit that
+	// actually became visible to a query and because a callback on every
+	// document would be a lock per document on the path this whole package is
+	// built to keep cheap.
+	r.report()
 
 	// Reuse the backing arrays. A long sync flushes thousands of times and
 	// there is no reason for each one to allocate a new batch.
