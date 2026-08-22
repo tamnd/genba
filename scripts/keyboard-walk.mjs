@@ -669,6 +669,91 @@ async function walk(session) {
     })()`,
   );
 
+  // The connector this process was started with cannot be changed from here,
+  // because the next restart would read the command line again and undo it. A
+  // screen that offered the buttons anyway would be offering a refusal.
+  await check(
+    session,
+    "a connector from the command line says where it is configured instead of offering buttons",
+    `(() => {
+      const card = [...document.querySelectorAll('.connector')].find(
+        (c) => c.querySelector('.connector__title').textContent.trim() === 'repo');
+      if (!card) return false;
+      return card.querySelector('.connector__controls') === null &&
+        card.querySelector('.connector__fixed').textContent.includes('command line');
+    })()`,
+  );
+
+  // Adding one. The connector this adds is deliberately switched off and is
+  // removed again below, because the corpus this gate measures is the checkout
+  // itself and a second crawler over it would move every number the rest of the
+  // gate checks.
+  await settle(session, "document.querySelector('#connector-source') !== null");
+  await evaluate(session, "document.querySelector('#connector-source').focus()");
+  await type(session, "walk");
+  await evaluate(session, "document.querySelector('#connector-corpus-dir').value = '/no/such/directory'");
+  await evaluate(session, "document.querySelector('#connector-enabled').checked = false");
+  await evaluate(session, "document.querySelector('.connectors .button--primary').click()");
+  await settle(session, "document.querySelector('.connectors__output--bad') !== null");
+  await check(
+    session,
+    "settings that cannot be run are refused in the server's own words, with the form left as it was",
+    `(() => {
+      const said = document.querySelector('.connectors__output--bad').textContent.trim();
+      return said.length > 0 &&
+        document.querySelector('#connector-source').value === 'walk' &&
+        document.querySelector('#connector-corpus-dir').value === '/no/such/directory';
+    })()`,
+  );
+
+  await evaluate(session, "document.querySelector('#connector-corpus-dir').value = '/tmp'");
+  await evaluate(session, "document.querySelector('.connectors .button--primary').click()");
+  await settle(
+    session,
+    "[...document.querySelectorAll('.connector__title')].some((t) => t.textContent.trim() === 'walk')",
+  );
+  await check(
+    session,
+    "a connector added from the form is on the screen, off because that is what was asked for",
+    `(() => {
+      const card = [...document.querySelectorAll('.connector')].find(
+        (c) => c.querySelector('.connector__title').textContent.trim() === 'walk');
+      const buttons = [...card.querySelectorAll('.connector__controls .button')].map((b) => b.textContent.trim());
+      return card.querySelector('.pill').textContent.trim() === 'Switched off' &&
+        buttons.includes('Start') && buttons.includes('Remove') &&
+        document.querySelector('.connectors__output--good').textContent.includes('walk') &&
+        document.querySelector('#connector-source').value === '';
+    })()`,
+  );
+
+  // Removing forgets how a connector was configured and nothing here can undo
+  // it, so it asks twice. The second question replaces the button the first
+  // press was on, which is what puts a keyboard on it without going looking.
+  await evaluate(session, 'document.querySelector(\'[data-focus-key="remove:walk"]\').focus()');
+  await press(session, "Enter", "Enter", 13);
+  await check(
+    session,
+    "removing asks again, on the button the press was on",
+    `(() => {
+      const now = document.querySelector('[data-focus-key="remove:walk"]');
+      return Boolean(now) && now.textContent.trim() === 'Remove it' && document.activeElement === now;
+    })()`,
+  );
+
+  await press(session, "Enter", "Enter", 13);
+  await settle(
+    session,
+    "[...document.querySelectorAll('.connector__title')].every((t) => t.textContent.trim() !== 'walk')",
+  );
+  await check(
+    session,
+    "a removal is said out loud and the keyboard lands on the line that says it",
+    `(() => {
+      const said = document.querySelector('.connectors__output');
+      return Boolean(said) && said.textContent.includes('walk') && document.activeElement === said;
+    })()`,
+  );
+
   // The access check. The subject to ask about is the gate's own, because it is
   // the only identity in this corpus whose answer is known: it is the one the
   // browser has been searching as all the way down this walk.
@@ -721,6 +806,17 @@ async function walk(session) {
     `document.activeElement === document.querySelector('#access-groups') &&
       document.querySelector('#access-groups').value === 'eng' &&
       document.querySelector('#access-groups').selectionStart === 3`,
+  );
+
+  // The same timer, from outside the screen. A poll that arrived while somebody
+  // was typing the next search would have taken the cursor back to the heading,
+  // which is a screen that fights the person reading it.
+  await evaluate(session, "document.querySelector('.omnibox__input').focus()");
+  await sleep(6000);
+  await check(
+    session,
+    "a repaint on the timer leaves the cursor alone when it is not on this screen",
+    "document.activeElement === document.querySelector('.omnibox__input')",
   );
 
   await evaluate(session, "document.querySelector('.admin .page__back-link').click()");
