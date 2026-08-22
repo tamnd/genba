@@ -850,6 +850,21 @@ type statsResponse struct {
 	Driver    string `json:"driver,omitempty"`
 	IndexedAt string `json:"indexed_at,omitempty"`
 
+	// Ranking reports whether the driver cuts to a candidate pool for itself, or
+	// is walked document by document with the ranking done above it.
+	//
+	// It is the difference between a search whose cost follows the page and one
+	// whose cost follows the corpus, and on the same few hundred documents it
+	// measured as seventeen milliseconds against two seconds. That is far too
+	// large a gap to leave somebody to infer from a latency graph, and it is not
+	// a gap anybody guesses at: both drivers answer the same queries with the
+	// same results, so the only thing that gives it away is the clock.
+	//
+	// It is always present rather than omitted when false, because false is the
+	// case worth knowing about and a key that disappears is one nobody checks
+	// for.
+	Ranking bool `json:"ranking"`
+
 	// Indexing is the source being read for the first time, and is absent when
 	// nothing is, which is the ordinary case.
 	//
@@ -889,6 +904,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request, _ *acl.Prin
 		Cache:       s.cacheStats(),
 		Driver:      s.driver,
 		IndexedAt:   s.indexedAt(),
+		Ranking:     s.searcher.Ranking(),
 		Indexing:    indexing,
 	})
 }

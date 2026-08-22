@@ -42,6 +42,9 @@ TENANT=demo
 LIGHTHOUSE_MIN=${LIGHTHOUSE_MIN:-95}
 SERVER=
 BLANK=
+# Where the two databases go. The gate runs on the driver a deployment runs on,
+# not on the reference one: see the comment above the servers below.
+STATE=$(mktemp -d -t genba-ui-gate.XXXXXX)
 # Where the pictures go. It is inside the corpus because the corpus is this
 # directory, it is gitignored, and it is not a dotted name because the file
 # connector skips anything that starts with a dot and would index none of it.
@@ -52,7 +55,7 @@ cleanup() {
 		kill "$pid" 2>/dev/null || true
 		wait "$pid" 2>/dev/null || true
 	done
-	rm -rf "$IMAGES"
+	rm -rf "$IMAGES" "$STATE"
 }
 trap cleanup EXIT INT TERM
 
@@ -135,13 +138,24 @@ node scripts/gate-images.mjs "$IMAGES" 24
 # The corpus is this repository. It is a few hundred documents of real prose and
 # code, which is enough for a results page with snippets, facets and a drawer,
 # and it needs nothing downloaded.
-"$BIN" -addr "127.0.0.1:$PORT" -store memory -tenant "$TENANT" -corpus . -corpus-name repo -log-level error &
+#
+# On SQLite, which is the point. The memory driver is the reference one: it has
+# no index of its own, so it is walked document by document and the ranking
+# happens above it, re-running the analyzer over every matching body. On this
+# same corpus, on the same machine, in the same minute, that measured at a p50
+# of 1.8 seconds against 17 milliseconds for SQLite. Every latency number this
+# gate has ever printed was a number for a driver nobody deploys, which is worse
+# than printing none: it read as the product being two hundred times over its
+# budget, and the budget was never being watched on the path anybody is on.
+"$BIN" -addr "127.0.0.1:$PORT" -store sqlite -dsn "$STATE/corpus.db" \
+	-tenant "$TENANT" -corpus . -corpus-name repo -log-level error &
 SERVER=$!
 
 # The same binary with nothing to index. It is one more process rather than a
 # fixture because the empty state is what the interface does with an answer of
 # no documents, and an answer of no documents has to come from the server.
-"$BIN" -addr "127.0.0.1:$EMPTY_PORT" -store memory -tenant "$TENANT" -log-level error &
+"$BIN" -addr "127.0.0.1:$EMPTY_PORT" -store sqlite -dsn "$STATE/empty.db" \
+	-tenant "$TENANT" -log-level error &
 BLANK=$!
 
 ready "$BASE" "$SERVER"

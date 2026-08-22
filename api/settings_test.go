@@ -10,6 +10,7 @@ import (
 	"github.com/tamnd/genba/doc"
 	"github.com/tamnd/genba/index"
 	"github.com/tamnd/genba/store/memstore"
+	"github.com/tamnd/genba/store/sqlitestore"
 )
 
 // The facts the settings screen prints about the deployment. They are asserted
@@ -34,6 +35,37 @@ func newNamedServer(t *testing.T, driver string, now func() time.Time) (http.Han
 type statsBody struct {
 	Driver    string `json:"driver"`
 	IndexedAt string `json:"indexed_at"`
+	Ranking   bool   `json:"ranking"`
+}
+
+// Which of the two query paths this deployment is on.
+//
+// The two answer the same queries with the same results and differ only in the
+// clock, by a factor of a hundred on a few hundred documents, so nothing except
+// this says which one somebody got. The performance gate was pointed at the
+// scanning driver for months and printed a real number for a deployment nobody
+// has, which is the failure this exists to make impossible.
+func TestStatsSayWhetherTheDriverRanksForItself(t *testing.T) {
+	h, _ := newNamedServer(t, "memory", nil)
+	w := request(t, h, http.MethodGet, "/api/v1/stats", engineer())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if decode[statsBody](t, w).Ranking {
+		t.Error("the reference driver reports that it ranks in the driver")
+	}
+
+	sq, err := sqlitestore.Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = sq.Close() })
+
+	s := api.New(sq, index.New(sq), api.HeaderAuth{Tenant: "acme"}, api.WithDriver("sqlite"))
+	w = request(t, s.Handler(), http.MethodGet, "/api/v1/stats", engineer())
+	if !decode[statsBody](t, w).Ranking {
+		t.Error("the sqlite driver reports that it is scanned")
+	}
 }
 
 func TestStatsNameTheStoreThisProcessWasStartedWith(t *testing.T) {
