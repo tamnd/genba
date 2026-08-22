@@ -121,17 +121,20 @@ type Ranked struct {
 	Approximate bool
 }
 
-// Candidate is what a ranker needs to score a document without reading it.
+// Candidate is what a ranker needs to score a document without reading it, and
+// nothing else.
 //
-// The four strings are the display forms a facet is counted over and a result
-// row is drawn from. They are here rather than decoded out of the document
-// because decoding the document is the cost being removed.
+// It used to carry the source, the kind, the container and the author as well,
+// on the reasoning that a facet is counted over them and a result row is drawn
+// from them. Neither turned out to be true. The facets are counted by the driver
+// in its counting statement, over its own columns, and the fallback counts them
+// in Go from the document. A result row is drawn from the document the page
+// fetch returns, because a row needs a snippet and a snippet needs a body. So
+// the four were selected, scanned and allocated for five hundred rows on every
+// search, read by nothing and asserted by nothing, which meant a driver could
+// have returned the wrong author for every candidate and passed conformance.
 type Candidate struct {
-	ID        string
-	Source    string
-	Kind      doc.Kind
-	Container string
-	Author    string
+	ID string
 
 	ModifiedAt time.Time
 

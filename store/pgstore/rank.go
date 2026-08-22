@@ -135,8 +135,7 @@ func (s *Store) Rank(ctx context.Context, p *acl.Principal, r store.Request, sel
 func (s *Store) candidates(ctx context.Context, c *clause, order string, orderArgs []any, limit int) ([]store.Candidate, error) {
 	args := append(append(append([]any{}, c.args...), orderArgs...), limit)
 	rows, err := s.query(ctx, `
-		SELECT d.id, d.source, d.kind, d.container, d.author_name, d.modified_at,
-		       d.title_tokens, d.body_tokens
+		SELECT d.id, d.modified_at, d.title_tokens, d.body_tokens
 		FROM document d
 		WHERE `+c.where()+`
 		ORDER BY `+order+`
@@ -150,15 +149,12 @@ func (s *Store) candidates(ctx context.Context, c *clause, order string, orderAr
 	for rows.Next() {
 		var (
 			cand     store.Candidate
-			kind     string
 			modified *int64
 		)
-		if err := rows.Scan(&cand.ID, &cand.Source, &kind, &cand.Container, &cand.Author,
-			&modified, &cand.TitleTokens, &cand.BodyTokens); err != nil {
+		if err := rows.Scan(&cand.ID, &modified, &cand.TitleTokens, &cand.BodyTokens); err != nil {
 			return nil, err
 		}
 		s.counters.rows.Add(1)
-		cand.Kind = doc.Kind(kind)
 		if modified != nil {
 			cand.ModifiedAt = unixNano(*modified)
 		}

@@ -68,10 +68,6 @@ func (s *counting) Rank(ctx context.Context, p *acl.Principal, r store.Request, 
 		a := d.Analyze()
 		c := store.Candidate{
 			ID:          d.ID,
-			Source:      d.Source,
-			Kind:        d.Kind,
-			Container:   d.Container,
-			Author:      d.Author.Display(),
 			ModifiedAt:  d.ModifiedAt,
 			TitleTokens: a.TitleTokens,
 			BodyTokens:  a.BodyTokens,
