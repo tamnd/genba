@@ -150,10 +150,11 @@ func (s *Searcher) collect(ctx context.Context, p *acl.Principal, r store.Reques
 	// See [store.Request.Without].
 	base := r.WithoutFacets()
 	var (
-		out    pool
-		seen   []store.Candidate
-		counts = newDrill(r)
-		walked int
+		out     pool
+		seen    []store.Candidate
+		matched int
+		counts  = newDrill(r)
+		walked  int
 	)
 	take := func(d doc.Document) bool {
 		// The cap is on the walk rather than on the match set, because the walk
@@ -164,7 +165,15 @@ func (s *Searcher) collect(ctx context.Context, p *acl.Principal, r store.Reques
 			return false
 		}
 		walked++
-		if counts.add(d) {
+		if !counts.add(d) {
+			return true
+		}
+		matched++
+		// A selection that asked for no candidates is asking what the counts are,
+		// and the counting is done by the line above. What is skipped here is
+		// re-analysing the document, which is this path's whole cost and is the
+		// same work the drivers skip when they do not run the candidate statement.
+		if sel.Limit > 0 {
 			seen = append(seen, candidateOf(d, r.Terms))
 		}
 		return true
@@ -193,7 +202,7 @@ func (s *Searcher) collect(ctx context.Context, p *acl.Principal, r store.Reques
 	// score that has not been computed yet, so the pool is trimmed after
 	// scoring instead: see [Searcher.Search].
 	out.cands = seen
-	out.total = len(seen)
+	out.total = matched
 	out.facets = counts.facets()
 	// Exact, unless [MaxMatches] stopped the walk, in which case the counts are
 	// over what was walked and are a lower bound like a driver's bounded ones.

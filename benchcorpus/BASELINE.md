@@ -105,10 +105,23 @@ The candidate cut walks it to find the best five hundred, and the counts stateme
 Timed separately on this corpus, with the C build of SQLite so the driver is out of the picture, the candidate cut is 6ms and the counts statement is 7ms for a match set of three thousand.
 Through the Go driver each is roughly one and a half times that, and the rest of the difference between 13ms and 50ms is the classes with larger match sets that the benchmark averages over.
 
-`BenchmarkAPIMe` is the worst number here and it is the first request the interface makes.
-It runs a search with no terms and no filters, so the match set is every document the reader may see, which is fifteen thousand of the twenty thousand.
-It then throws away everything except the source and kind facet lists, which are the same on every page load and change only when somebody indexes a document.
-That is a cache, and it is the next piece of work.
+`BenchmarkAPIMe` was the worst number here and it is the first request the interface makes.
+The 86.8ms in the table above is what it cost when it ran a search with a limit of one to get two facet lists out of it.
+That is not a small search: the candidate pool has a floor of five hundred, so it asked the driver for five hundred documents, scored all five hundred, sorted them, took a page of one, fetched that one and used none of it.
+
+It now asks for the counts and no candidates, which is #141.
+Measured on the twenty thousand document corpus, eight runs of each on the same loaded machine in the same half hour, taking the minimum because the machine is shared and the minimum is the one least contended for:
+
+| | Time | Bytes | Allocations |
+| --- | --- | --- | --- |
+| through a search | 502ms | 491KB | 10,015 |
+| counts and no candidates | 347ms | 60KB | 1,038 |
+
+The times are that machine and not this table's laptop, so read the ratio and not the number.
+At the driver, again minimum of three, the same selection with the pool costs 846ms and without it 316ms.
+
+What is left on this path is a count over every visible document that nobody reads, and four facet groupings where two are used.
+Both are smaller than what was removed and neither is free.
 
 ## What is not met yet
 

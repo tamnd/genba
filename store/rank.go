@@ -29,6 +29,14 @@ type Selection struct {
 	// Limit is the size of the candidate pool. A driver returns at most this
 	// many candidates, and when it is also asked for the counts it counts the
 	// whole match set.
+	//
+	// Zero asks for no candidates at all, which is only legal alongside Counts.
+	// That is the filter rail on its own: how many documents there are of each
+	// source and each kind, with no page under it and nothing to rank. It has to
+	// be sayable because the pool has a floor, so a caller that wants the counts
+	// and no results cannot ask for them by requesting a small page. It ends up
+	// requesting five hundred documents, scoring all of them and reading none,
+	// which is what the first request of every session used to do.
 	Limit int
 
 	// Recent asks for the most recently modified rather than the best matching.
@@ -83,7 +91,9 @@ type Ranked struct {
 	// Truncated reports that the match set was larger than the pool, so the
 	// ranking is over candidates rather than over everything. A caller is
 	// entitled to know which of the two it got. Without the counts there is
-	// nothing to compare the pool against, so it is false.
+	// nothing to compare the pool against, so it is false, and so is it for a
+	// selection that asked for no pool: there is no ranking for it to be a claim
+	// about, and a total next to an empty page would otherwise always report one.
 	Truncated bool
 
 	// Facets are counted over the match set rather than over the page, which is

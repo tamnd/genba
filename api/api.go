@@ -585,14 +585,20 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, p *acl.Princip
 		Sources: []facet{},
 		Kinds:   []facet{},
 	}
-	res, err := s.searcher.Search(r.Context(), p, index.Query{Limit: 1})
+	// The counts and nothing else. This used to run a search with a limit of one,
+	// which is not a cheap search: the candidate pool has a floor, so it asked
+	// the driver for five hundred documents, scored all five hundred, sorted
+	// them, took a page of one and fetched it, and then used none of that. It was
+	// the most expensive endpoint in the product and it is the one that has to
+	// answer before a single pixel can be drawn.
+	facets, err := s.searcher.Filters(r.Context(), p)
 	if err != nil {
 		s.log.Error("bootstrap failed", "error", err, "tenant", p.Tenant)
 		writeError(w, http.StatusInternalServerError, "internal", "the session could not be loaded")
 		return
 	}
-	out.Sources = facetValues(res.Facets["source"])
-	out.Kinds = facetValues(res.Facets["kind"])
+	out.Sources = facetValues(facets["source"])
+	out.Kinds = facetValues(facets["kind"])
 	writeConditional(w, r, http.StatusOK, out, nil)
 }
 
