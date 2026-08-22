@@ -332,6 +332,13 @@ type searchResponse struct {
 	// number on the screen, and the interface writes both the same way.
 	FacetsPartial bool `json:"facets_partial,omitempty"`
 
+	// Answer is the passages worth reading above the list, quoted out of the
+	// documents on this page. Absent whenever there are none, and the interface
+	// draws nothing at all rather than an empty region, because a heading with
+	// no content under it is the most common way an answer surface makes a page
+	// worse than it was.
+	Answer *answer `json:"answer,omitempty"`
+
 	// Correction is a spelling of the query that would have found something. It
 	// is only ever present on a search that found nothing, and it has already
 	// been run as the person asking, so it is a query they can run rather than
@@ -396,6 +403,34 @@ type passage struct {
 	Match bool   `json:"match,omitempty"`
 }
 
+// answer is the wire shape of index.Answer.
+type answer struct {
+	Quotes []quote `json:"quotes"`
+}
+
+// quote is one passage and the document it came from.
+//
+// The document is an id and nothing else. Every quote is taken from a document
+// that is already in the hits of the same response, so the title, the source and
+// the date are on the wire once rather than twice, and there is no way for the
+// citation under a quote to disagree with the result it points at.
+type quote struct {
+	ID       string    `json:"id"`
+	Text     string    `json:"text"`
+	Passages []passage `json:"passages,omitempty"`
+}
+
+func answerOf(a index.Answer) *answer {
+	if len(a.Quotes) == 0 {
+		return nil
+	}
+	out := answer{Quotes: make([]quote, 0, len(a.Quotes))}
+	for _, q := range a.Quotes {
+		out.Quotes = append(out.Quotes, quote{ID: q.ID, Text: q.Text, Passages: passages(q.Passages)})
+	}
+	return &out
+}
+
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Principal) {
 	query, err := parseQuery(r.URL.Query())
 	if err != nil {
@@ -423,6 +458,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Pri
 		FacetsPartial: res.Approximate,
 
 		Hits:       []searchHit{},
+		Answer:     answerOf(res.Answer),
 		Correction: res.Correction,
 	}
 	for _, h := range res.Hits {

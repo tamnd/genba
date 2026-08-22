@@ -600,6 +600,62 @@ async function walk(session) {
     "location.search.includes('q=cache')",
   );
 
+  // The answer above the results.
+  //
+  // The query is one this corpus can answer. A repository is mostly source
+  // files, and a source file is never quoted, so the words here are ones that
+  // appear in the prose in it rather than in the code.
+  await visit(session, `${BASE}/?q=drawer`, "document.querySelectorAll('.result').length > 0");
+  await check(
+    session,
+    "an answer quotes documents that are on the page below it",
+    `(() => {
+      const quotes = [...document.querySelectorAll('.answer__quote')];
+      if (!quotes.length) return false;
+      const titles = [...document.querySelectorAll('.result__title')].map((a) => a.textContent.trim());
+      return quotes.length <= 3 &&
+        quotes.every((q) => titles.includes(q.querySelector('.quote__title').textContent.trim())) &&
+        document.querySelector('.answer__note').textContent.trim().length > 0;
+    })()`,
+  );
+
+  // The layout contract, which is the whole of what this region promises the
+  // list underneath it. There is no stream, so nothing arrives late by design,
+  // and this is the assertion that keeps it that way when one is added.
+  const under = await evaluate(session, "document.querySelector('.result').getBoundingClientRect().top");
+  await check(
+    session,
+    "nothing under the answer moves once the page has painted",
+    `new Promise((done) => setTimeout(
+      () => done(Math.abs(document.querySelector('.result').getBoundingClientRect().top - ${under}) < 1),
+      1200,
+    ))`,
+  );
+
+  const quoted = await evaluate(session, "document.querySelector('.quote__text').textContent");
+  await evaluate(session, "document.querySelector('.quote__cite').click()");
+  await settle(session, "!document.querySelector('.drawer').hidden");
+  await check(
+    session,
+    "one click on a citation opens that document at the sentence that was quoted",
+    `(() => {
+      const marks = [...document.querySelectorAll('.drawer__body mark.hit--passage')];
+      if (!marks.length) return false;
+      const squeeze = (s) => s.replace(/\\s+/g, '');
+      const found = squeeze(marks.map((m) => m.textContent).join(''));
+      return location.search.includes('at=') &&
+        squeeze(${JSON.stringify(quoted)}).includes(found) &&
+        marks.some((m) => m.classList.contains('hit--current'));
+    })()`,
+  );
+
+  await press(session, "Escape", "Escape", 27);
+  await check(
+    session,
+    "closing it takes the passage out of the address along with the document",
+    "!location.search.includes('at=') && !location.search.includes('open=')",
+  );
+
   // The grid. The pictures behind this query are written into the corpus by the
   // gate before the server starts, because the repository itself holds none.
   await visit(session, `${BASE}/?q=gatepix`, "document.querySelectorAll('.cell').length > 0");
@@ -609,6 +665,17 @@ async function walk(session) {
     "a page of nothing but images opens as a grid",
     `document.querySelector('.results__list').dataset.view === 'grid' &&
       document.querySelectorAll('.result').length === 0`,
+  );
+
+  // A page of pictures has nothing to quote, and the region that would hold the
+  // quotes is not on the page rather than on it and empty.
+  await check(
+    session,
+    "a search with nothing worth quoting draws no answer region at all",
+    `(() => {
+      const region = document.querySelector('.answer');
+      return region.hidden && region.childElementCount === 0;
+    })()`,
   );
 
   // The assertion the endpoint exists for. Twenty four pictures at a megabyte

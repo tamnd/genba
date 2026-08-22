@@ -395,6 +395,94 @@ async function run(session) {
     `),
   );
 
+  // The answer region, whose first duty is to not be there. Every search that
+  // has nothing worth quoting has to leave the page exactly as it was, so the
+  // empty case is asserted before the drawn one.
+  await check(
+    session,
+    "the answer region is absent until there is something quoted, and then it quotes",
+    expr(`
+      const { Answer } = await import('genba/answer.js');
+      const hits = [{ id: 'x', title: 'Runbook', source: 'repo' }];
+      const a = new Answer({ onCite: () => {} });
+      a.render({ hits, answer: null });
+      const gone = a.el.hidden && a.el.childNodes.length === 0;
+      a.render({
+        hits,
+        answer: { quotes: [{ id: 'x', text: 'The cache is warmed at start up.', passages: [
+          { text: 'The ' }, { text: 'cache', match: true }, { text: ' is warmed at start up.' },
+        ] }] },
+      });
+      const cite = a.el.querySelector('.quote__cite');
+      return gone && !a.el.hidden &&
+        a.el.querySelectorAll('.answer__quote').length === 1 &&
+        a.el.querySelector('.quote__text').textContent === 'The cache is warmed at start up.' &&
+        a.el.querySelector('.quote__text mark.hit').textContent === 'cache' &&
+        cite.getAttribute('aria-label') === 'Open Runbook at this passage' &&
+        cite.getAttribute('href').includes('at=') && cite.getAttribute('href').includes('open=x');
+    `),
+  );
+
+  // A quote whose document is not on the page below it has nothing to cite, and
+  // a citation that leads nowhere is the failure the whole region is built to
+  // avoid.
+  await check(
+    session,
+    "a quote is dropped when the document it cites is not on the page",
+    expr(`
+      const { Answer } = await import('genba/answer.js');
+      const a = new Answer({ onCite: () => {} });
+      a.render({
+        hits: [{ id: 'y', title: 'Notes', source: 'repo' }],
+        answer: { quotes: [{ id: 'x', text: 'The cache is warmed at start up.' }] },
+      });
+      return a.el.hidden && a.el.childNodes.length === 0;
+    `),
+  );
+
+  // The quote was cut out of the source, where the whitespace is whatever the
+  // author typed, and it is looked for in the rendered document, where the same
+  // sentence is split across three nodes by a bold word. Neither side's spacing
+  // is the other's, so neither side's spacing is compared.
+  await check(
+    session,
+    "a cited passage is found through inline markup and through changed whitespace",
+    expr(`
+      const { passage } = await import('genba/marks.js');
+      const box = document.createElement('div');
+      box.innerHTML = '<p>The <b>cache</b>\\n  is warmed\\n  at start up.</p><p>Nothing else.</p>';
+      const at = passage(box, 'The cache  is warmed at start up.');
+      const squeeze = (s) => s.replace(/\\s+/g, '');
+      const marks = [...box.querySelectorAll('mark.hit--passage')];
+      const other = document.createElement('div');
+      other.innerHTML = '<p>A paragraph about something entirely different.</p>';
+      return Boolean(at) && marks.length === 3 &&
+        squeeze(marks.map((m) => m.textContent).join('')) === squeeze('The cache is warmed at start up.') &&
+        squeeze(box.textContent) === squeeze('The cache is warmed at start up. Nothing else.') &&
+        passage(other, 'The cache is warmed at start up.') === null;
+    `),
+  );
+
+  await check(
+    session,
+    "a document opened from a citation opens at the sentence rather than at the first word",
+    expr(`
+      const { body } = await import('genba/content.js');
+      const out = body(
+        {
+          id: 'repo:notes.md',
+          media_type: 'text/markdown',
+          body: '# Notes\\n\\nThe first paragraph.\\n\\nThe cache is warmed at start up.\\n',
+        },
+        { query: 'cache', at: 'The cache is warmed at start up.' },
+      );
+      const cited = out.querySelector('mark.hit--passage');
+      return Boolean(cited) &&
+        cited.textContent === 'The cache is warmed at start up.' &&
+        out.querySelectorAll('mark.hit').length === 1;
+    `),
+  );
+
   await check(
     session,
     "a body the extractor could not read to the end says which half is missing",

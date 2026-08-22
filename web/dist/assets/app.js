@@ -89,7 +89,8 @@ class App {
       // Explicitly the search, because the box is on every screen and a search
       // run from the recent screen is a search rather than a recent screen with
       // a query string on it.
-      onSearch: (text) => this.go({ ...this.query, q: text, offset: 0, open: "" }, { path: "/" }),
+      onSearch: (text) =>
+        this.go({ ...this.query, q: text, offset: 0, open: "", at: "" }, { path: "/" }),
       onOpen: (id) => this.open(id),
       onHighlight: (item) => this.guessSuggestion(item),
     });
@@ -99,6 +100,7 @@ class App {
       onHover: (id) => this.guessDocument(id),
       onSay: (text) => this.say(text),
       onCursor: (i) => this.rememberCursor(i),
+      onCite: (id, text) => this.cite(id, text),
     });
     this.home = new Home({
       onQuery: (q) => this.go({ ...urlState.read(""), ...q }, { path: "/" }),
@@ -112,7 +114,7 @@ class App {
     });
     this.drawer = new Drawer({
       onClose: () => {
-        this.go({ ...this.query, open: "" }, { replace: true });
+        this.go({ ...this.query, open: "", at: "" }, { replace: true });
         // Back to the row it was opened from rather than to the top of the
         // page, which is the whole reason the cursor is in the URL.
         const rows = this.rows();
@@ -554,9 +556,13 @@ class App {
     else if (searching) this.search();
     else this.showHome();
 
-    if (this.query.open && this.drawer.currentId !== this.query.open) {
-      this.drawer.currentId = this.query.open;
-      this.drawer.show(this.query.open, this.query.q);
+    // The passage is part of what is on screen, not only the document. Two
+    // quotes out of the same document are two different places to be sent to,
+    // and comparing the id alone would make the second citation do nothing.
+    const showing = this.query.open && `${this.query.open}\n${this.query.at}`;
+    if (this.query.open && this.drawer.currentId !== showing) {
+      this.drawer.currentId = showing;
+      this.drawer.show(this.query.open, this.query.q, this.query.at);
     } else if (!this.query.open) {
       this.drawer.currentId = null;
       if (this.drawer.open) this.drawer.close();
@@ -1008,8 +1014,26 @@ class App {
    */
   open(id, ahead = 1) {
     this.record(id);
-    this.go({ ...this.query, open: id }, { replace: true });
+    // The passage goes with the document it was quoted from. Opening a row is a
+    // request to read that document from the top, and a passage left over from
+    // the last citation would scroll it to somewhere nobody asked to be.
+    this.go({ ...this.query, open: id, at: "" }, { replace: true });
     this.guessNeighbour(ahead);
+  }
+
+  /**
+   * cite opens the document a quote came from, at the quote.
+   *
+   * It goes through the preview rather than anything of its own, so a citation
+   * lands in the same viewer as a result row, with the same keys, the same way
+   * out and the neighbour already fetched. The only difference is the passage it
+   * carries, and that is a parameter on the address rather than a mode the
+   * drawer is put into, so the link can be copied and it still lands there.
+   */
+  cite(id, text) {
+    this.record(id);
+    this.go({ ...this.query, open: id, at: text }, { replace: true });
+    this.guessNeighbour(1);
   }
 
   /**
@@ -1169,7 +1193,7 @@ class App {
     const limit = this.query.limit || 20;
     const offset = (this.query.offset || 0) + delta * limit;
     if (offset < 0 || offset >= this.results.total) return false;
-    this.go({ ...this.query, offset, open: "" });
+    this.go({ ...this.query, offset, open: "", at: "" });
     return true;
   }
 

@@ -632,6 +632,162 @@ time {
   color: var(--text);
 }
 
+/* Answer ----------------------------------------------------------------- */
+
+/*
+ * The quoted passages above the results.
+ *
+ * The violet reserved for generated content is deliberately not used here, and
+ * that is the point of the region rather than an omission. Nothing in it was
+ * generated, so nothing in it may wear the colour that says something was. The
+ * day there is a model behind this, the generated part gets the violet rule and
+ * these quotes keep the grey one, and the difference between the two will be
+ * visible from across the room.
+ *
+ * What separates the document's words from the product's here is size. The
+ * quotes are set at reading size with prose leading, the way a paragraph of a
+ * document is set anywhere else in this interface, and everything the product
+ * says about them is small, grey and out of the way. A reader who only glances
+ * sees a passage of a document, which is what it is.
+ */
+.answer {
+  margin-bottom: var(--space-6);
+}
+
+.answer[hidden] {
+  display: none;
+}
+
+/* No card, no border, no shadow and no fill. The region is on the page rather
+   than in a box on the page, which is what keeps it from reading as an
+   advertisement above the results somebody asked for. */
+.answer__panel {
+  padding: var(--space-2) var(--space-4) 0;
+}
+
+.answer__head {
+  margin-bottom: var(--space-5);
+}
+
+.answer__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-small);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* No measure on it. It is one sentence of chrome, and holding it to the reading
+   width of a paragraph breaks it into a line and an orphan on a wide window. */
+.answer__note {
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--leading-caption);
+}
+
+.answer__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.answer__quote + .answer__quote {
+  margin-top: var(--space-6);
+}
+
+/* The rule down the left is the whole of the quotation mark. Anything heavier
+   around a passage that is already set apart by its size is decoration. */
+.quote {
+  margin: 0;
+  padding-left: var(--space-4);
+  border-left: 3px solid var(--border-control);
+}
+
+.quote__text {
+  max-width: var(--measure);
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-lead);
+  line-height: var(--leading-prose);
+}
+
+.quote__cite {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  margin-top: var(--space-2);
+  margin-left: calc(var(--space-4) + 3px);
+  padding: var(--space-1) 0;
+  color: var(--text-secondary);
+  font-size: var(--text-small);
+  text-decoration: none;
+}
+
+.quote__cite:hover {
+  color: var(--text-link);
+}
+
+.quote__cite:hover .quote__title {
+  text-decoration: underline;
+}
+
+.quote__title {
+  overflow: hidden;
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.quote__where {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* It moves on hover and not before. An arrow that is always a few pixels along
+   is an arrow nobody notices has moved. */
+.quote__cite svg {
+  flex: none;
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.quote__cite:hover svg {
+  transform: translateX(2px);
+}
+
+/*
+ * The passage a citation sent somebody to, inside the document it is in.
+ *
+ * A wash over the whole sentence rather than the two pixel rule the matched
+ * words get, because this is a place rather than a word: it is the answer to
+ * where am I, asked by somebody who has just been moved down a long document.
+ * A rule cannot answer it anyway. The rule is drawn on a pseudo element, and a
+ * sentence long enough to be worth quoting wraps, and a pseudo element on an
+ * inline that wraps is drawn on the first line of it and nowhere else.
+ *
+ * The weight is left alone on purpose. A sentence that turns semibold when it
+ * is highlighted reflows the paragraph around it, and the paragraph is what the
+ * reader is trying to read.
+ *
+ * The class is doubled so this wins over the walk state below it. A mark can be
+ * both the cited passage and the match the reader has walked to, and when it is
+ * both it is the passage: the rule for a current match is a word sized rule and
+ * would leave the rest of the sentence unmarked.
+ */
+mark.hit.hit--passage {
+  background: var(--mark-wash);
+  border-radius: var(--radius-xs);
+  box-decoration-break: clone;
+  font-weight: inherit;
+  -webkit-box-decoration-break: clone;
+}
+
+mark.hit.hit--passage::after {
+  content: none;
+}
+
 /* Results ---------------------------------------------------------------- */
 
 .results {

@@ -171,6 +171,12 @@ type Results struct {
 	// start moving together is the day the first phase stopped cutting.
 	Candidates int
 
+	// Answer is what the corpus already says about the query, quoted out of the
+	// documents on this page. It is empty on a query with no terms, on a browse
+	// sorted by date, on any page but the first, and whenever nothing on the
+	// page held a passage worth reading on its own. See [Answer].
+	Answer Answer
+
 	// Correction is a spelling of the query that would have found something,
 	// and is empty when there is none or when the query found results of its
 	// own. It is a query rather than a word so that the interface has something
@@ -385,6 +391,16 @@ func (s *Searcher) Search(ctx context.Context, p *acl.Principal, q Query) (Resul
 		hit := Result{Document: full, Score: r.score}
 		hit.Snippet, hit.Passages = snippet(full, req.Terms)
 		res.Hits = append(res.Hits, hit)
+	}
+
+	// An answer belongs to a question, and only the first page of one. Somebody
+	// on page four is reading a list rather than asking something, somebody
+	// sorting by date is asking what changed rather than what is true, and a
+	// query with no terms in it has asked nothing to answer. In all three the
+	// region is absent, which is the state the interface is built around: its
+	// absence changes the layout of nothing below it.
+	if q.Offset == 0 && q.Sort != ByRecent {
+		res.Answer = answer(res.Hits, req.Terms)
 	}
 	res.Took = s.now().Sub(start)
 	return res, nil
