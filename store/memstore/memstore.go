@@ -58,6 +58,8 @@ var (
 	_ store.Statistician = (*Store)(nil)
 	_ store.Speller      = (*Store)(nil)
 	_ store.Notifier     = (*Store)(nil)
+	_ store.Quarantine   = (*Store)(nil)
+	_ store.Access       = (*Store)(nil)
 )
 
 // Put inserts or replaces documents.
@@ -355,6 +357,37 @@ func (s *Store) Quarantined(ctx context.Context, tenant string, limit int) ([]st
 		if len(out) == limit {
 			break
 		}
+	}
+	return out, nil
+}
+
+// Reachable counts what one principal may read, by source.
+//
+// It is the same decision Scan makes, taken over the same map, and it is a
+// separate method because the counting is the point: Scan hands back documents
+// and this hands back four numbers, and on a driver whose documents are already
+// in memory that difference is the whole cost of the answer.
+func (s *Store) Reachable(ctx context.Context, p *acl.Principal) ([]store.Reach, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if p == nil {
+		return nil, genba.ErrNoPrincipal
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return nil, genba.ErrClosed
+	}
+	counts := make(map[string]int)
+	for _, d := range s.docs {
+		if visible(p, d) {
+			counts[d.Source]++
+		}
+	}
+	out := make([]store.Reach, 0, len(counts))
+	for source, n := range counts {
+		out = append(out, store.Reach{Source: source, Documents: n})
 	}
 	return out, nil
 }
