@@ -159,6 +159,21 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		api.WithIndexing(track.State),
 		api.WithOperations(ops.State),
 	}
+
+	// A connector can be added from the interface only where the driver can
+	// remember one across a restart. Offering the form on a driver that cannot
+	// would be offering somebody a connector that disappears at the next
+	// deployment, so a deployment without the capability is told where its
+	// connectors are configured instead. See [supervisor].
+	var sup *supervisor
+	if feeds, ok := st.(store.Feeds); ok && cfg.Tenant != "" {
+		creds := credentials{Access: bucket.Access, Secret: bucket.Secret, Session: bucket.Session}
+		sup = newSupervisor(st, feeds, cfg.Tenant, creds, track, ops, log)
+		opts = append(opts, api.WithSupervisor(sup))
+	} else {
+		log.Info("connectors are configured on the command line",
+			"store", cfg.Store, "tenant", cfg.Tenant)
+	}
 	if h := web.Handler(); h != nil {
 		opts = append(opts, api.WithAssets(h))
 	}
@@ -192,6 +207,24 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return err
 	}
 	defer waitForBucket()
+
+	// The connectors that were configured through the interface start after the
+	// ones on the command line, and after those have claimed their names. A
+	// stored connector that has since been given the same name in a unit file
+	// does not start, because two crawlers writing the same document ids from
+	// two different places leave an index that is whichever of them ran last.
+	if sup != nil {
+		if corpus.Dir != "" {
+			sup.fix(corpus.Name)
+		}
+		if bucket.Bucket != "" {
+			sup.fix(bucket.Name)
+		}
+		if err := sup.restore(ctx); err != nil {
+			return err
+		}
+		defer sup.stop()
+	}
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,

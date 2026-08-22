@@ -131,12 +131,17 @@ Everything the interface does is an HTTP call, and there is nothing it can reach
 | `GET /api/v1/stats` | how much is indexed and how much is quarantined |
 | `GET /api/v1/admin/operations` | what the connectors are doing, and what is being held back and why |
 | `GET /api/v1/admin/access` | whether one named person can read one document, and why |
+| `POST /api/v1/admin/connectors` | adds a connector, or replaces one, and starts it |
+| `DELETE /api/v1/admin/connectors/{source}` | stops a connector and forgets how it was configured |
+| `POST /api/v1/admin/connectors/{source}/start` | switches one back on |
+| `POST /api/v1/admin/connectors/{source}/stop` | switches one off and keeps its settings |
+| `POST /api/v1/admin/connectors/{source}/sync` | asks a running connector for a run now |
 | `GET /healthz`, `GET /readyz` | liveness, and whether the store answers |
 
 `search` takes `q` for the text and the operators, and `source`, `kind`, `container`, `author` and `owner` as repeated or comma separated parameters, plus `since`, `until`, `sort`, `limit` and `offset`.
 The snippet comes back as marked passages rather than as offsets, so a client highlights what the analyzer matched without reimplementing the analyzer.
 
-Both `admin` endpoints need the `admin` role, which comes from `X-Genba-Roles` or from `GENBA_ADMINS`, and the default is that nobody has it.
+Every `admin` endpoint needs the `admin` role, which comes from `X-Genba-Roles` or from `GENBA_ADMINS`, and the default is that nobody has it.
 The role grants nothing over documents and it must not start to.
 Both the reads and the refusals are logged with the subject.
 
@@ -144,6 +149,14 @@ Both the reads and the refusals are logged with the subject.
 It answers as that person, by the same rule a search applies, and it never returns a document or a title.
 A yes about a document says which clause admitted them and which group or account it matched; a no says nothing further, because the difference between held back, another tenant, not on the list and not there would prove a document exists.
 The counts are asked for rather than always returned because they are an aggregate over every document in the tenant, and the log line names both the operator and the person they asked about.
+
+The `connectors` endpoints take a source name, a kind of `corpus` or `bucket`, and the settings for that kind as a JSON object, and they answer with the same connector list `admin/operations` returns.
+Settings that cannot be run are refused before they are written down, so a directory that is not there is a message about that directory rather than a connector that fails in a log line a minute later.
+The configuration is kept in the store, which is what lets three servers behind a load balancer agree on what is being crawled, and it needs a driver that can hold it: `sqlite` and `postgres` can, `memory` forgets it at the next restart, and a deployment whose driver cannot is told so by `manageable` on the same response.
+Removing a connector forgets how a corpus was read and leaves the corpus, because the two are different decisions and a full crawl is an expensive undo.
+Credentials are not part of any of this and are never stored: a bucket added here uses the keys the process already has in its environment.
+A connector named on the command line is on the screen because it is running and cannot be changed here, since the next restart would read the command line again and undo whatever was typed.
+`sync` returns as soon as the run has been asked for, because a crawl of a real source takes minutes and a request that waited for one would time out in the middle of it.
 
 By default every file in the corpus is readable by everybody in the tenant, which is the right rule for a public checkout and the wrong one for almost anything else.
 If the tree has OWNERS files in it, `-corpus-acl owners` reads them instead, and a query then returns different results depending on who is asking.

@@ -232,6 +232,34 @@ var migrations = []step{
 	// partial index it offers one equality column, a source filter beats it on
 	// its own index, and the browse query still gets its ordering for free.
 	ddl(`CREATE INDEX document_recent ON document (tenant, modified_at DESC, id) WHERE queryable = 1`),
+
+	// feed is how the connectors were configured, so that a connector somebody
+	// added from the interface is still there after a restart.
+	//
+	// It is the first table here that is not a document or derived from one,
+	// and it is the only one with no foreign key to document on purpose. A feed
+	// and the documents it produced are joinable by (tenant, source) and are
+	// deliberately not tied together: dropping a feed forgets how a corpus was
+	// read and leaves the corpus, because the alternative makes an operator's
+	// undo cost a full crawl.
+	//
+	// config is JSON the store never reads. A bucket has an endpoint and a
+	// region, a directory has a path and a policy, and a column per setting
+	// would be a migration every time a connector grew a field. Credentials are
+	// not in it and are not anywhere in this database.
+	//
+	// created and updated are unix nanoseconds, the same as modified_at above.
+	ddl(`CREATE TABLE feed (
+		tenant  TEXT    NOT NULL,
+		source  TEXT    NOT NULL,
+		kind    TEXT    NOT NULL,
+		enabled INTEGER NOT NULL,
+		config  TEXT    NOT NULL,
+		by_subject TEXT NOT NULL,
+		created INTEGER NOT NULL,
+		updated INTEGER NOT NULL,
+		PRIMARY KEY (tenant, source)
+	) WITHOUT ROWID`),
 }
 
 // backfill recomputes the ranking statistics for every document already stored.

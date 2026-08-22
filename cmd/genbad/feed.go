@@ -46,6 +46,16 @@ type feed struct {
 	// after every sync.
 	Reconcile time.Duration
 
+	// Managed says this feed was configured through the interface rather than
+	// on the command line, which is what decides whether it can be changed from
+	// there. See [supervisor].
+	Managed bool
+
+	// Trigger asks for a sync now rather than at the next interval. A nil one
+	// is a feed nothing can hurry, which is every feed that came from a flag:
+	// there is nothing on the command line to press.
+	Trigger <-chan struct{}
+
 	// Fields say where the documents came from and are on every line this feed
 	// logs.
 	Fields []any
@@ -118,6 +128,8 @@ func runFeed(ctx context.Context, st store.Store, f feed, log *slog.Logger) (fun
 			Target:  f.Target,
 			Tenant:  f.Tenant,
 			Refresh: refreshOf(f.Refresh),
+			Enabled: true,
+			Managed: f.Managed,
 		}, f.Policy)
 	}
 
@@ -196,16 +208,26 @@ func runFeed(ctx context.Context, st store.Store, f feed, log *slog.Logger) (fun
 		if tracked {
 			f.Track.finished(source)
 		}
-		if f.Refresh <= 0 {
+		// A nil channel blocks forever in a select, which is what gives a feed
+		// with no interval and nothing to hurry it the same shape as one with
+		// both, instead of an early return that would have to be undone the
+		// moment either of them exists.
+		var tick <-chan time.Time
+		if f.Refresh > 0 {
+			t := time.NewTicker(f.Refresh)
+			defer t.Stop()
+			tick = t.C
+		}
+		if tick == nil && f.Trigger == nil {
 			return
 		}
-		t := time.NewTicker(f.Refresh)
-		defer t.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-t.C:
+			case <-tick:
+				sync(ctx)
+			case <-f.Trigger:
 				sync(ctx)
 			}
 		}

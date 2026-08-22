@@ -204,6 +204,20 @@ func ingestBucket(ctx context.Context, st store.Store, cfg bucketOptions, tenant
 		return nil, errors.New("ingesting a bucket needs -tenant")
 	}
 
+	f, err := bucketFeed(cfg, tenant, track, ops, log)
+	if err != nil {
+		return nil, err
+	}
+	f.Managed = false
+	return runFeed(ctx, st, f, log)
+}
+
+// bucketFeed builds the object storage connector, ready to run.
+//
+// It is split out for the same reason [corpusFeed] is: a connector added from
+// the interface has to be built the same way as one named on the command line,
+// and the way that goes wrong is two copies of this that drift apart.
+func bucketFeed(cfg bucketOptions, tenant string, track *indexing, ops *operations, log *slog.Logger) (feed, error) {
 	// Every request the bucket makes, for listings, for permissions and for the
 	// objects themselves, goes out through one transport, because the quota they
 	// are spending is one quota. Sharing it is the whole reason the limiter is a
@@ -223,7 +237,7 @@ func ingestBucket(ctx context.Context, st store.Store, cfg bucketOptions, tenant
 		Timeout:   patience(cfg.limits()),
 	}))
 	if err != nil {
-		return nil, err
+		return feed{}, err
 	}
 
 	// The policy is built on the same client as the source, so that what the
@@ -231,7 +245,7 @@ func ingestBucket(ctx context.Context, st store.Store, cfg bucketOptions, tenant
 	// counters rather than two that have to be added up by hand.
 	policy, err := bucketPolicyFor(client, cfg)
 	if err != nil {
-		return nil, err
+		return feed{}, err
 	}
 
 	src, err := objectsource.New(client, cfg.Name, policy,
@@ -245,10 +259,10 @@ func ingestBucket(ctx context.Context, st store.Store, cfg bucketOptions, tenant
 		}),
 	)
 	if err != nil {
-		return nil, err
+		return feed{}, err
 	}
 
-	return runFeed(ctx, st, feed{
+	return feed{
 		Kind:      "bucket",
 		Source:    src,
 		Target:    cfg.Bucket,
@@ -261,7 +275,7 @@ func ingestBucket(ctx context.Context, st store.Store, cfg bucketOptions, tenant
 		Track:     track,
 		Ops:       ops,
 		Release:   func() { _ = src.Close() },
-	}, log)
+	}, nil
 }
 
 // requesting is what the bucket cost, for the sync log line.

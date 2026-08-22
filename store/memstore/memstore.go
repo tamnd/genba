@@ -41,6 +41,11 @@ type Store struct {
 	// opens is what each person has been reading, keyed by tenant and subject.
 	opens map[[2]string]*opened
 
+	// feeds is how the connectors were configured, keyed by tenant and source.
+	// It is in memory like everything else here, so a restart forgets it, which
+	// is the documented behaviour of this driver rather than an oversight.
+	feeds map[[2]string]store.Feed
+
 	closed bool
 }
 
@@ -50,6 +55,7 @@ func New() *Store {
 		docs:    make(map[string]doc.Document),
 		content: make(map[string]doc.Content),
 		opens:   make(map[[2]string]*opened),
+		feeds:   make(map[[2]string]store.Feed),
 	}
 }
 
@@ -60,6 +66,7 @@ var (
 	_ store.Notifier     = (*Store)(nil)
 	_ store.Quarantine   = (*Store)(nil)
 	_ store.Access       = (*Store)(nil)
+	_ store.Feeds        = (*Store)(nil)
 )
 
 // Put inserts or replaces documents.

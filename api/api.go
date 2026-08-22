@@ -92,6 +92,11 @@ type Server struct {
 	// same answer as no connectors.
 	operations func() Operations
 
+	// supervisor is what can change the connectors. It is nil for a deployment
+	// that configures them on the command line, and a nil one is what makes the
+	// administration screen say so rather than draw a form nothing is behind.
+	supervisor Supervisor
+
 	// heartbeat is how often an idle event stream sends a comment.
 	heartbeat time.Duration
 
@@ -226,6 +231,11 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/events", s.authenticated(s.handleEvents))
 	mux.Handle("GET /api/v1/admin/operations", s.admin(s.handleAdmin))
 	mux.Handle("GET /api/v1/admin/access", s.admin(s.handleAccess))
+	mux.Handle("POST /api/v1/admin/connectors", s.admin(s.handleAddConnector))
+	mux.Handle("DELETE /api/v1/admin/connectors/{source}", s.admin(s.handleDropConnector))
+	mux.Handle("POST /api/v1/admin/connectors/{source}/start", s.admin(s.handleStartConnector))
+	mux.Handle("POST /api/v1/admin/connectors/{source}/stop", s.admin(s.handleStopConnector))
+	mux.Handle("POST /api/v1/admin/connectors/{source}/sync", s.admin(s.handleSyncConnector))
 	if s.assets != nil {
 		mux.Handle("GET /", s.assets)
 	}
