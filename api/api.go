@@ -82,6 +82,11 @@ type Server struct {
 	// reporting one it was not there for.
 	indexed atomic.Int64
 
+	// indexing is asked, on every health check and every stats request, whether
+	// a source is still being read for the first time. It is nil for an embedder
+	// that runs no connectors, and a nil one is the same answer as no.
+	indexing func() (Indexing, bool)
+
 	// heartbeat is how often an idle event stream sends a comment.
 	heartbeat time.Duration
 
@@ -132,6 +137,30 @@ func WithClock(now func() time.Time) Option {
 // storage, which is what an embedder that never chose a driver name should say.
 func WithDriver(name string) Option {
 	return func(s *Server) { s.driver = name }
+}
+
+// Indexing is one source being read for the first time.
+//
+// Done and Total count the same thing, which is documents this source will put
+// in the index, and Total is an estimate: it is what the source held when the
+// run counted it, and a source people are working in moves while it is read.
+// That is why the interface says "about" and why nothing here should be used
+// for anything but telling somebody the answer they are looking at is not the
+// whole one yet.
+type Indexing struct {
+	Source string `json:"source"`
+	Done   int    `json:"done"`
+	Total  int    `json:"total"`
+}
+
+// WithIndexing supplies the answer to whether a source is still being read.
+//
+// The caller owns the tracking, because the thing that knows is whatever is
+// running the connectors and this package deliberately does not. An embedder
+// that indexes on its own schedule passes its own function and gets the same
+// banner for free.
+func WithIndexing(fn func() (Indexing, bool)) Option {
+	return func(s *Server) { s.indexing = fn }
 }
 
 // WithHeartbeat sets how often an idle event stream sends a comment. It exists
@@ -240,16 +269,46 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+type readyResponse struct {
+	Status string `json:"status"`
+
+	// Indexing says a source is still being read for the first time, so the
+	// answers this process gives are true and incomplete.
+	//
+	// It is a bare boolean rather than the counts the stats endpoint reports,
+	// because this endpoint is unauthenticated and how large somebody's corpus
+	// is and what their sources are called is not for anybody who can reach the
+	// port. A probe needs to know whether to wait. It does not need to know what
+	// it is waiting for.
+	Indexing bool `json:"indexing,omitempty"`
+}
+
 // handleReady reports whether the process can serve queries. It touches the
 // store, because a process that is up but cannot reach its storage is not ready
 // and a load balancer needs to know the difference.
+//
+// A process that is still reading a source for the first time is ready. It
+// answers, the answers are correct as far as they go, and holding the whole
+// deployment out of rotation until a crawl finishes is how a rolling restart
+// turns into an outage. The flag is there so that a caller who does care, which
+// in practice is a benchmark rather than a load balancer, can wait.
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.store.Stats(r.Context()); err != nil {
 		s.log.Warn("readiness check failed", "error", err)
 		writeError(w, http.StatusServiceUnavailable, "not_ready", "storage is not available")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+	_, indexing := s.stillIndexing()
+	writeJSON(w, http.StatusOK, readyResponse{Status: "ready", Indexing: indexing})
+}
+
+// stillIndexing asks whoever is running the connectors whether one of them is
+// still reading a source for the first time.
+func (s *Server) stillIndexing() (Indexing, bool) {
+	if s.indexing == nil {
+		return Indexing{}, false
+	}
+	return s.indexing()
 }
 
 type searchResponse struct {
@@ -790,6 +849,15 @@ type statsResponse struct {
 	// to anybody who can reach the port.
 	Driver    string `json:"driver,omitempty"`
 	IndexedAt string `json:"indexed_at,omitempty"`
+
+	// Indexing is the source being read for the first time, and is absent when
+	// nothing is, which is the ordinary case.
+	//
+	// It is a pointer so that absent means absent. The interface renders its
+	// banner on the key being there and never has to compare two numbers to
+	// work out whether a sync is running, which is what stops it flickering the
+	// banner on every refresh of a corpus that is already complete.
+	Indexing *Indexing `json:"indexing,omitempty"`
 }
 
 // handleStats reports the corpus and the cache counters.
@@ -811,12 +879,17 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request, _ *acl.Prin
 	h := w.Header()
 	h.Set("Cache-Control", cacheControl)
 	h.Set(varyHeader, varyValue)
+	var indexing *Indexing
+	if current, ok := s.stillIndexing(); ok {
+		indexing = &current
+	}
 	writeJSON(w, http.StatusOK, statsResponse{
 		Documents:   st.Documents,
 		Quarantined: st.Quarantined,
 		Cache:       s.cacheStats(),
 		Driver:      s.driver,
 		IndexedAt:   s.indexedAt(),
+		Indexing:    indexing,
 	})
 }
 

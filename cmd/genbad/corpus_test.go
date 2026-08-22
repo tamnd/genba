@@ -116,7 +116,7 @@ func TestAStartedServerAnswersQueriesAboutTheCorpus(t *testing.T) {
 		}
 	}()
 
-	waitForHealth(t, "http://"+addr+"/healthz")
+	waitForIndex(t, "http://"+addr)
 
 	res := searchAs(t, addr, "alice", "deploying")
 	if res.Total == 0 {
@@ -170,7 +170,7 @@ func TestOwnersDecideWhatAQueryReturns(t *testing.T) {
 		}
 	}()
 
-	waitForHealth(t, "http://"+addr+"/healthz")
+	waitForIndex(t, "http://"+addr)
 
 	// bob approves the guides directory and alice approves the root, which the
 	// guides OWNERS file replaced.
@@ -220,7 +220,7 @@ func TestADeletedFileStopsComingBack(t *testing.T) {
 		}
 	}()
 
-	waitForHealth(t, "http://"+addr+"/healthz")
+	waitForIndex(t, "http://"+addr)
 
 	if got := searchAs(t, addr, "alice", "deploying"); got.Total == 0 {
 		t.Fatal("the file was not indexed in the first place")
@@ -280,7 +280,7 @@ func TestAWatchedCorpusKeepsUpWithTheTree(t *testing.T) {
 		}
 	}()
 
-	waitForHealth(t, "http://"+addr+"/healthz")
+	waitForIndex(t, "http://"+addr)
 
 	if got := searchAs(t, addr, "alice", "deploying"); got.Total == 0 {
 		t.Fatal("the first sync did not index the tree")

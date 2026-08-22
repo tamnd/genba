@@ -224,6 +224,22 @@ export function number(n) {
   return NUMBER.format(n || 0);
 }
 
+/**
+ * roughly renders an estimate as an estimate.
+ *
+ * A count of a tree that is still being walked is not exact and printing it to
+ * the unit says it is. Twenty two thousand two hundred and thirty five is a
+ * claim about a number nobody counted; twenty two thousand is the same
+ * information without the claim, and it is what somebody reads off the line
+ * anyway.
+ */
+export function roughly(n) {
+  const size = Number(n) || 0;
+  if (size < 100) return number(size);
+  const step = size < 1000 ? 10 : size < 10000 ? 100 : 1000;
+  return number(Math.round(size / step) * step);
+}
+
 /** duration renders the server's own timing, rounded to something readable. */
 export function duration(ms) {
   if (ms === undefined || ms === null) return "";

@@ -11,7 +11,7 @@ import { cache } from "genba/cache.js";
 import { Live } from "genba/live.js";
 import { copies, copy } from "genba/clipboard.js";
 import * as urlState from "genba/state.js";
-import { icon, initials, label, number, sourceColor, when } from "genba/format.js";
+import { icon, initials, label, number, roughly, sourceColor, when } from "genba/format.js";
 import { Omnibox } from "genba/omnibox.js";
 import { CHORD, CHORD_TIMEOUT, SHORTCUTS, arms, binding, keysOf } from "genba/keys.js";
 import { apply as applyPrefs, density, setDensity, setTheme } from "genba/prefs.js";
@@ -157,7 +157,12 @@ class App {
       "aria-atomic": "true",
     });
 
+    // One banner, two things that can put something in it. Being offline and a
+    // source still being read are unrelated and can both be true, and there is
+    // one row above the content for either of them to say so in.
     this.banner = h("div", { class: "banner", role: "status", hidden: true });
+    this.offline = false;
+    this.indexing = null;
 
     this.rail = this.buildRail();
     this.header = this.buildHeader();
@@ -525,6 +530,7 @@ class App {
 
   /** sync renders whatever the URL currently says. */
   sync() {
+    this.askWhatIsLeft();
     // Three routes: a document and the recent list by path, and everything else
     // by query string. A document is the only screen somebody links to from
     // outside the product, which is why it is the only one with an address that
@@ -800,25 +806,86 @@ class App {
    * more useful page than an error.
    */
   connection(online) {
-    this.banner.hidden = online;
+    this.offline = !online;
     clearInterval(this.bannerTimer);
+    this.showBanner();
     if (online) return;
-    this.sayHowOld();
-    // The age is the whole point of the banner, so it keeps counting. A tab
-    // left open through a long outage would otherwise still claim its results
-    // are six seconds old.
-    this.bannerTimer = setInterval(() => this.sayHowOld(), BANNER_TICK);
+    // The age is the whole point of the offline banner, so it keeps counting. A
+    // tab left open through a long outage would otherwise still claim its
+    // results are six seconds old.
+    this.bannerTimer = setInterval(() => this.showBanner(), BANNER_TICK);
   }
 
-  /** sayHowOld writes the offline banner, naming the age of what is on screen. */
-  sayHowOld() {
-    const held = this.currentKey ? cache.read(this.currentKey) : { state: "miss" };
-    const age = held.state === "miss" ? "" : when(new Date(held.at).toISOString());
-    replace(
-      this.banner,
-      h("span", { class: "banner__dot" }),
-      age ? `You are offline. These are the results from ${age}.` : "You are offline. This is the last answer the server gave.",
-    );
+  /**
+   * askWhatIsLeft finds out whether the server is still reading a source.
+   *
+   * It costs nothing that was not already being spent. Every write to the index
+   * is an event on the stream this page is already holding, a sync writes one
+   * per batch, and each of those already brings the page here to check itself
+   * against the server. So the count on the banner climbs on the server's own
+   * schedule and there is no timer behind it.
+   */
+  async askWhatIsLeft() {
+    try {
+      const stats = await cache.swr(cache.key("stats", {}), (opts) => api.stats(opts), () => {});
+      // Both numbers or nothing. A sync the server has not finished counting
+      // reports a total of zero, and a banner reading "0 of about 0" is worse
+      // than no banner: it is a sentence that makes somebody doubt the page
+      // rather than the index.
+      const running = stats && stats.indexing;
+      const now = running && running.total > 0 ? running : null;
+      // Compared rather than assigned, because this runs on every refresh and
+      // the banner is on every screen. Rebuilding an unchanged one would move
+      // it under a screen reader that is in the middle of reading it.
+      if (same(this.indexing, now)) return;
+      this.indexing = now;
+      this.showBanner();
+    } catch {
+      // Nothing. A stats request that failed says nothing about whether a sync
+      // is running, and the honest answer to not knowing is to leave the banner
+      // exactly as it was.
+    }
+  }
+
+  /**
+   * showBanner writes the one banner there is.
+   *
+   * Two things can be true at once and only one line fits, so being offline
+   * wins. Results that are partial because a sync is running are still the
+   * server's current answer, and results from before the connection dropped are
+   * not, which makes the second the larger caveat.
+   */
+  showBanner() {
+    if (this.offline) {
+      const held = this.currentKey ? cache.read(this.currentKey) : { state: "miss" };
+      const age = held.state === "miss" ? "" : when(new Date(held.at).toISOString());
+      this.banner.hidden = false;
+      this.banner.dataset.state = "offline";
+      replace(
+        this.banner,
+        h("span", { class: "banner__dot" }),
+        age ? `You are offline. These are the results from ${age}.` : "You are offline. This is the last answer the server gave.",
+      );
+      return;
+    }
+    if (this.indexing) {
+      const { source, done, total } = this.indexing;
+      this.banner.hidden = false;
+      this.banner.dataset.state = "indexing";
+      replace(
+        this.banner,
+        h("span", { class: "banner__dot" }),
+        h("span", { class: "banner__what" }, `Indexing ${label(source)}`),
+        h("span", { class: "banner__count" }, `${number(done)} of about ${roughly(total)}`),
+        h("span", { class: "banner__why" }, "Results are partial until this finishes."),
+      );
+      return;
+    }
+    // Emptied as well as hidden, so that the row it sits in reserves nothing
+    // and the grid is the height it would be if this element were not here.
+    this.banner.hidden = true;
+    delete this.banner.dataset.state;
+    replace(this.banner);
   }
 
   /**
@@ -1200,6 +1267,17 @@ function countIn(kinds, vertical) {
   return (kinds || [])
     .filter((k) => vertical.kinds.includes(k.value))
     .reduce((n, k) => n + k.count, 0);
+}
+
+/**
+ * same compares two indexing reports, either of which may be nothing.
+ *
+ * It is three fields written out rather than a stringify, because the second
+ * one would compare key order as well and the server is free to change that.
+ */
+function same(a, b) {
+  if (!a || !b) return !a && !b;
+  return a.source === b.source && a.done === b.done && a.total === b.total;
 }
 
 // Theme before first paint, so a dark theme does not arrive as a white flash.

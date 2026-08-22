@@ -142,12 +142,11 @@ func policyFor(o corpusOptions) (fssource.Policy, error) {
 
 // ingestCorpus syncs the configured directory into the store.
 //
-// The first sync runs before the server listens, so that a request arriving the
-// moment the log says the server is up finds a corpus rather than an empty
-// index. Later syncs run in the background on the refresh interval, and are
-// incremental: the connector reports only what changed since the cursor the
-// last one saved.
-func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant string, log *slog.Logger) (func(), error) {
+// Every sync runs in the background, including the first, so the server answers
+// from the moment it says it is up and says on screen that the answers are
+// partial while the first read finishes. Later syncs are incremental: the
+// connector reports only what changed since the cursor the last one saved.
+func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant string, track *indexing, log *slog.Logger) (func(), error) {
 	if cfg.Dir == "" {
 		return func() {}, nil
 	}
@@ -189,6 +188,7 @@ func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant
 		Fields:    []any{"dir", cfg.Dir, "source", cfg.Name},
 		Report:    func() []any { return watching(watcher) },
 		Policy:    policy,
+		Track:     track,
 		Release: func() {
 			if watcher != nil {
 				_ = watcher.Close()

@@ -54,6 +54,11 @@ type feed struct {
 	// wanted here is the one method some of their implementations share.
 	Policy any
 
+	// Track is where the first read of this source is reported, so that the
+	// interface can say the answers it is giving are not the whole answer yet.
+	// A nil one is a feed nobody is watching.
+	Track *indexing
+
 	// Release is called once the last sync has returned, and is where a watcher
 	// and a source get closed.
 	Release func()
@@ -62,14 +67,23 @@ type feed struct {
 // runFeed syncs f once and then on its interval, and returns the function that
 // waits for it to stop.
 //
-// The first sync runs before this returns, and the caller runs it before the
-// listener opens, so that a request arriving the moment the log says the server
-// is up finds a corpus rather than an empty index.
+// The first sync runs in the background, alongside the listener, rather than in
+// front of it. Reading a real corpus takes a minute and a half, and a process
+// that refuses connections for that long is one a load balancer takes out of
+// rotation and a person watching a terminal assumes has hung. It answers from
+// the first second instead, and says on every screen that what it is answering
+// from is not all of it yet, which is what [indexing] is for.
 func runFeed(ctx context.Context, st store.Store, f feed, log *slog.Logger) (func(), error) {
 	// Checkpoints live in memory because the only storage driver that ships
 	// today does too. Restarting loses the index, so a cursor that survived the
 	// restart would skip everything the new empty index needs.
-	pipeline, err := ingest.New(st, connector.NewMemoryCheckpoints(), ingest.WithLogger(log))
+	opts := []ingest.Option{ingest.WithLogger(log)}
+	if f.Track != nil {
+		opts = append(opts, ingest.WithProgress(func(p ingest.Progress) {
+			f.Track.advance(p.Source, p.Done)
+		}))
+	}
+	pipeline, err := ingest.New(st, connector.NewMemoryCheckpoints(), opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -120,19 +134,39 @@ func runFeed(ctx context.Context, st store.Store, f feed, log *slog.Logger) (fun
 		reportMapping(f.Policy, log)
 	}
 
-	sync(ctx)
-
 	release := f.Release
 	if release == nil {
 		release = func() {}
 	}
-	if f.Refresh <= 0 {
-		return release, nil
-	}
+
+	// Said here rather than in the goroutine, so that the answer to whether this
+	// process is still reading its sources is already correct by the time the
+	// listener opens. A readiness check that arrives in the microsecond between
+	// the two would otherwise be told the crawl is over because it has not
+	// started.
+	source := f.Source.Source()
+	tracked := f.Track != nil && f.Track.expect(source)
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		if tracked {
+			// Counted before the sync rather than during it, because the whole
+			// point of the second number is that it is there from the start. It
+			// is one metadata pass over a source that is about to get a full
+			// content pass, and it happens once per process and only on a process
+			// that came up with nothing indexed.
+			total := countSource(ctx, f.Source)
+			log.Info(f.Kind+" first read", append(slices.Clone(f.Fields), "documents", total)...)
+			f.Track.counting(source, total)
+		}
+		sync(ctx)
+		if tracked {
+			f.Track.finished(source)
+		}
+		if f.Refresh <= 0 {
+			return
+		}
 		t := time.NewTicker(f.Refresh)
 		defer t.Stop()
 		for {

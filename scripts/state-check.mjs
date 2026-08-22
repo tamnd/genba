@@ -4,14 +4,22 @@
 // decides whether somebody trusts a search product is not. This drives the
 // states: a search that is slow, a search that is very slow, a check that
 // failed behind an answer, a query that matched nothing because of a filter or
-// because of a typo, an index with nothing in it, and a document that is either
-// missing or forbidden.
+// because of a typo, an index with nothing in it, a server that is still
+// reading its corpus, and a document that is either missing or forbidden.
 //
 // Four of those need a request that does not answer, so this one holds the
 // search endpoint open from the browser side rather than asking the server for
 // a delay it has no reason to offer. Holding it is also what makes the timings
 // here real: the hundred and twenty milliseconds before a loading state appears
 // is measured from the moment the request left the page.
+//
+// The state during a first read is answered rather than held: the stats
+// endpoint is fulfilled from here with the report a server halfway through a
+// crawl sends. It is built rather than raced for on purpose. The alternative is
+// starting a server on a corpus large enough that the read is still going when
+// the browser arrives, which makes the gate slower, makes every count it
+// asserts on depend on how far the read had got, and still cannot produce the
+// number the banner rounds.
 //
 // The rest are rendered directly, because they are the states that must be
 // compared rather than watched. A 403 and a 404 on a document have to produce
@@ -79,8 +87,24 @@ async function run(session) {
   // held open for as long as the assertion about it needs.
   let mode = "pass";
   const held = new Set();
+  // What the stats endpoint answers, when this script is answering it. Null
+  // means the real server does, which is every assertion but the last group.
+  let stats = null;
 
-  session.on("Fetch.requestPaused", ({ requestId }) => {
+  session.on("Fetch.requestPaused", ({ requestId, request }) => {
+    if (request && request.url.includes("/api/v1/stats")) {
+      if (!stats) {
+        session("Fetch.continueRequest", { requestId }).catch(() => {});
+        return;
+      }
+      session("Fetch.fulfillRequest", {
+        requestId,
+        responseCode: 200,
+        responseHeaders: [{ name: "content-type", value: "application/json" }],
+        body: Buffer.from(JSON.stringify(stats)).toString("base64"),
+      }).catch(() => {});
+      return;
+    }
     if (mode === "hold") {
       held.add(requestId);
       return;
@@ -105,7 +129,12 @@ async function run(session) {
   };
 
   await session("Page.enable");
-  await session("Fetch.enable", { patterns: [{ urlPattern: "*/api/v1/search*", requestStage: "Request" }] });
+  await session("Fetch.enable", {
+    patterns: [
+      { urlPattern: "*/api/v1/search*", requestStage: "Request" },
+      { urlPattern: "*/api/v1/stats*", requestStage: "Request" },
+    ],
+  });
   await session("Page.addScriptToEvaluateOnNewDocument", { source: WATCH });
 
   // Slow, and then not slow. One navigation covers both the delay before a
@@ -217,6 +246,94 @@ async function run(session) {
     `document.querySelector('.omnibox__input').value === 'search' &&
       location.search.includes('q=search') && document.querySelectorAll('.result').length > 0`,
   );
+
+  // The first ninety seconds. The server binds its port before it has read a
+  // corpus and answers out of an index that is still filling, so every screen
+  // says so until it is done. Nothing here is faked in the page: the report
+  // comes back over the wire, through the same cache and the same refresh as
+  // the real one, and the assertions are about what a person ends up reading.
+  const report = async (indexing) => {
+    stats = { documents: 4182, ...(indexing ? { indexing } : {}) };
+    await evaluate(
+      session,
+      expr(`
+        const { cache } = await import('genba/cache.js');
+        cache.invalidate('');
+        window.dispatchEvent(new PopStateEvent('popstate'));
+        return true;
+      `),
+    );
+  };
+
+  // A source the server has not finished counting reports a total of zero, and
+  // it says nothing at all rather than "0 of about 0".
+  await report({ source: "repo", done: 0, total: 0 });
+  await sleep(600);
+  await check(
+    session,
+    "a first read the server has not finished counting puts nothing on screen",
+    "document.querySelector('.banner').hidden === true",
+  );
+
+  await report({ source: "repo", done: 4182, total: 22235 });
+  await settle(session, `document.querySelector('.banner').dataset.state === 'indexing'`);
+  await check(
+    session,
+    "a server still reading its corpus says so, with what it has done and roughly how much there is",
+    `(() => {
+      const banner = document.querySelector('.banner');
+      return banner.hidden === false && banner.getAttribute('role') === 'status' &&
+        banner.querySelector('.banner__what').textContent === 'Indexing Repo' &&
+        banner.querySelector('.banner__count').textContent === '4,182 of about 22,000' &&
+        banner.textContent.includes('Results are partial until this finishes.');
+    })()`,
+  );
+
+  // The same report twice leaves the same elements. A banner rebuilt on every
+  // refresh is one a screen reader starts again from the top every few seconds,
+  // which is worse for the person who most needs to be told.
+  await evaluate(session, "window.__genba.banner = document.querySelector('.banner__count'), true");
+  await report({ source: "repo", done: 4182, total: 22235 });
+  await sleep(600);
+  await check(
+    session,
+    "a report that has not changed does not rebuild the line somebody is reading",
+    "document.querySelector('.banner__count') === window.__genba.banner",
+  );
+
+  // Two caveats and one line. Results that are partial because a read is
+  // running are still the server's current answer, and results from before the
+  // connection dropped are not, so the connection wins.
+  await evaluate(session, "window.dispatchEvent(new Event('offline')), true");
+  await settle(session, `document.querySelector('.banner').dataset.state === 'offline'`);
+  await check(
+    session,
+    "being offline wins the banner from a read that is still running",
+    `document.querySelector('.banner').textContent.includes('You are offline') &&
+      !document.querySelector('.banner').textContent.includes('Indexing')`,
+  );
+
+  await evaluate(session, "window.dispatchEvent(new Event('online')), true");
+  await settle(session, `document.querySelector('.banner').dataset.state === 'indexing'`);
+  await check(
+    session,
+    "and the read comes back to it when the connection does",
+    "document.querySelector('.banner__what').textContent === 'Indexing Repo'",
+  );
+
+  // And it goes. A caveat still on screen after it stopped being true is worse
+  // than never having had one, because the next time it is true nobody reads it.
+  await report(null);
+  await settle(session, "document.querySelector('.banner').hidden === true");
+  await check(
+    session,
+    "the banner goes when the corpus is read, and leaves nothing behind it",
+    `(() => {
+      const banner = document.querySelector('.banner');
+      return banner.hidden === true && !banner.dataset.state && banner.childNodes.length === 0;
+    })()`,
+  );
+  stats = null;
 
   // The security assertion, and the reason both messages live in one module.
   // Which of the two happened is what the permission system is keeping from

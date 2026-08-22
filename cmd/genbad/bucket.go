@@ -193,10 +193,10 @@ func bucketPolicyFor(c *objectsource.Client, o bucketOptions) (objectsource.Poli
 
 // ingestBucket syncs the configured bucket into the store.
 //
-// It runs on the same schedule the directory does, for the same reason: the
-// first sync finishes before the listener opens, and later ones are incremental
-// against the cursor the last one saved.
-func ingestBucket(ctx context.Context, st store.Store, cfg bucketOptions, tenant string, log *slog.Logger) (func(), error) {
+// It runs on the same schedule the directory does, for the same reason: every
+// sync including the first runs behind the listener, and later ones are
+// incremental against the cursor the last one saved.
+func ingestBucket(ctx context.Context, st store.Store, cfg bucketOptions, tenant string, track *indexing, log *slog.Logger) (func(), error) {
 	if cfg.Bucket == "" {
 		return func() {}, nil
 	}
@@ -257,6 +257,7 @@ func ingestBucket(ctx context.Context, st store.Store, cfg bucketOptions, tenant
 		Fields:    []any{"bucket", cfg.Bucket, "prefix", cfg.Prefix, "source", cfg.Name},
 		Report:    func() []any { return requesting(client, limiter) },
 		Policy:    policy,
+		Track:     track,
 		Release:   func() { _ = src.Close() },
 	}, log)
 }

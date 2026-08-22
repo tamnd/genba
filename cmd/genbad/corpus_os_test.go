@@ -65,7 +65,7 @@ func TestTheFileSystemDecidesWhatAQueryReturns(t *testing.T) {
 		}
 	}()
 
-	waitForHealth(t, "http://"+addr+"/healthz")
+	waitForIndex(t, "http://"+addr)
 
 	if got := searchAs(t, addr, me, "legacy"); got.Total == 0 {
 		t.Error("the owner of a file cannot find it")

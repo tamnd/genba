@@ -78,15 +78,22 @@ for url in "$BASE" "$EMPTY"; do
 	fi
 done
 
-# ready waits for a server to answer its health check, and gives up if the
-# process it is waiting for is no longer there.
+# ready waits for a server to answer its health check and then for it to finish
+# reading its corpus, and gives up if the process it is waiting for is no longer
+# there.
+#
+# The second wait is the one that matters here. The server binds its port before
+# the first read is done and answers out of a part filled index while it runs,
+# which is the right thing for a deployment and the wrong thing for a gate:
+# every count this script asserts on, and every screen axe audits, would be
+# measured against however much of the corpus had been read when the browser got
+# there. That is not a number that means anything twice. So the gate waits for
+# all of it, and the interface state during the read is audited on purpose by
+# scripts/state-check.mjs, which builds it rather than racing for it.
 ready() {
 	i=0
 	until curl -fsS "$1/healthz" >/dev/null 2>&1; do
-		if ! kill -0 "$2" 2>/dev/null; then
-			echo "ui-gate: the server on $1 exited before it was ready" >&2
-			exit 1
-		fi
+		alive "$1" "$2"
 		i=$((i + 1))
 		if [ "$i" -gt 100 ]; then
 			echo "ui-gate: the server on $1 never became healthy" >&2
@@ -94,6 +101,27 @@ ready() {
 		fi
 		sleep 0.2
 	done
+
+	i=0
+	while curl -fsS "$1/readyz" 2>/dev/null | grep -q '"indexing":true'; do
+		alive "$1" "$2"
+		i=$((i + 1))
+		if [ "$i" -gt 600 ]; then
+			echo "ui-gate: the server on $1 was still reading its corpus after two minutes" >&2
+			exit 1
+		fi
+		sleep 0.2
+	done
+}
+
+# alive fails the gate if the process being waited for has gone. Waiting the
+# full timeout for a server that exited a second in reports a timeout, and a
+# timeout is the one failure nobody reads the logs for.
+alive() {
+	if ! kill -0 "$2" 2>/dev/null; then
+		echo "ui-gate: the server on $1 exited before it was ready" >&2
+		exit 1
+	fi
 }
 
 # The repository holds no images, so the grid and the thumbnail endpoint would

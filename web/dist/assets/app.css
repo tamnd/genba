@@ -123,9 +123,10 @@ time {
 .app {
   display: grid;
   grid-template-columns: var(--rail-width) minmax(0, 1fr);
-  /* Three rows, and the middle one is the connection banner. It is auto rather
-     than a fixed height so that it takes no space at all when it is hidden,
-     which is almost always. */
+  /* Three rows, and the middle one is the banner that says the connection is
+     gone or a source is still being read. It is auto rather than a fixed height
+     so that it takes no space at all when it is hidden, which is almost
+     always. */
   grid-template-rows: var(--header-height) auto minmax(0, 1fr);
   grid-template-areas:
     "rail header"
@@ -2342,6 +2343,37 @@ h6.prose__h {
   border-radius: var(--radius-full);
   background: var(--warning-600);
   flex: none;
+}
+
+/* Indexing is a working state rather than a wrong one, so the dot is the
+   informational colour and not the warning colour. Being offline is the one
+   worth a warning. */
+.banner[data-state="indexing"] .banner__dot {
+  background: var(--info-600);
+}
+
+.banner__what {
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+}
+
+/* Tabular figures because this number is rewritten every couple of seconds, and
+   proportional ones make the whole line twitch each time a 1 becomes a 4. */
+.banner__count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The sentence that says what the numbers mean for the page underneath. It is
+   the first thing to go when the row runs out of width, because the two numbers
+   beside it already imply it and a wrapped banner pushes the content down. */
+.banner__why {
+  margin-left: auto;
+}
+
+@media (max-width: 640px) {
+  .banner__why {
+    display: none;
+  }
 }
 
 .progress {

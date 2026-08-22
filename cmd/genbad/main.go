@@ -136,7 +136,17 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		}
 	}()
 
-	opts := []api.Option{api.WithLogger(log), api.WithDriver(string(cfg.Store))}
+	// Shared by the feeds, which write to it, and the server, which reads it on
+	// every stats request and every readiness check. It is built before either,
+	// because the question it answers is whether this process came up with an
+	// empty index and there is exactly one moment at which that can be asked.
+	track := newIndexing(ctx, st)
+
+	opts := []api.Option{
+		api.WithLogger(log),
+		api.WithDriver(string(cfg.Store)),
+		api.WithIndexing(track.State),
+	}
 	if h := web.Handler(); h != nil {
 		opts = append(opts, api.WithAssets(h))
 	}
@@ -152,18 +162,20 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	// indexed since it came up while sitting on a corpus it had just loaded.
 	srv := api.New(st, searcher, api.HeaderAuth{Tenant: cfg.Tenant}, opts...)
 
-	// The first sync of each source runs here, before the listener opens, so
-	// that the server is useful the moment it says it is up. A server pointed at
-	// both indexes both, and the two are separate feeds with separate cursors
-	// rather than one merged crawl, because a bucket that is refusing requests
-	// should not stop a directory being reindexed.
-	waitForCorpus, err := ingestCorpus(ctx, st, corpus, cfg.Tenant, log)
+	// Each source starts syncing here and keeps going behind the listener. What
+	// is built here and not in the background is everything that can be wrong
+	// with a flag, so a bad corpus directory or a bucket with no credentials is
+	// still an error the process exits on rather than a warning it logs a minute
+	// later. A server pointed at both indexes both, and the two are separate
+	// feeds with separate cursors rather than one merged crawl, because a bucket
+	// that is refusing requests should not stop a directory being reindexed.
+	waitForCorpus, err := ingestCorpus(ctx, st, corpus, cfg.Tenant, track, log)
 	if err != nil {
 		return err
 	}
 	defer waitForCorpus()
 
-	waitForBucket, err := ingestBucket(ctx, st, bucket, cfg.Tenant, log)
+	waitForBucket, err := ingestBucket(ctx, st, bucket, cfg.Tenant, track, log)
 	if err != nil {
 		return err
 	}

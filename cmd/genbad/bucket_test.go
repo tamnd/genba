@@ -114,7 +114,7 @@ func TestAStartedServerAnswersQueriesAboutTheBucket(t *testing.T) {
 	)
 	defer stop()
 
-	waitForHealth(t, "http://"+addr+"/healthz")
+	waitForIndex(t, "http://"+addr)
 
 	res := searchAs(t, addr, "alice", "deploying")
 	if res.Total == 0 {
@@ -169,7 +169,7 @@ func TestAServerReadsADirectoryAndABucketTogether(t *testing.T) {
 	)
 	defer stop()
 
-	waitForHealth(t, "http://"+addr+"/healthz")
+	waitForIndex(t, "http://"+addr)
 
 	if got := searchAs(t, addr, "alice", "deploying"); got.Total == 0 {
 		t.Error("the directory was not indexed")
@@ -198,7 +198,7 @@ func TestABucketThatRefusesDoesNotStopTheServer(t *testing.T) {
 	)
 	defer stop()
 
-	waitForHealth(t, "http://"+addr+"/healthz")
+	waitForIndex(t, "http://"+addr)
 
 	if got := searchAs(t, addr, "alice", "deploying"); got.Total == 0 {
 		t.Error("a bucket that refused took the directory down with it")
@@ -225,7 +225,7 @@ func TestTheBucketCrawlStaysUnderItsRate(t *testing.T) {
 	)
 	defer stop()
 
-	waitForHealth(t, "http://"+addr+"/healthz")
+	waitForIndex(t, "http://"+addr)
 	took := time.Since(began)
 
 	hits := store.hits()
