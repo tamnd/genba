@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"sync"
 	"time"
 
@@ -74,11 +75,54 @@ func newOperations() *operations {
 func (o *operations) register(info api.Connector, policy any) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if _, seen := o.sources[info.Source]; seen {
+	if s, seen := o.sources[info.Source]; seen {
+		// A connector that was stopped and started again is the same row with
+		// the same history rather than a second connector, so the settings are
+		// replaced and the runs are left alone. An operator who switched a
+		// source off to change a directory and switched it back on wants the
+		// failures that made them do it to still be on the screen.
+		s.info = info
+		s.policy = policy
 		return
 	}
 	o.sources[info.Source] = &sourceOps{info: info, policy: policy}
 	o.order = append(o.order, info.Source)
+}
+
+// enable records whether a connector is meant to be running.
+//
+// It is separate from register because stopping one keeps everything else about
+// it: the settings, the run history and the place in the order. Losing those on
+// a stop would make switching a noisy source off cost the evidence of why.
+func (o *operations) enable(source string, on bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	s, ok := o.sources[source]
+	if !ok {
+		return
+	}
+	s.info.Enabled = on
+	if !on {
+		// Nothing is running, so nothing is syncing. The goroutine that would
+		// have said so has been cancelled, and a row left saying it is syncing
+		// forever is worse than one that says nothing.
+		s.syncing = false
+	}
+}
+
+// forget drops a connector that has been removed.
+//
+// The run history goes with it, which is the one place this screen loses
+// something on purpose: the connector is gone, and a history of a source
+// nothing feeds any more is a row nobody can act on.
+func (o *operations) forget(source string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if _, ok := o.sources[source]; !ok {
+		return
+	}
+	delete(o.sources, source)
+	o.order = slices.DeleteFunc(o.order, func(s string) bool { return s == source })
 }
 
 // starting records that a sync has begun.

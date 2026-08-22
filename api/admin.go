@@ -55,6 +55,19 @@ type Connector struct {
 	// worked it out by comparing timestamps would flicker.
 	Syncing bool `json:"syncing"`
 
+	// Enabled says it is meant to be running at all, which is not the same as
+	// Syncing above. A connector somebody switched off is enabled false and
+	// syncing false, and one that is on but between runs is enabled true and
+	// syncing false, and a screen that had only the one flag would draw those
+	// two the same.
+	Enabled bool `json:"enabled"`
+
+	// Managed says this connector was configured through the interface and can
+	// be changed through it. One that came from the command line is reported
+	// here and is not editable, because the next restart would read the command
+	// line again and undo whatever was typed. See [ErrUnmanaged].
+	Managed bool `json:"managed"`
+
 	// Runs are the syncs this process has done, most recent first and bounded.
 	// A source that has not finished one yet has none, which is not an error
 	// and is what a screen should say rather than drawing a zero.
@@ -148,6 +161,13 @@ type adminResponse struct {
 	// able to say the driver cannot list them rather than that there are none.
 	Held     []held `json:"held"`
 	Listable bool   `json:"listable"`
+
+	// Manageable says a connector can be added from here at all. It is false for
+	// a deployment whose driver cannot remember one across a restart and for an
+	// embedder that wires its own crawlers, and it is what lets the screen say
+	// where the connectors are configured instead of drawing a form whose answers
+	// go nowhere. See [WithSupervisor].
+	Manageable bool `json:"manageable"`
 }
 
 // held is one quarantined document on the wire.
@@ -204,6 +224,7 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request, p *acl.Prin
 		Documents:   st.Documents,
 		Quarantined: st.Quarantined,
 		Held:        []held{},
+		Manageable:  s.supervisor != nil,
 	}
 	if s.operations != nil {
 		res.Connectors = s.operations().Connectors

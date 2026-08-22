@@ -157,9 +157,26 @@ func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant
 		return nil, errors.New("ingesting a corpus needs -tenant")
 	}
 
-	policy, err := policyFor(cfg)
+	f, err := corpusFeed(cfg, tenant, track, ops, log)
 	if err != nil {
 		return nil, err
+	}
+	f.Managed = false
+	return runFeed(ctx, st, f, log)
+}
+
+// corpusFeed builds the directory connector, ready to run.
+//
+// It is separate from the function above because there are two ways a
+// connector arrives now. One is the command line, which is this file, and the
+// other is somebody adding it from the interface, which is [supervisor]. Both
+// want the same watcher, the same policy and the same feed, and the way that
+// goes wrong is two copies that drift until a connector added from the screen
+// behaves subtly differently from the same connector in a unit file.
+func corpusFeed(cfg corpusOptions, tenant string, track *indexing, ops *operations, log *slog.Logger) (feed, error) {
+	policy, err := policyFor(cfg)
+	if err != nil {
+		return feed{}, err
 	}
 	// A watcher that cannot be built is a line in the log and nothing else. The
 	// machine is at its inotify limit, or the tree is on a filesystem the
@@ -176,10 +193,13 @@ func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant
 
 	src, err := fssource.New(cfg.Dir, cfg.Name, policy, fssource.WithWatcher(watcher))
 	if err != nil {
-		return nil, err
+		if watcher != nil {
+			_ = watcher.Close()
+		}
+		return feed{}, err
 	}
 
-	return runFeed(ctx, st, feed{
+	return feed{
 		Kind:      "corpus",
 		Source:    src,
 		Target:    cfg.Dir,
@@ -197,7 +217,7 @@ func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant
 			}
 			_ = src.Close()
 		},
-	}, log)
+	}, nil
 }
 
 // watching is what the watcher has to say, for the sync log line.

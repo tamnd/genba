@@ -80,12 +80,13 @@ func (s *Server) handleThumbnail(w http.ResponseWriter, r *http.Request, p *acl.
 	// that one produced, which matters here because the first paint of a grid
 	// asks for twenty four of these at once and a browser will happily open six
 	// connections to do it.
+	ctx := r.Context()
 	got, err := s.thumbs.Do(thumbnailKey(d, size), func() (thumb.Thumbnail, error) {
-		c, err := cs.Content(r.Context(), p, id)
+		c, err := cs.Content(ctx, p, id)
 		if err != nil {
 			return thumb.Thumbnail{}, err
 		}
-		return thumb.Render(r.Context(), c.Bytes, size)
+		return thumb.Render(ctx, c.Bytes, size)
 	})
 	if err != nil {
 		// A document with no bytes, a document in a format nobody decodes and a
