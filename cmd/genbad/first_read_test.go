@@ -44,9 +44,9 @@ func bigTree(t *testing.T, files int) string {
 
 // startCorpus starts a server on a directory and returns its address and a
 // function that shuts it down. It deliberately does not wait for the index.
-func startCorpus(t *testing.T, root string) (string, func()) {
+func startCorpus(t *testing.T, root string) (addr string, stop func()) {
 	t.Helper()
-	addr := freeAddr(t)
+	addr = freeAddr(t)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
