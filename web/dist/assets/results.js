@@ -3,6 +3,7 @@
 import { h, replace, svg } from "genba/dom.js";
 import { label, number, duration, icon, facetLabels } from "genba/format.js";
 import { shapeOf } from "genba/content.js";
+import { Answer } from "genba/answer.js";
 import { RowList } from "genba/rows.js";
 import { nothingMatched, slow, stopped } from "genba/states.js";
 import * as urlState from "genba/state.js";
@@ -78,7 +79,7 @@ const FACET_VISIBLE = 8;
 const SHEET = "(max-width: 960px)";
 
 export class Results {
-  constructor({ onQuery, onOpen, onHover, onSay, onCursor }) {
+  constructor({ onQuery, onOpen, onHover, onSay, onCursor, onCite }) {
     this.onQuery = onQuery;
     this.expanded = new Set();
     this.hits = [];
@@ -97,6 +98,10 @@ export class Results {
     // of documents does not: the verticals, the filters, the count and the
     // pager.
     this.rows = new RowList({ onOpen, onHover, onSay, onCursor });
+    // The quoted passages, above the rows they were quoted from. It owns whether
+    // it is on screen at all, and a response with nothing worth quoting leaves
+    // the column looking exactly as it did before this existed.
+    this.answer = new Answer({ onCite });
     // Empty until the session says what the corpus holds, so the strip is never
     // painted with tabs that are about to be taken away.
     this.verticals = [];
@@ -183,7 +188,14 @@ export class Results {
         { class: "results" },
         this.scrim,
         this.facets,
-        h("div", { class: "results__main" }, this.head, this.list, this.aside),
+        h(
+          "div",
+          { class: "results__main" },
+          this.answer.el,
+          this.head,
+          this.list,
+          this.aside,
+        ),
       ),
     );
   }
@@ -261,6 +273,10 @@ export class Results {
     // the cursor and the hits it walks go with the rows on screen.
     this.hits = [];
     this.rows.skeleton();
+    // No skeleton for the quotes. Most searches have no answer at all, so a
+    // placeholder in the shape of one promises something that usually is not
+    // coming and then takes the promise back.
+    this.answer.clear();
     replace(this.chips);
     replace(
       this.head,
@@ -306,6 +322,7 @@ export class Results {
   cancelled(onRetry) {
     this.hits = [];
     this.rows.render([], { view: "list", cursor: -1 });
+    this.answer.clear();
     replace(this.head);
     replace(this.facets);
     replace(this.aside, stopped(onRetry));
@@ -358,6 +375,10 @@ export class Results {
     this.total = res.total || 0;
     this.renderTabs(query, res);
     this.renderChips(query);
+    // In the same paint as the rows it quotes, which is the whole of what keeps
+    // it from moving anything. There is no second request behind it and no
+    // moment where the list is on screen without it.
+    this.answer.render(res);
     this.renderHead(query, res);
     this.renderList(query, res);
     this.renderFacets(query, res);

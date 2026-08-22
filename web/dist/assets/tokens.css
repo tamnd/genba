@@ -92,6 +92,14 @@
      calm. */
   --mark: #fae041;
 
+  /* The wash behind a whole cited sentence, which is a different job from the
+     rule above and needs a different shape. A sentence marked a word at a time
+     reads as a scribble across four lines, and a rule cannot cover a passage
+     that wraps at all: it is drawn on the first line of it and nowhere else. So
+     the passage gets a fill, at the strength that stays behind the text rather
+     than in front of it. */
+  --mark-wash: rgb(250 224 65 / 0.34);
+
   /* Code. Five colours, because the highlighter finds five things: a comment,
      a string, a number, a keyword and the name of a function or a type. A
      twenty colour theme is a theme for somebody editing the file, and nobody
@@ -314,6 +322,10 @@
   /* Higher chroma, to hold against a near black ground. The mark keeps
      colour: inherit on the text, so no second foreground token is needed. */
   --mark: #f5c518;
+  /* Weaker than on white. The same alpha over a near black ground lifts the
+     whole sentence off the page and the text stops being the brightest thing
+     in it. */
+  --mark-wash: rgb(245 197 24 / 0.24);
 
   --source-github: #c9d1d9;
   --source-notion: #d4d0c8;

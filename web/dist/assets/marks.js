@@ -107,6 +107,124 @@ export function mark(root, words) {
   return count;
 }
 
+// The shortest run of a quoted passage worth marking, in characters with the
+// whitespace taken out.
+//
+// A citation that lands on eight characters has landed on a word, and a word
+// that happens to appear three paragraphs above the passage is worse than not
+// marking anything: it tells the reader the quote is there when it is not.
+const PASSAGE_MIN = 24;
+
+/**
+ * passage marks the quoted text a citation asked for and returns where it
+ * starts, or nothing when it is not on the page.
+ *
+ * The comparison ignores whitespace entirely on both sides, which is what makes
+ * it survive the trip. The quote was cut out of the source, where a paragraph
+ * break is two newlines, and it is being looked for in the rendered document,
+ * where the same break is the end of one element and the start of another, and
+ * where a run of inline markup splits a sentence into three text nodes with no
+ * space between them. Comparing the text with the spaces left in fails on all
+ * three, and none of the three is a real disagreement about what the words are.
+ *
+ * The longest prefix that is present wins rather than all or nothing. A quote
+ * whose last clause was dropped by the renderer, which is what a footnote marker
+ * or a trailing link does, still marks the sentence somebody was sent to.
+ */
+export function passage(root, text) {
+  const want = squeeze(String(text || ""));
+  if (want.length < PASSAGE_MIN) return null;
+
+  const flat = flatten(nodesIn(root));
+  if (flat.text.length < PASSAGE_MIN) return null;
+
+  // A prefix that is present implies every shorter prefix is, so the longest one
+  // is a binary search rather than a walk down from the whole quote.
+  let at = -1;
+  let lo = PASSAGE_MIN;
+  let hi = want.length;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const found = flat.text.indexOf(want.slice(0, mid));
+    if (found < 0) {
+      hi = mid - 1;
+      continue;
+    }
+    at = found;
+    lo = mid + 1;
+  }
+  if (at < 0) return null;
+  return paint(flat.at, at, at + hi)[0] || null;
+}
+
+/** squeeze drops every space, tab and newline. */
+function squeeze(s) {
+  return s.replace(/\s+/g, "");
+}
+
+/** nodesIn is the text of a tree, in reading order, minus what must not be marked. */
+function nodesIn(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const out = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!node.nodeValue.trim()) continue;
+    if (node.parentElement && node.parentElement.closest(SKIP)) continue;
+    out.push(node);
+  }
+  return out;
+}
+
+/**
+ * flatten is those nodes as one string with the whitespace removed, and the
+ * node and offset each surviving character came from.
+ */
+function flatten(nodes) {
+  let text = "";
+  const at = [];
+  for (const node of nodes) {
+    const s = node.nodeValue;
+    for (let i = 0; i < s.length; i++) {
+      if (/\s/.test(s[i])) continue;
+      text += s[i];
+      at.push([node, i]);
+    }
+  }
+  return { text, at };
+}
+
+/**
+ * paint wraps one run of the flattened text in marks, one per text node it
+ * crosses, and returns them.
+ *
+ * One per node rather than one range, because a passage that runs through a bold
+ * word or a link crosses element boundaries and there is no single element to
+ * put around it. Each node keeps the whitespace between the first and last
+ * character the run touched inside it, so the highlight is continuous on screen
+ * rather than a row of marked words with gaps between them.
+ */
+function paint(at, from, to) {
+  const runs = [];
+  for (let i = from; i < to && i < at.length; i++) {
+    const [node, off] = at[i];
+    const last = runs[runs.length - 1];
+    if (last && last.node === node) last.to = off + 1;
+    else runs.push({ node, from: off, to: off + 1 });
+  }
+
+  const out = [];
+  for (const run of runs) {
+    const text = run.node.nodeValue;
+    const frag = document.createDocumentFragment();
+    if (run.from > 0) frag.appendChild(document.createTextNode(text.slice(0, run.from)));
+    const el = h("mark", { class: "hit hit--passage" }, text.slice(run.from, run.to));
+    frag.appendChild(el);
+    if (run.to < text.length) frag.appendChild(document.createTextNode(text.slice(run.to)));
+    run.node.parentNode.replaceChild(frag, run.node);
+    out.push(el);
+  }
+  return out;
+}
+
 /**
  * reveal moves a document to the part of it somebody came for.
  *

@@ -12,7 +12,7 @@ import { render as markdown, codeBlock } from "genba/markdown.js";
 import { render as htmlDocument } from "genba/html.js";
 import { parse as parseNotebook, render as notebookCells } from "genba/notebook.js";
 import { player } from "genba/media.js";
-import { terms, mark } from "genba/marks.js";
+import { terms, mark, passage } from "genba/marks.js";
 import { kindIcon, sourceColor, bytes as formatBytes } from "genba/format.js";
 
 // Media types the interface knows how to draw as code, and the language each
@@ -139,9 +139,16 @@ export function languageOf(d) {
  * be, which is why it happens once out here rather than six times in there. The
  * caller reveals the first of them once the nodes are on the page, because
  * scrolling to something that is not in a document yet scrolls to nothing.
+ *
+ * options.at is a passage somebody was sent to, which is what a citation under
+ * an answer carries. It is marked before the words are, and the order is not
+ * incidental: marking the words first splits the sentence into a dozen nodes and
+ * hides the marked ones from anything looking for it, so the sentence a reader
+ * was sent to would be the one thing on the page that could not be found.
  */
 export function body(d, options = {}) {
   const node = draw(d);
+  if (options.at) passage(node, options.at);
   mark(node, terms(options.query));
   return node;
 }

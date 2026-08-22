@@ -74,6 +74,12 @@ export function read(search = location.search) {
     limit: Number(params.get("limit") || 20) || 20,
     tab: params.get("tab") || "all",
     open: params.get("open") || "",
+    // The passage inside the open document to land on, which is what a citation
+    // under an answer carries. It is the quoted text rather than an offset,
+    // because an offset into a body is a promise the renderer breaks as soon as
+    // it takes the markup out, and because a link somebody pastes into a message
+    // should still work when the document has had a paragraph added to the top.
+    at: params.get("at") || "",
     // Empty means the view has not been chosen, which is different from having
     // chosen the list. A page of nothing but images opens as a grid, and that
     // has to stop happening the moment somebody says they want the list, so the
@@ -120,6 +126,9 @@ export function write(query, path = "/") {
   if (query.view) params.set("view", query.view);
   if (query.cursor >= 0) params.set("cursor", String(query.cursor));
   if (query.open) params.set("open", query.open);
+  // Only ever alongside the document it points into. A passage with nothing open
+  // is a parameter naming a place in a document nobody is looking at.
+  if (query.open && query.at) params.set("at", query.at);
   // Rooted rather than relative, because a search reached from a document page
   // is a search and not a document with a query string stuck on the end of it.
   const s = params.toString();

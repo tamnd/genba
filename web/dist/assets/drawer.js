@@ -30,6 +30,11 @@ export class Drawer {
     this.returnTo = null;
     this.currentKey = "";
     this.query = "";
+    // The passage a citation sent this reader to, or nothing. It is the quote's
+    // own text rather than an offset into the body, because an offset is a
+    // promise about a document that the renderer breaks the moment it takes the
+    // markup out, and because text survives being pasted into a message.
+    this.quote = "";
     // The marked words in the body, and which of them is the current one.
     this.marks = [];
     this.at = -1;
@@ -111,8 +116,9 @@ export class Drawer {
     return !this.el.hidden;
   }
 
-  async show(id, query = "") {
+  async show(id, query = "", quote = "") {
     this.query = query;
+    this.quote = quote;
     // Only on the way in. Stepping from one result to the next with j replaces
     // what is in an open drawer, and the row to go back to is still the row it
     // was opened from rather than the heading inside it.
@@ -182,11 +188,18 @@ export class Drawer {
     // The body decides its own shape from the media type, so the drawer only
     // has to say where it goes and how wide it is.
     this.body.dataset.shape = shapeOf(d);
-    replace(this.body, renderBody(d, { query: this.query }));
+    replace(this.body, renderBody(d, { query: this.query, at: this.quote }));
     // Once the body is on the page and not before, because scrolling to a match
     // that is still in a fragment scrolls to nothing.
-    reveal(this.body);
-    this.matched();
+    //
+    // A passage somebody was sent to wins over the first word that matched, the
+    // same way a line number does on a document page and for the same reason: a
+    // citation was clicked by a person who meant that sentence, and the query is
+    // only how the document came to be on the screen it was clicked from.
+    const cited = this.quote ? this.body.querySelector("mark.hit--passage") : null;
+    if (cited) cited.scrollIntoView({ block: "center", inline: "nearest" });
+    else reveal(this.body);
+    this.matched(cited);
     // Opening at the source is only offered where a browser would go there. For
     // every document the file connector read it would not, so the path takes
     // its place: a path somebody can paste into a terminal is worth something,
@@ -254,8 +267,12 @@ export class Drawer {
    * is allowed to find nothing: it does not stem, so a search for cache in a
    * document that only says caching marks nothing at all, and a header offering
    * to walk zero matches is worse than a header that says nothing.
+   *
+   * here is the mark the document opened on, which is the cited passage when
+   * there was one. Without it the count would open at the first match while the
+   * page is scrolled to the fifth, and pressing n would jump backwards.
    */
-  matched() {
+  matched(here) {
     this.marks = [...this.body.querySelectorAll("mark.hit")];
     this.at = -1;
     this.matches.hidden = this.marks.length === 0;
@@ -263,9 +280,9 @@ export class Drawer {
       replace(this.count);
       return;
     }
-    // reveal has already brought the first one into view, so the count opens by
+    // reveal has already brought one of them into view, so the count opens by
     // saying which one that is rather than starting at nothing.
-    this.point(0);
+    this.point(Math.max(0, this.marks.indexOf(here)));
   }
 
   /**
@@ -335,6 +352,7 @@ export class Drawer {
     // reopening the same document is the most likely next thing to happen. It
     // is the key that is dropped, so nothing it returns is painted.
     this.currentKey = "";
+    this.quote = "";
     this.marks = [];
     this.at = -1;
     this.el.hidden = true;

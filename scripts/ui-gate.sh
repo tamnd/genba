@@ -2,11 +2,11 @@
 # The browser half of the performance gate.
 #
 # It starts the real binary over a real corpus, which is this repository, and
-# audits ten screens: the home page, the home page over an index holding
-# nothing, a results page, a results page with the document drawer open, a
-# search that matched nothing, a filter that matched nothing, a grid of
-# pictures, a document on a page of its own, the recent screen and the settings
-# screen. They are
+# audits eleven screens: the home page, the home page over an index holding
+# nothing, a results page, a results page with an answer quoted above it, a
+# results page with the document drawer open, a search that matched nothing, a
+# filter that matched nothing, a grid of pictures, a document on a page of its
+# own, the recent screen and the settings screen. They are
 # states rather than layouts, because a layout is looked at every day and a
 # state is looked at once. Auditing a static fixture would audit the fixture,
 # and every accessibility bug this is meant to catch lives in the markup the
@@ -235,10 +235,15 @@ if [ -n "${CHROMEDRIVER:-}" ]; then
 	DRIVER="--chromedriver-path $CHROMEDRIVER"
 fi
 
-# Ten screens, and they are states rather than layouts. Three of them, the
+# Eleven screens, and they are states rather than layouts. Three of them, the
 # empty index, the query that matched nothing and the filter that matched
 # nothing, produce markup no other screen produces, and that markup is where an
 # accessibility bug survives longest: nobody looks at an empty page twice.
+#
+# The eleventh is a search that has an answer above it. The region is a heading,
+# a list and a link per quote, none of which the results page below it has, and
+# it appears on some searches and not others, so it is a screen the other ten
+# never reach.
 #
 # The settings screen is the tenth. It is the only screen in the product built
 # out of form controls, and a radio group that has lost its label is the kind of
@@ -247,6 +252,7 @@ for url in \
 	"$BASE/" \
 	"$EMPTY/" \
 	"$BASE/?q=cache" \
+	"$BASE/?q=drawer" \
 	"$BASE/?q=cache&open=$ID" \
 	"$BASE/?q=zzqxzzqx" \
 	"$BASE/?q=cache&kind=image" \
