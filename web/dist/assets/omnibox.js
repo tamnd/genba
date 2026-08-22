@@ -12,6 +12,7 @@ import { h, replace, svg } from "genba/dom.js";
 import { api } from "genba/api.js";
 import { cache } from "genba/cache.js";
 import { icon } from "genba/format.js";
+import { shortcutLabel } from "genba/keys.js";
 
 // DEBOUNCE is how long the box waits before asking the server. The suggestion
 // budget is 80ms at the server, and this is the other half of feeling instant:
@@ -265,14 +266,3 @@ export class Omnibox {
   }
 }
 
-const MAC = navigator.platform.toLowerCase().includes("mac");
-
-/** modifierLabel is the key a platform holds down for its own shortcuts. */
-export function modifierLabel() {
-  return MAC ? "⌘" : "Ctrl";
-}
-
-/** shortcutLabel matches the key the platform actually uses. */
-export function shortcutLabel() {
-  return MAC ? "⌘K" : "Ctrl K";
-}

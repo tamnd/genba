@@ -11,18 +11,18 @@ import { cache } from "genba/cache.js";
 import { Live } from "genba/live.js";
 import { copies, copy } from "genba/clipboard.js";
 import * as urlState from "genba/state.js";
-import { followable, icon, initials, label, number, sourceColor, when } from "genba/format.js";
-import { Omnibox, modifierLabel, shortcutLabel } from "genba/omnibox.js";
+import { icon, initials, label, number, sourceColor, when } from "genba/format.js";
+import { Omnibox } from "genba/omnibox.js";
+import { CHORD, CHORD_TIMEOUT, SHORTCUTS, arms, binding, keysOf } from "genba/keys.js";
+import { apply as applyPrefs, density, setDensity, setTheme } from "genba/prefs.js";
 import { Results, VERTICALS, verticalsFor } from "genba/results.js";
 import { Drawer } from "genba/drawer.js";
 import { Page } from "genba/page.js";
 import { Home } from "genba/home.js";
 import { Recent } from "genba/recent.js";
+import { Settings } from "genba/settings.js";
 import { forget, remember } from "genba/queries.js";
 import { failed } from "genba/states.js";
-
-const THEME_KEY = "genba.theme";
-const DENSITY_KEY = "genba.density";
 
 // LOADING_DELAY is how long a search may run before the interface admits to it.
 //
@@ -79,6 +79,11 @@ class App {
     // somewhere to go back to. It is empty in a tab that opened straight onto a
     // document, which is the case the back link has to answer differently.
     this.lastSearch = "";
+    // The address the settings screen was opened from, for the same reason and
+    // with the same empty case. It is not the last search: settings is reached
+    // from every screen, and landing back on a results page from a document
+    // somebody was reading would be the wrong way out.
+    this.lastScreen = "";
 
     this.omnibox = new Omnibox({
       // Explicitly the search, because the box is on every screen and a search
@@ -117,6 +122,11 @@ class App {
     });
     this.page = new Page({
       onBack: () => this.backFromDocument(),
+      onSay: (text) => this.say(text),
+    });
+    this.settings = new Settings({
+      onBack: () => this.backFromSettings(),
+      onIdentity: () => this.switchIdentity(),
       onSay: (text) => this.say(text),
     });
 
@@ -298,6 +308,18 @@ class App {
           svg(icon("clock"), 20),
           h("span", { class: "rail__label" }, "Recent"),
         ),
+        h(
+          "a",
+          {
+            class: "rail__link",
+            href: urlState.SETTINGS,
+            title: "Settings",
+            dataset: { route: "settings" },
+            onClick: (e) => this.follow(e, urlState.SETTINGS),
+          },
+          svg(icon("slider"), 20),
+          h("span", { class: "rail__label" }, "Settings"),
+        ),
       ),
       // Both of these are filled once the session says what the corpus holds.
       // They are empty until then rather than full of guesses, because a rail
@@ -345,6 +367,12 @@ class App {
    * recent screen is a view of either.
    */
   visit(path) {
+    // Where the settings screen was opened from, taken before the address
+    // moves. No other screen needs this: the rest either carry their own state
+    // in the address or have a list behind them to go back to.
+    if (path === urlState.SETTINGS && urlState.route().name !== "settings") {
+      this.lastScreen = location.pathname + location.search;
+    }
     if (location.pathname !== path || location.search) history.pushState(null, "", path);
     this.query = urlState.read("");
     this.sync();
@@ -507,6 +535,10 @@ class App {
       this.showDocument(route.id);
       return;
     }
+    if (route.name === "settings") {
+      this.showSettings();
+      return;
+    }
 
     document.title = "genba";
     this.omnibox.value = this.query.q;
@@ -566,6 +598,48 @@ class App {
     };
   }
 
+  /**
+   * showSettings renders the preferences, the keys, and who the server says
+   * this is.
+   *
+   * It takes no arguments and asks the network for very little, so unlike every
+   * other screen there is nothing here that can fail into an error page. The
+   * two facts that come from the server are left out where they did not arrive,
+   * which the screen says by not printing them.
+   */
+  async showSettings() {
+    this.currentKey = "";
+    this.drawer.currentId = null;
+    if (this.drawer.open) this.drawer.close({ notify: false, focus: false });
+    document.title = "Settings · genba";
+    if (this.main.firstChild !== this.settings.el) replace(this.main, this.settings.el);
+    await this.settings.render(this.session);
+  }
+
+  /**
+   * backFromSettings is the way out, which is wherever this screen was opened
+   * from.
+   *
+   * A tab that opened straight onto this address has nothing behind it, and a
+   * back button that lands on whatever else was in that tab is worse than one
+   * that offers the search.
+   */
+  backFromSettings() {
+    const href = this.lastScreen || "/";
+    return {
+      href,
+      title: this.lastScreen ? "Back" : "Search",
+      // The address itself rather than history.back(), so that the link and the
+      // click agree. That costs a history entry and buys a way out that lands
+      // where it says it will, which is the same trade the document page makes.
+      go: () => {
+        history.pushState(null, "", href);
+        this.query = urlState.read(new URL(href, location.origin).search);
+        this.sync();
+      },
+    };
+  }
+
   async showHome() {
     if (this.main.firstChild !== this.home.el) replace(this.main, this.home.el);
     await this.home.render(this.session);
@@ -594,7 +668,12 @@ class App {
   markRail() {
     const searching = Boolean(this.query.q) || urlState.count(this.query) > 0 || Boolean(this.query.sort);
     const route = urlState.route();
-    const here = route.name === "recent" ? "recent" : route.name === "search" && !searching ? "home" : "";
+    const here =
+      route.name === "recent" || route.name === "settings"
+        ? route.name
+        : route.name === "search" && !searching
+          ? "home"
+          : "";
     for (const link of this.rail.querySelectorAll("[data-route]")) {
       if (link.dataset.route === here) link.setAttribute("aria-current", "page");
       else link.removeAttribute("aria-current");
@@ -913,28 +992,24 @@ class App {
     cache.invalidate(cache.key("recent", {}));
   }
 
+  /**
+   * theme is the header button: the other one of the two.
+   *
+   * It toggles what is on screen rather than what is stored, because what is
+   * stored may be nothing at all and somebody pressing this on a machine set to
+   * dark means light. The settings screen is where the three way choice lives,
+   * including the way back to following the system.
+   */
   theme() {
-    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
-    document.documentElement.dataset.theme = next;
-    localStorage.setItem(THEME_KEY, next);
+    setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
     this.header = this.buildHeader();
     this.build();
     this.sync();
   }
 
-  /**
-   * density is the one escape hatch in the spacing system.
-   *
-   * The restyle costs vertical space deliberately, and somebody triaging four
-   * hundred results has a different job from somebody reading one. Compact
-   * reduces the row padding and drops the body size one step. It does not
-   * reintroduce borders, change the colour system or touch the type scale
-   * above body, so it is two token overrides rather than a second theme.
-   */
+  /** density is the header button for the one escape hatch in the spacing system. */
   density() {
-    const next = document.documentElement.dataset.density === "compact" ? "comfortable" : "compact";
-    document.documentElement.dataset.density = next;
-    localStorage.setItem(DENSITY_KEY, next);
+    setDensity(density() === "compact" ? "comfortable" : "compact");
   }
 
   /**
@@ -975,27 +1050,14 @@ class App {
     location.reload();
   }
 
+  /**
+   * shortcuts is the dialog over whatever is on screen.
+   *
+   * It draws the same table the settings screen does and the same table the
+   * listener below dispatches through, so there is one answer to what a key
+   * does and three places that read it.
+   */
   shortcuts() {
-    const rows = [
-      ["Focus search", [shortcutLabel()]],
-      ["Next result", ["j"]],
-      ["Previous result", ["k"]],
-      ["First result", ["Home"]],
-      ["Last result", ["End"]],
-      ["Open preview", ["Enter"]],
-      ["Next match in the preview", ["n"]],
-      ["Previous match in the preview", ["shift", "n"]],
-      ["Open as a page, in a new tab", [modifierLabel(), "Enter"]],
-      ["Open in source", ["o"]],
-      ["Copy a link to this result", ["y"]],
-      ["Previous page", ["["]],
-      ["Next page", ["]"]],
-      ["Filters", ["f"]],
-      ["Go home", ["g", "h"]],
-      ["Recent", ["g", "s"]],
-      ["Close", ["Esc"]],
-      ["This list", ["?"]],
-    ];
     const returnTo = document.activeElement;
     const dismiss = () => {
       dialog.remove();
@@ -1023,14 +1085,7 @@ class App {
         "div",
         { class: "dialog__panel", tabindex: "-1" },
         h("h2", { class: "dialog__title" }, "Keyboard shortcuts"),
-        rows.map(([what, keys]) =>
-          h(
-            "div",
-            { class: "shortcut" },
-            what,
-            h("span", { class: "shortcut__keys" }, keys.map((k) => h("kbd", { class: "kbd" }, k))),
-          ),
-        ),
+        SHORTCUTS.map((row) => h("div", { class: "shortcut" }, row.what, keysOf(row))),
       ),
     );
     document.body.appendChild(dialog);
@@ -1066,6 +1121,16 @@ class App {
     return null;
   }
 
+  /** showingResults reports whether the search is the screen on the page. */
+  showingResults() {
+    return this.main.firstChild === this.results.el;
+  }
+
+  /** goHome is the search with nothing asked of it, which is the home screen. */
+  goHome() {
+    this.go({ ...urlState.read("") }, { path: "/" });
+  }
+
   /**
    * copyLink is the y key: a link to the result under the cursor.
    *
@@ -1093,148 +1158,32 @@ class App {
     return Boolean(rows && rows.holds());
   }
 
+  /**
+   * bindKeys is the one keyboard listener, dispatching through the table.
+   *
+   * There is no switch here on purpose. Every key and everything it does lives
+   * in keys.js, which is also what the settings screen and the shortcut sheet
+   * print, so a key cannot be handled without being written down.
+   */
   bindKeys() {
     let chord = null;
     document.addEventListener("keydown", (e) => {
-      const typing = e.target.matches("input, textarea, select");
+      // Read and clear together. A press either completes an armed sequence or
+      // ends it, and either way the next press starts from nothing.
+      const armed = chord || "";
+      chord = null;
 
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        this.omnibox.focus();
+      const row = binding(e, armed);
+      if (row) {
+        row.run(this, e);
         return;
       }
-      // The modifier means the same thing here as it does on a link: open it
-      // over there and leave me where I am.
-      if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !typing) {
-        const rows = this.rows();
-        const hit = rows && rows.current();
-        if (!hit) return;
-        e.preventDefault();
-        window.open(urlState.documentPath(hit.id, this.query.q), "_blank", "noreferrer");
-        return;
-      }
-      if (e.key === "Escape") {
-        if (this.drawer.open) return; // the drawer handles its own Escape
-        if (typing) e.target.blur();
-        return;
-      }
-      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
 
       // A two key sequence: g then a destination. The first key arms it and it
       // disarms itself, so a stray g does nothing rather than waiting forever.
-      if (chord === "g") {
-        chord = null;
-        // s is the recent screen, which is a path rather than a query, so it
-        // is the one destination in here that is not a search.
-        if (e.key === "s") {
-          e.preventDefault();
-          this.visit(urlState.RECENT);
-          return;
-        }
-        const destinations = { h: {}, a: { tab: "all" } };
-        if (destinations[e.key]) {
-          e.preventDefault();
-          this.go({ ...urlState.read(""), ...destinations[e.key] }, { path: "/" });
-        }
-        return;
-      }
-
-      switch (e.key) {
-        case "/":
-          e.preventDefault();
-          this.omnibox.focus();
-          break;
-        case "g":
-          chord = "g";
-          setTimeout(() => (chord = null), 1200);
-          break;
-        case "j":
-        case "k": {
-          const rows = this.rows();
-          if (!rows) return;
-          e.preventDefault();
-          const delta = e.key === "j" ? 1 : -1;
-          // With the preview open these keys move the preview. Reading through
-          // five candidates used to be five open and close cycles, each of
-          // which lost the place in the list.
-          const stepping = this.drawer.open;
-          rows.move(delta, { focus: !stepping });
-          if (stepping) this.step(delta);
-          break;
-        }
-        // The matches inside the preview, in the same direction j and k move
-        // between documents. It is answered here rather than in the drawer so
-        // that it works wherever focus happens to be, which above the
-        // breakpoint is not necessarily inside the drawer.
-        case "n":
-        case "N": {
-          if (!this.drawer.open) return;
-          e.preventDefault();
-          this.drawer.toMatch(e.shiftKey ? -1 : 1);
-          break;
-        }
-        // The arrow keys move inside the list and only inside it. A page has
-        // one scrollbar and somebody reading a preview with the arrow keys is
-        // scrolling it, so these are answered where the pattern says they are:
-        // when focus is in the widget they belong to.
-        case "ArrowDown":
-        case "ArrowUp": {
-          if (!this.inList()) return;
-          const rows = this.rows();
-          if (!rows) return;
-          e.preventDefault();
-          rows.move(e.key === "ArrowDown" ? 1 : -1);
-          break;
-        }
-        case "Home":
-        case "End": {
-          const rows = this.rows();
-          if (this.drawer.open || !rows || !rows.hits.length) return;
-          e.preventDefault();
-          rows.edge(e.key === "Home" ? "first" : "last");
-          break;
-        }
-        case "Enter":
-        case "p": {
-          const rows = this.rows();
-          const hit = rows && rows.current();
-          if (!hit) return;
-          e.preventDefault();
-          this.open(hit.id);
-          break;
-        }
-        case "o": {
-          // Only where a browser would go there. Opening a file:// URL in a new
-          // tab from an HTTP page leaves somebody looking at a blank tab, which
-          // is worse than the key doing nothing.
-          const rows = this.rows();
-          const hit = rows && rows.current();
-          if (!hit || !followable(hit.url)) return;
-          e.preventDefault();
-          window.open(hit.url, "_blank", "noreferrer");
-          break;
-        }
-        case "[":
-        case "]":
-          if (this.page(e.key === "]" ? 1 : -1)) e.preventDefault();
-          break;
-        case "f":
-          // Not from inside the preview, which is modal. Moving focus behind a
-          // modal is the one way out of a focus trap that nobody asked for, and
-          // not from a screen with no filters on it either.
-          if (this.drawer.open || this.main.firstChild !== this.results.el) return;
-          e.preventDefault();
-          this.results.focusFilters();
-          break;
-        case "y":
-          if (this.copyLink()) e.preventDefault();
-          break;
-        case "?":
-          e.preventDefault();
-          this.shortcuts();
-          break;
-        default:
-          break;
+      if (!armed && arms(e)) {
+        chord = CHORD;
+        setTimeout(() => (chord = null), CHORD_TIMEOUT);
       }
     });
   }
@@ -1254,17 +1203,9 @@ function countIn(kinds, vertical) {
 }
 
 // Theme before first paint, so a dark theme does not arrive as a white flash.
-// The same block runs inline in index.html, and this one is what keeps the two
-// in step when the module loads without a cached document.
-const saved = localStorage.getItem(THEME_KEY);
-if (saved) {
-  document.documentElement.dataset.theme = saved;
-} else if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
-  document.documentElement.dataset.theme = "dark";
-}
-
-const density = localStorage.getItem(DENSITY_KEY);
-if (density) document.documentElement.dataset.density = density;
+// The same two preferences are applied inline in index.html, and this call is
+// what keeps the two in step when the module loads without a cached document.
+applyPrefs();
 
 const app = new App(document.getElementById("app"));
 app.start();
