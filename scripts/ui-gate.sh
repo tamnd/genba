@@ -112,6 +112,9 @@ ready() {
 		fi
 		sleep 0.2
 	done
+	# A server that died mid read stops matching too, and the loop above cannot
+	# tell that apart from one that finished.
+	alive "$1" "$2"
 }
 
 # alive fails the gate if the process being waited for has gone. Waiting the
