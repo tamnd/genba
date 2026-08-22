@@ -77,6 +77,17 @@ func (s *Store) Unverify(ctx context.Context, p *acl.Principal, id string) error
 // than expanded into a list of placeholders, which is what the filters in
 // query.go do, and it means a page of twenty and a page of two hundred prepare
 // the same statement.
+//
+// The join order is pinned, which is what CROSS JOIN means to SQLite and is the
+// whole performance of this. The visibility clause carries correlated
+// subqueries and is cheap over a match set and ruinous over a corpus, exactly
+// as the comment above reachable says, and the planner has no statistics saying
+// this table is small: written as an ordinary join it read the whole document
+// table and ran those subqueries against every row of it, which measured at 365
+// milliseconds a call on twenty thousand documents and at one millisecond after
+// the order was pinned. Written this way the ids are walked, each one is a
+// primary key probe into a table that is usually empty for them, and the
+// visibility rule is applied to the handful of rows that came back.
 func (s *Store) Verifications(ctx context.Context, p *acl.Principal, ids []string) (map[string]store.Verification, error) {
 	if err := s.ready(ctx); err != nil {
 		return nil, err
@@ -92,9 +103,10 @@ func (s *Store) Verifications(ctx context.Context, p *acl.Principal, ids []strin
 	args := append([]any{jsonList(ids)}, c.args...)
 	rows, err := s.query(ctx, `
 		SELECT v.doc_id, v.by_subject, v.by_name, v.by_email, v.verified_at, v.expires_at, v.note
-		FROM document_verify v
-		JOIN document d ON d.id = v.doc_id
-		WHERE v.doc_id IN (SELECT value FROM json_each(?)) AND `+c.where(), args...)
+		FROM json_each(?) j
+		CROSS JOIN document_verify v ON v.doc_id = j.value
+		CROSS JOIN document d ON d.id = v.doc_id
+		WHERE `+c.where(), args...)
 	if err != nil {
 		return nil, fmt.Errorf("sqlitestore: verifications: %w", err)
 	}
