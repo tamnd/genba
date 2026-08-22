@@ -223,6 +223,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/search", s.authenticated(s.handleSearch))
 	mux.Handle("GET /api/v1/suggest", s.authenticated(s.handleSuggest))
 	mux.Handle("GET /api/v1/documents/{id}", s.authenticated(s.handleDocument))
+	mux.Handle("POST /api/v1/documents/{id}/verify", s.authenticated(s.handleVerify))
+	mux.Handle("DELETE /api/v1/documents/{id}/verify", s.authenticated(s.handleUnverify))
 	mux.Handle("GET /api/v1/documents/{id}/content", s.authenticated(s.handleContent))
 	mux.Handle("GET /api/v1/documents/{id}/thumbnail", s.authenticated(s.handleThumbnail))
 	mux.Handle("GET /api/v1/recent", s.authenticated(s.handleRecent))
@@ -413,6 +415,12 @@ type searchHit struct {
 	// search of its own and highlighting the wrong halves of words.
 	Passages []passage `json:"passages,omitempty"`
 	Score    float64   `json:"score"`
+
+	// Verified is who vouched for this document and until when, and is absent
+	// when nobody has. It is on the row rather than only in the preview because
+	// the whole value of the signal is that it is visible while somebody is
+	// choosing which of ten results to open.
+	Verified *verification `json:"verified,omitempty"`
 }
 
 type passage struct {
@@ -478,9 +486,17 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Pri
 		Answer:     answerOf(res.Answer),
 		Correction: res.Correction,
 	}
+	ids := make([]string, 0, len(res.Hits))
+	for _, h := range res.Hits {
+		ids = append(ids, h.Document.ID)
+	}
+	// One question for the whole page rather than one per row, and the badges
+	// are left off rather than the search failing when it cannot be answered.
+	vouched, now := s.verifications(r, p, ids), s.now()
 	for _, h := range res.Hits {
 		hit := hitOf(h.Document)
 		hit.Snippet, hit.Passages, hit.Score = h.Snippet, passages(h.Passages), h.Score
+		hit.Verified = verifiedOf(vouched[h.Document.ID], now)
 		out.Hits = append(out.Hits, hit)
 	}
 	writeConditional(w, r, http.StatusOK, out, out.identity())
@@ -773,7 +789,21 @@ func (s *Server) handleDocument(w http.ResponseWriter, r *http.Request, p *acl.P
 		writeError(w, http.StatusInternalServerError, "internal", "the document could not be read")
 		return
 	}
-	writeConditional(w, r, http.StatusOK, documentResponse(d), nil)
+	body := documentResponse(d)
+	// The preview is where somebody decides whether to trust what they are
+	// reading, so it carries the claim and whether this reader is one of the
+	// people who could make one. Both come from the same request, because a
+	// second one to find out whether to draw a button is a second round trip
+	// before the panel can be painted.
+	if v, ok := s.verifier(); ok {
+		body.CanVerify = store.MayVerify(p, d)
+		if got, err := v.Verifications(r.Context(), p, []string{d.ID}); err != nil {
+			s.log.Error("verifications could not be read", "error", err, "document", d.ID)
+		} else {
+			body.Verified = verifiedOf(got[d.ID], s.now())
+		}
+	}
+	writeConditional(w, r, http.StatusOK, body, nil)
 }
 
 type documentBody struct {
@@ -792,6 +822,14 @@ type documentBody struct {
 	Container  string            `json:"container,omitempty"`
 	ModifiedAt time.Time         `json:"modified_at,omitzero"`
 	Properties map[string]string `json:"properties,omitempty"`
+
+	// Verified is who vouched for this document and until when, absent when
+	// nobody has, and CanVerify says whether this reader is one of the people
+	// who could. Both are absent on a deployment whose driver cannot remember a
+	// claim, which is what makes the interface leave the whole thing out rather
+	// than offer a button that fails.
+	Verified  *verification `json:"verified,omitempty"`
+	CanVerify bool          `json:"can_verify,omitempty"`
 }
 
 // documentResponse is where the wire shape is decided. Permissions are not part

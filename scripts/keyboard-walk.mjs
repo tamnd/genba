@@ -134,6 +134,39 @@ async function walk(session) {
     })()`,
   );
 
+  // The gate put a claim on the first result before the browser started, so the
+  // badge is on the row rather than only in the preview. That is the whole
+  // point of the signal: it is read while somebody is choosing which of ten
+  // results to open, not after they have opened one.
+  await check(
+    session,
+    "a verified result carries the badge on the row",
+    `(() => {
+      const badge = document.querySelector('.result .verified');
+      return Boolean(badge) && badge.classList.contains('verified--fresh') &&
+        badge.textContent.trim() === 'Verified' && (badge.title || '').includes('Current until');
+    })()`,
+  );
+
+  // The other two states, asked of the function, because a corpus read minutes
+  // ago holds nothing that has run out and a badge nobody can produce is a
+  // badge nobody checks. An expired claim has to read as expired: the shape it
+  // would ship in otherwise is a green tick on a document last looked at in
+  // 2023.
+  await check(
+    session,
+    "a claim that has run out reads as run out rather than as a tick",
+    `import('genba/verify.js').then(({ badge }) => {
+      const made = (state) =>
+        badge({ state, by: 'Mei Tanaka', at: '2026-01-01T00:00:00Z', until: '2026-02-01T00:00:00Z' });
+      return made('fresh').textContent === 'Verified' &&
+        made('expiring').textContent.startsWith('Verified, expires') &&
+        made('expired').textContent.startsWith('Verification expired') &&
+        made('expired').classList.contains('verified--expired') &&
+        badge(null) === null && badge({}) === null;
+    })`,
+  );
+
   await press(session, "j", "KeyJ", 74);
   await check(
     session,
@@ -167,6 +200,18 @@ async function walk(session) {
     "beside a visible list the preview does not claim to be modal",
     `window.innerWidth > 720 &&
       document.querySelector('.drawer').getAttribute('aria-modal') === 'false'`,
+  );
+
+  // The preview is where somebody decides whether to trust what they are
+  // reading, so the claim is in the header with a name on it rather than in the
+  // tooltip it carries on a row.
+  await check(
+    session,
+    "the preview names the person who vouched for the document",
+    `(() => {
+      const badge = document.querySelector('.drawer__meta .verified');
+      return Boolean(badge) && badge.textContent.includes('Verified by');
+    })()`,
   );
 
   // The words that were searched for, in the document that came back. This
@@ -302,6 +347,67 @@ async function walk(session) {
       if (!u.pathname.startsWith('/d/')) return true;
       return [...new URLSearchParams(u.search).keys()].every((k) => k === 'q');
     })`,
+  );
+
+  // Verification, from the screen it is decided on. The two writes are here
+  // rather than only in the API tests because what they have to leave alone is
+  // the document underneath them: a page opened at line four hundred that jumps
+  // back to the top because somebody put their name to it is a page nobody
+  // verifies twice.
+  // The note is put on the claim here rather than only by the shell that starts
+  // the server, because the two writes below leave a claim with no note on it,
+  // which is what the button sends. Without this the walk passes once against a
+  // server and fails on the second run against the same one, and a check that
+  // depends on how many times it has been run is a check nobody trusts.
+  await evaluate(
+    session,
+    `import('genba/api.js').then(({ api }) =>
+      api.verify(decodeURIComponent(location.pathname.slice(3)), {
+        note: 'checked against the current deployment',
+      }))`,
+  );
+  await visit(session, BASE + id, "Boolean(document.querySelector('.page__meta .verified'))");
+
+  await check(
+    session,
+    "the document page says who vouched for it and until when",
+    `(() => {
+      const badge = document.querySelector('.page__meta .verified');
+      return Boolean(badge) && badge.classList.contains('verified--fresh') &&
+        badge.textContent.includes('Verified by') && (badge.title || '').includes('Current until');
+    })()`,
+  );
+  await check(
+    session,
+    "the verifier's own sentence is on the page and not only in a tooltip",
+    `(document.querySelector('.verified__note') || {}).textContent === 'checked against the current deployment'`,
+  );
+
+  // A mark on a node the body already had, so that the claim below can be about
+  // this element surviving rather than about the page looking similar.
+  await evaluate(session, "document.querySelector('.page__body > *').dataset.walk = 'kept'");
+  await evaluate(session, foot("Withdraw") + ".click()");
+  await check(
+    session,
+    "withdrawing takes the badge off and leaves the document where it was",
+    `!document.querySelector('.page__meta .verified') &&
+      Boolean(document.querySelector('.page__body [data-walk="kept"]'))`,
+  );
+  await check(
+    session,
+    "the button offers the write that is now available",
+    `Boolean(${foot("Verify")}) && !${foot("Withdraw")}`,
+  );
+
+  await evaluate(session, foot("Verify") + ".click()");
+  await check(
+    session,
+    "verifying again puts the badge back, from this screen, with no reload",
+    `(() => {
+      const badge = document.querySelector('.page__meta .verified');
+      return Boolean(badge) && badge.classList.contains('verified--fresh') &&
+        Boolean(document.querySelector('.page__body [data-walk="kept"]'));
+    })()`,
   );
 
   // The keyboard on its own. Everything above uses it in passing; this is the
@@ -1035,4 +1141,16 @@ async function walk(session) {
     "at 390 pixels the preview covers the list and says it is modal",
     "document.querySelector('.drawer').getAttribute('aria-modal') === 'true'",
   );
+}
+
+/**
+ * foot is an expression naming one button under a document, by the words on it.
+ *
+ * By the words rather than by a class, because the words are what somebody
+ * reading the screen has to press, and a button whose label stopped matching
+ * what it does is exactly the thing this walk is for.
+ */
+function foot(words) {
+  return `[...document.querySelectorAll('.page__foot .button')]
+    .find((b) => b.textContent.trim() === ${JSON.stringify(words)})`;
 }

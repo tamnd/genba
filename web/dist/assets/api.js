@@ -117,10 +117,10 @@ async function failure(res) {
 /**
  * send is a write, and returns the state that resulted from it.
  *
- * Every one of these endpoints answers with the whole connector list rather
- * than with an acknowledgement, so a screen paints what is true after the
- * change instead of guessing and then asking. Nothing here is cached and
- * nothing here is retried: a retried start is a second crawler.
+ * These endpoints answer with the state that resulted rather than with an
+ * acknowledgement, so a screen paints what is true after the change instead of
+ * guessing and then asking. Nothing here is cached and nothing here is retried:
+ * a retried start is a second crawler.
  */
 async function send(method, path, body) {
   const sent = headers();
@@ -131,7 +131,15 @@ async function send(method, path, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) throw await failure(res);
+  // A write that removes something has nothing to say back, and reading a body
+  // that is not there is a parse error on a request that worked.
+  if (res.status === 204) return null;
   return res.json();
+}
+
+/** verifyPath is one document's verification, which is written and withdrawn. */
+function verifyPath(id) {
+  return `/documents/${encodeURIComponent(id)}/verify`;
 }
 
 /** connector is one source's path under the administration endpoints. */
@@ -253,6 +261,13 @@ export const api = {
   recordOpen,
   suggest: (q, opts) => get("/suggest", { q }, opts),
   document: (id, opts) => get(`/documents/${encodeURIComponent(id)}`, {}, opts),
+  // Putting a name to a document and taking it off again. Neither sends who is
+  // making the claim: the server takes that from the same headers it
+  // authenticates with, so a request cannot put somebody else's name on a
+  // badge. The note and the expiry are optional and the interface sends
+  // neither, which is what makes the common case one click.
+  verify: (id, claim) => send("POST", verifyPath(id), claim),
+  unverify: (id) => send("DELETE", verifyPath(id)),
   content: (id, opts) => bytes(`/documents/${encodeURIComponent(id)}/content`, opts),
   // The version goes in the URL rather than in a header, because it is what
   // makes the address of a thumbnail stand for one picture forever. The server

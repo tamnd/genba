@@ -15,6 +15,7 @@
 import { h, replace, svg } from "genba/dom.js";
 import { kindIcon, sourceColor, label, when, exact, icon, followable, copyable } from "genba/format.js";
 import { tile, cover } from "genba/content.js";
+import { badge } from "genba/verify.js";
 import { copies } from "genba/clipboard.js";
 import * as urlState from "genba/state.js";
 
@@ -188,6 +189,10 @@ export class RowList {
         { class: "cell__meta" },
         h("span", { class: "source__dot", style: { background: sourceColor(hit.source) } }),
         h("span", { class: "cell__where", title: hit.container || label(hit.source) }, hit.container || label(hit.source)),
+        // The mark and not the sentence. A cell is a picture with one line
+        // under it, and that line is already the folder truncated on the
+        // right, so the words go where a screen reader still reads them.
+        badge(hit.verified, { compact: true }),
       ),
     );
   }
@@ -273,6 +278,13 @@ export class RowList {
             { class: "crumbs", title: exact(hit.at), datetime: hit.at },
             `you opened this ${when(hit.at)}`,
           ),
+        // Last on the line and not first, because it is the one thing here that
+        // most rows do not have, and a badge in the middle of the provenance
+        // would move the folder and the date around from row to row. It is on
+        // the row at all because the whole value of the signal is that it is
+        // visible while somebody is choosing which of ten results to open.
+        hit.verified && h("span", { class: "crumbs__sep" }, "·"),
+        badge(hit.verified),
       ),
       // A row with nothing to quote does not reserve the space for a quote. An
       // image has no text in it, so every image row used to end in two empty
