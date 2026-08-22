@@ -220,7 +220,7 @@ func isBreak(r rune) bool {
 // own, which is true of every source file and most spreadsheets, and an answer
 // that quotes a line of JSON above the results has made the page worse. The
 // caller drops the document and quotes the next one.
-func bestSentence(parts []string, terms []string, cutHead, cutTail bool) string {
+func bestSentence(parts, terms []string, cutHead, cutTail bool) string {
 	if len(parts) == 0 {
 		return ""
 	}
