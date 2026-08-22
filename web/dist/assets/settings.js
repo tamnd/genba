@@ -231,6 +231,11 @@ export class Settings {
         ["Commit", health.commit],
         ["Built", health.built === "unknown" ? "" : exact(health.built) || health.built],
         ["Store", stats.driver ? label(stats.driver) : ""],
+        // Which of the two query paths this deployment is on. It is here rather
+        // than left to be inferred from the clock because the two answer the
+        // same queries with the same results, and on a few hundred documents
+        // they are a hundred times apart.
+        ["Queries", this.stats ? (stats.ranking ? "ranked in the store" : "scanned one at a time") : ""],
         ["Documents", this.stats ? number(stats.documents) : ""],
         ["Held back", this.stats ? number(stats.quarantined) : ""],
         ["Last indexed", stats.indexed_at ? when(stats.indexed_at) : "not since this process started"],

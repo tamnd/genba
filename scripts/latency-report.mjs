@@ -5,6 +5,16 @@
 // and measures the cache, and the number worth watching is what somebody gets
 // when they type something nobody has typed before.
 //
+// It asks the server what it is running on before it times anything, and stops
+// if the answer is a driver with no index of its own. A driver like that is
+// walked document by document with the ranking done above it, and on the same
+// few hundred documents that measured at a p50 of 1.8 seconds against 17
+// milliseconds for SQLite. Timing it produces a real number for a deployment
+// nobody has, printed next to a budget it was never going to meet, and it is
+// read as the product being slow. That happened, and it went unnoticed for as
+// long as it did because the number arrived every run and looked like a
+// measurement.
+//
 // It prints and it does not fail, until #55 lands and the query stops being
 // linear in the size of the match set. It prints anyway, because a number
 // nobody prints is a number nobody watches, and that is exactly how a fifth of
@@ -77,6 +87,30 @@ const headers = {
   "X-Genba-Subject": "dev@example.com",
   "X-Genba-Groups": "everyone",
 };
+
+// What is being measured, asked before anything is timed. A failure to answer
+// is not fatal, because an embedder that named no driver is entitled to report
+// nothing and this report is not the place to insist on it.
+let driver = "";
+let ranking = true;
+try {
+  const res = await fetch(`${BASE}/api/v1/stats`, { headers });
+  if (res.ok) {
+    const body = await res.json();
+    driver = body.driver || "";
+    ranking = body.ranking !== false;
+  }
+} catch {
+  // Left as it was. The queries below fail on their own if the server is gone.
+}
+console.log(`latency-report: driver ${driver || "unnamed"}, ranking ${ranking ? "yes" : "no"}`);
+if (!ranking) {
+  console.error(
+    `latency-report: ${driver || "this driver"} has no index of its own, so it is walked per query and there is no latency here worth reporting`,
+  );
+  console.error(`latency-report: point the gate at sqlite or postgres`);
+  process.exit(1);
+}
 
 const timings = [];
 let empty = 0;
