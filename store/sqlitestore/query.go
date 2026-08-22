@@ -90,7 +90,7 @@ func visible(p *acl.Principal) *clause {
 // It is a second expression of the rule and that is the thing to be careful
 // about, so it is held to the first by storetest.RunReachable, which walks the
 // order clause by clause against every driver.
-func reachable(p *acl.Principal) (string, []any) {
+func reachable(p *acl.Principal) (query string, args []any) {
 	users, _ := json.Marshal(nonEmpty(p.UserKeys()))
 	groups, _ := json.Marshal(nonEmpty(p.GroupKeys()))
 
