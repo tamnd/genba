@@ -131,7 +131,87 @@ func TestAllows(t *testing.T) {
 			if got := tt.perm.Allows(p); got != tt.want {
 				t.Errorf("Allows() = %v, want %v", got, tt.want)
 			}
+			// The two answers are one answer. Allows is written in terms of
+			// Decide, and this is what says so out loud, so that a later change
+			// that gives Decide its own copy of the order fails here rather than
+			// on somebody's screen.
+			if got := tt.perm.Decide(p); got.Allowed != tt.want {
+				t.Errorf("Decide() = %+v, want allowed %v", got, tt.want)
+			}
 		})
+	}
+}
+
+// TestDecideNamesTheClauseAndTheReference is the half of the decision the
+// screen shows. Which clause settled it is the difference between a deny
+// somebody wrote on purpose and an access control list a connector never
+// finished filling in, and those two want opposite actions.
+func TestDecideNamesTheClauseAndTheReference(t *testing.T) {
+	tests := []struct {
+		name string
+		perm acl.Permissions
+		want acl.Decision
+	}{
+		{
+			name: "unresolved says so rather than saying not listed",
+			perm: acl.Permissions{Mode: acl.ModeUnknown, AllowGroups: []acl.Ref{{Source: "slack", Value: "S-platform"}}},
+			want: acl.Decision{Rule: acl.RuleUnresolved},
+		},
+		{
+			name: "a deny names the deny that won",
+			perm: acl.Permissions{
+				Mode:        acl.ModeACL,
+				AllowGroups: []acl.Ref{{Source: "slack", Value: "S-platform"}},
+				DenyUsers:   []acl.Ref{{Source: "gdrive", Value: "mei@acme.com"}},
+			},
+			want: acl.Decision{Rule: acl.RuleDenied, Ref: acl.Ref{Source: "gdrive", Value: "mei@acme.com"}},
+		},
+		{
+			name: "an allow names the group that admitted them",
+			perm: acl.Permissions{
+				Mode:        acl.ModeACL,
+				AllowGroups: []acl.Ref{{Source: "slack", Value: "S-legal"}, {Source: "slack", Value: "S-platform"}},
+			},
+			want: acl.Decision{Allowed: true, Rule: acl.RuleListed, Ref: acl.Ref{Source: "slack", Value: "S-platform"}},
+		},
+		{
+			name: "an empty access control list is not listed rather than denied",
+			perm: acl.Permissions{Mode: acl.ModeACL},
+			want: acl.Decision{Rule: acl.RuleNotListed},
+		},
+		{
+			name: "public to the tenant names no reference because none decided",
+			perm: acl.Permissions{Mode: acl.ModePublicToTenant},
+			want: acl.Decision{Allowed: true, Rule: acl.RuleTenant},
+		},
+		{
+			name: "the owner is named",
+			perm: acl.Permissions{Mode: acl.ModeOwnerOnly, Owner: acl.Ref{Source: "gdrive", Value: "mei@acme.com"}},
+			want: acl.Decision{Allowed: true, Rule: acl.RuleOwner, Ref: acl.Ref{Source: "gdrive", Value: "mei@acme.com"}},
+		},
+		{
+			name: "somebody else's private document",
+			perm: acl.Permissions{Mode: acl.ModeOwnerOnly, Owner: acl.Ref{Source: "gdrive", Value: "kenji@acme.com"}},
+			want: acl.Decision{Rule: acl.RuleOwnerOnly},
+		},
+	}
+
+	p := person()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.perm.Decide(p); got != tt.want {
+				t.Errorf("Decide() = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestDecideWithNoPrincipalSaysWhichMistakeItWas keeps the one case that is a
+// programming error apart from the cases that are ordinary refusals.
+func TestDecideWithNoPrincipalSaysWhichMistakeItWas(t *testing.T) {
+	got := acl.Permissions{Mode: acl.ModePublicToTenant}.Decide(nil)
+	if got.Allowed || got.Rule != acl.RuleNoPrincipal {
+		t.Errorf("Decide(nil) = %+v, want a refusal that says there was no principal", got)
 	}
 }
 

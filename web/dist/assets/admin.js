@@ -1,9 +1,10 @@
 // The administration screen.
 //
 // It answers one question, which is whether this deployment is working, and it
-// answers it for somebody who can do something about the answer. Three parts:
+// answers it for somebody who can do something about the answer. Four parts:
 // what each connector is doing and which of its syncs failed, what the corpus
-// holds, and which documents are being held back and why.
+// holds, which documents are being held back and why, and what one named person
+// can actually see.
 //
 // Nothing on it writes. That is deliberate for now and it is not a permanent
 // shape: adding and starting connectors from here is the other half of the
@@ -21,6 +22,7 @@ import { api } from "genba/api.js";
 import { cache } from "genba/cache.js";
 import { bytes, duration, exact, icon, label, number, when } from "genba/format.js";
 import { failed as failedState } from "genba/states.js";
+import { Access } from "genba/access.js";
 
 // REFRESH is how often the screen asks again while somebody is looking at it.
 //
@@ -39,6 +41,9 @@ export class Admin {
     this.error = null;
     this.timer = 0;
     this.title = null;
+    // Built once and reused by every paint, because it holds a form and this
+    // screen repaints itself on a timer. See paint.
+    this.access = new Access();
     this.el = h("div", { class: "admin" });
   }
 
@@ -121,6 +126,12 @@ export class Admin {
     // pulling focus back to the heading each time would make it impossible to
     // read the table with a keyboard.
     const held = this.el.contains(document.activeElement) && document.activeElement !== this.title;
+    // Which element, and where the caret was in it. The access panel below is
+    // the same node across repaints, so its contents survive, but a node that
+    // is detached and reattached loses focus and a five second timer that takes
+    // the caret out of a half typed group name is a form nobody can use.
+    const focused = held ? document.activeElement : null;
+    const caret = selectionOf(focused);
 
     this.title = h("h1", { class: "admin__title", tabindex: "-1" }, "Administration");
     // Nothing arrived and nothing was held, so there is nothing to draw. The
@@ -150,8 +161,13 @@ export class Admin {
       failed ? null : this.corpus(data),
       failed ? null : this.connectors(data),
       failed ? null : this.quarantine(data),
+      failed ? null : this.access.el,
     );
-    if (!held) this.title.focus();
+    if (!held) {
+      this.title.focus();
+      return;
+    }
+    if (focused && focused.isConnected) restore(focused, caret);
   }
 
   /** retry reads again after a failure, from the button the failure offers. */
@@ -444,6 +460,34 @@ export class Admin {
         ),
       ),
     );
+  }
+}
+
+/**
+ * selectionOf reads where the caret is, for an element that has one.
+ *
+ * Null for anything else, including a button or a link, because those are put
+ * back by focusing them and have no position to keep.
+ */
+function selectionOf(el) {
+  if (!el || typeof el.selectionStart !== "number") return null;
+  return { start: el.selectionStart, end: el.selectionEnd, direction: el.selectionDirection };
+}
+
+/**
+ * restore puts focus and the caret back after a repaint.
+ *
+ * Guarded, because setSelectionRange throws on an input whose type does not
+ * carry a selection, and an email field somebody is typing into is worth
+ * keeping focus on even if the caret has to go to the end of it.
+ */
+function restore(el, caret) {
+  el.focus();
+  if (!caret) return;
+  try {
+    el.setSelectionRange(caret.start, caret.end, caret.direction || "none");
+  } catch {
+    // Focus is the part that matters and it is already back.
   }
 }
 

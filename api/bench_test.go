@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -204,6 +205,50 @@ func BenchmarkAPIAdmin(b *testing.B) {
 	for b.Loop() {
 		get(b, h, "/api/v1/admin/operations", hdr)
 	}
+}
+
+// BenchmarkAPIAccess is the question an operator asks over and over: can this
+// person read this document. It is measured with the full group expansion the
+// corpus generates rather than with one group, because the permission predicate
+// is built from the membership and a question about somebody in two groups is
+// not the question anybody asks about a long serving employee.
+//
+// This is the one that has to be quick, and it is the reason the counts beside
+// it are asked for rather than always computed.
+func BenchmarkAPIAccess(b *testing.B) {
+	h, hdr := handler(b, api.WithLogger(slog.New(slog.DiscardHandler)))
+	hdr[api.HeaderRoles] = acl.RoleAdmin
+	target := accessTarget(hdr) + "&id=b0"
+	get(b, h, target, hdr)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		get(b, h, target, hdr)
+	}
+}
+
+// BenchmarkAPIAccessCounts is the aggregate: how much of the corpus that person
+// can reach, by connector. It is a pass over every document in the tenant and
+// it is measured here because the number is the argument for keeping it behind
+// counts=1 rather than on the first paint. See #149.
+func BenchmarkAPIAccessCounts(b *testing.B) {
+	h, hdr := handler(b, api.WithLogger(slog.New(slog.DiscardHandler)))
+	hdr[api.HeaderRoles] = acl.RoleAdmin
+	target := accessTarget(hdr) + "&counts=1"
+	get(b, h, target, hdr)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		get(b, h, target, hdr)
+	}
+}
+
+// accessTarget is the access question with the principal from the headers put
+// into the query string, which is how an operator asks about somebody else.
+func accessTarget(hdr map[string]string) string {
+	return "/api/v1/admin/access?subject=u_bench" +
+		"&groups=" + url.QueryEscape(hdr[api.HeaderGroups]) +
+		"&identities=" + url.QueryEscape(hdr[api.HeaderIdentities])
 }
 
 // urlQuery escapes a query for the q parameter. The benchmark queries are

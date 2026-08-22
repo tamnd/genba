@@ -225,6 +225,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/stats", s.authenticated(s.handleStats))
 	mux.Handle("GET /api/v1/events", s.authenticated(s.handleEvents))
 	mux.Handle("GET /api/v1/admin/operations", s.admin(s.handleAdmin))
+	mux.Handle("GET /api/v1/admin/access", s.admin(s.handleAccess))
 	if s.assets != nil {
 		mux.Handle("GET /", s.assets)
 	}

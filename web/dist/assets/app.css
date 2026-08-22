@@ -1449,6 +1449,15 @@ mark.hit--current::after {
   letter-spacing: var(--display-tracking);
 }
 
+/* What the panel is showing, beside its name. It is a caption rather than a
+   second heading, so it sits on the baseline of the title without competing
+   with it. */
+.panel__note {
+  color: var(--text-muted);
+  font-size: var(--text-small);
+  line-height: var(--leading-small);
+}
+
 .panel__link {
   margin-left: auto;
   color: var(--text-link);
@@ -3054,6 +3063,149 @@ h6.prose__h {
   color: var(--text-secondary);
   font-size: var(--text-small);
   line-height: var(--leading-small);
+}
+
+/* Access ----------------------------------------------------------------- */
+
+/* The only panel on this screen somebody works in rather than reads, so it is
+   the only one with a form. It keeps the same measure and the same rhythm as
+   the panels above it, because a form that looks like a different application
+   reads as one. */
+.access__lead {
+  max-width: var(--measure);
+  margin-bottom: var(--space-6);
+  color: var(--text-secondary);
+  font-size: var(--text-small);
+  line-height: var(--leading-small);
+}
+
+/* Two columns while there is room, because subject and groups are asked
+   together and a single column of four fields puts the button off the screen. */
+.access__fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--space-5) var(--space-8);
+}
+
+.access__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.access__label {
+  color: var(--text-secondary);
+  font-size: var(--text-small);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-small);
+}
+
+.access__input {
+  height: 40px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  font-size: var(--text-body);
+}
+
+.access__input:hover {
+  border-color: var(--border-strong);
+}
+
+.access__hint {
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--leading-small);
+  overflow-wrap: anywhere;
+}
+
+.access__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+}
+
+/* Said beside the button rather than in a tooltip, because it is a cost
+   somebody is about to pay. */
+.access__aside {
+  max-width: var(--measure);
+  color: var(--text-muted);
+  font-size: var(--text-small);
+  line-height: var(--leading-small);
+}
+
+.access__answer {
+  margin-top: var(--space-8);
+}
+
+.access__answer:empty {
+  margin-top: 0;
+}
+
+.access__subtitle {
+  margin-bottom: var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--text-small);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-small);
+}
+
+.access__asked,
+.access__verdict,
+.access__reach {
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--border);
+}
+
+.access__asked {
+  padding-top: 0;
+  border-top: none;
+}
+
+.access__call {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  font-size: var(--text-lead);
+  line-height: var(--leading-lead);
+}
+
+/* Colour only on the yes. A refusal is the ordinary answer here and printing it
+   in red would read as a fault rather than as the permission model working. */
+.access__verdict--yes .access__call {
+  color: var(--success-700);
+}
+
+.access__doc {
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.access__total {
+  margin-bottom: var(--space-4);
+  font-size: var(--text-heading);
+  line-height: var(--leading-heading);
+  font-variant-numeric: tabular-nums;
+}
+
+.access__error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--danger-700);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+}
+
+.access__busy,
+.access__idle {
+  color: var(--text-muted);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
 }
 
 /* Responsive ------------------------------------------------------------- */

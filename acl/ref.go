@@ -71,13 +71,13 @@ func (p *Principal) GroupKeys() []string {
 	return p.Groups.Members
 }
 
-// matchesKey reports whether any of the references names the principal, using
-// the key form for the side of the rule it is on.
-func matchesKey(keys []string, refs []Ref, key func(Ref) string) bool {
+// matchesKey returns the first reference that names the principal, using the
+// key form for the side of the rule it is on, and reports whether one did.
+func matchesKey(keys []string, refs []Ref, key func(Ref) string) (Ref, bool) {
 	for _, r := range refs {
 		if slices.Contains(keys, key(r)) {
-			return true
+			return r, true
 		}
 	}
-	return false
+	return Ref{}, false
 }
