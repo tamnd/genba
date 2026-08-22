@@ -15,6 +15,7 @@ import { copies } from "genba/clipboard.js";
 import { icon, label, sourceColor, when, exact, followable, copyable } from "genba/format.js";
 import { body as renderBody, shapeOf, detailOf } from "genba/content.js";
 import { reveal } from "genba/marks.js";
+import { badge, note, control } from "genba/verify.js";
 import { NOT_AVAILABLE, NO_ACCESS } from "genba/states.js";
 import { documentPath } from "genba/state.js";
 
@@ -168,23 +169,8 @@ export class Drawer {
   }
 
   render(d) {
-    const detail = detailOf(d);
     replace(this.title, d.title || d.id);
-    replace(
-      this.meta,
-      h(
-        "span",
-        { class: "source" },
-        h("span", { class: "source__dot", style: { background: sourceColor(d.source) } }),
-        label(d.source),
-      ),
-      h("span", { class: "crumbs__sep" }, "·"),
-      h("span", {}, label(d.kind)),
-      detail && h("span", { class: "crumbs__sep" }, "·"),
-      detail && h("span", {}, detail),
-      d.container && h("span", { class: "crumbs__sep" }, "·"),
-      d.container && h("span", {}, d.container),
-    );
+    this.stamp(d);
     // The body decides its own shape from the media type, so the drawer only
     // has to say where it goes and how wide it is.
     this.body.dataset.shape = shapeOf(d);
@@ -200,6 +186,36 @@ export class Drawer {
     if (cited) cited.scrollIntoView({ block: "center", inline: "nearest" });
     else reveal(this.body);
     this.matched(cited);
+    this.land();
+  }
+
+  /**
+   * stamp draws everything about the document that is not the document.
+   *
+   * It is its own method because verifying one redraws this and must not redraw
+   * the body: rebuilding the body would lose the scroll position, the marked
+   * words and the match somebody was standing on, all to change a badge in the
+   * header.
+   */
+  stamp(d) {
+    const detail = detailOf(d);
+    replace(
+      this.meta,
+      h(
+        "span",
+        { class: "source" },
+        h("span", { class: "source__dot", style: { background: sourceColor(d.source) } }),
+        label(d.source),
+      ),
+      h("span", { class: "crumbs__sep" }, "·"),
+      h("span", {}, label(d.kind)),
+      detail && h("span", { class: "crumbs__sep" }, "·"),
+      detail && h("span", {}, detail),
+      d.container && h("span", { class: "crumbs__sep" }, "·"),
+      d.container && h("span", {}, d.container),
+      d.verified && h("span", { class: "crumbs__sep" }, "·"),
+      badge(d.verified, { by: true }),
+    );
     // Opening at the source is only offered where a browser would go there. For
     // every document the file connector read it would not, so the path takes
     // its place: a path somebody can paste into a terminal is worth something,
@@ -238,8 +254,18 @@ export class Drawer {
         ),
       d.modified_at &&
         h("span", { class: "meta", title: exact(d.modified_at) }, `Updated ${when(d.modified_at)}`),
+      // The two writes, offered only to somebody the server has already said
+      // may make them. Redrawing this and the header is all a claim changes,
+      // which is why they are the two things in here.
+      control(d, {
+        onSay: this.onSay,
+        onChange: (next) => {
+          d.verified = next;
+          this.stamp(d);
+        },
+      }),
+      note(d.verified),
     );
-    this.land();
   }
 
   /**

@@ -131,6 +131,8 @@ Everything the interface does is an HTTP call, and there is nothing it can reach
 | `GET /api/v1/search` | ranked hits, facet counts, the total and the server side timing |
 | `GET /api/v1/suggest` | operator completions and documents matching a prefix |
 | `GET /api/v1/documents/{id}` | one document, or the same error as one that does not exist |
+| `POST /api/v1/documents/{id}/verify` | records that the caller vouches for a document, with an optional note and expiry |
+| `DELETE /api/v1/documents/{id}/verify` | withdraws the claim |
 | `GET /api/v1/me` | the caller, and the sources and kinds that caller can actually see |
 | `GET /api/v1/stats` | how much is indexed and how much is quarantined |
 | `GET /api/v1/admin/operations` | what the connectors are doing, and what is being held back and why |
@@ -144,6 +146,10 @@ Everything the interface does is an HTTP call, and there is nothing it can reach
 
 `search` takes `q` for the text and the operators, and `source`, `kind`, `container`, `author` and `owner` as repeated or comma separated parameters, plus `since`, `until`, `sort`, `limit` and `offset`.
 The snippet comes back as marked passages rather than as offsets, so a client highlights what the analyzer matched without reimplementing the analyzer.
+
+A verification is a named claim with a date on it rather than a flag, so search results and the document itself carry who vouched for it, when, and when that stops counting.
+It lasts six months unless the verifier says otherwise, and only the owner or the author of a document can make one, because a badge anybody can apply is a badge that means somebody read the title.
+A driver that cannot record one leaves the badge off rather than failing the search behind it.
 
 Every `admin` endpoint needs the `admin` role, which comes from `X-Genba-Roles` or from `GENBA_ADMINS`, and the default is that nobody has it.
 The role grants nothing over documents and it must not start to.

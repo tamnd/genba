@@ -65,6 +65,15 @@ var cases = []testCase{
 	{"an open is not a licence to keep reading", testOpenLogPermissions},
 	{"a deleted document leaves the history", testOpenLogDelete},
 	{"a history belongs to one tenant", testOpenLogTenants},
+	{"a verification comes back as it went in", testVerifyRoundTrip},
+	{"verifying again replaces the claim", testVerifyReplaces},
+	{"a verification is neither made nor read across a permission", testVerifyPermissions},
+	{"a revoked document takes its badge with it", testVerifyRevocation},
+	{"a rewrite by a crawl leaves the claim alone", testVerifySurvivesRewrite},
+	{"a deleted document forgets who vouched for it", testVerifyDelete},
+	{"a claim can be withdrawn, twice", testUnverify},
+	{"a claim with no name or no expiry is refused", testVerifyRejectsIncomplete},
+	{"a page of ids is one question", testVerifyBatch},
 }
 
 // contentStore skips a case for a driver that does not hold bytes.

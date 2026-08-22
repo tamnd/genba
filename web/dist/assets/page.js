@@ -25,6 +25,7 @@ import {
   copyable,
 } from "genba/format.js";
 import { body as renderBody, shapeOf, detailOf } from "genba/content.js";
+import { badge, note, control } from "genba/verify.js";
 import { reveal, toLine } from "genba/marks.js";
 import { notPermitted, failedBody, failureTitle, NOT_AVAILABLE } from "genba/states.js";
 import { documentPath } from "genba/state.js";
@@ -139,9 +140,35 @@ export class Page {
 
   render(d) {
     const heading = d.title || d.id;
-    const detail = detailOf(d);
     replace(this.title, heading);
     document.title = `${heading} · genba`;
+    this.stamp(d);
+
+    this.content.dataset.shape = shapeOf(d);
+    replace(this.content, renderBody(d, { query: this.query }));
+
+    // Focus goes to the heading rather than to the first control, because this
+    // is a document somebody came to read and the top of it is where reading
+    // starts. It carries tabindex="-1" so it can take focus without joining the
+    // tab order.
+    //
+    // Without preventScroll it would also put the top of the document on the
+    // screen, which is the one place a page opened at line four hundred must
+    // not be. Focus and the scroll position are two different questions here:
+    // reading starts at the heading and the eye starts at the match.
+    this.title.focus({ preventScroll: true });
+    if (!reveal(this.content)) this.el.scrollIntoView({ block: "start" });
+  }
+
+  /**
+   * stamp draws everything about the document that is not the document.
+   *
+   * Verifying one redraws this and nothing else. Redrawing the body would lose
+   * the scroll position and the marked words, and a page opened at line four
+   * hundred would jump back to the top because somebody put their name to it.
+   */
+  stamp(d) {
+    const detail = detailOf(d);
     replace(
       this.meta,
       h(
@@ -159,23 +186,21 @@ export class Page {
       d.modified_at && h("span", { class: "crumbs__sep" }, "·"),
       d.modified_at &&
         h("time", { title: exact(d.modified_at), datetime: d.modified_at }, `Updated ${when(d.modified_at)}`),
+      d.verified && h("span", { class: "crumbs__sep" }, "·"),
+      badge(d.verified, { by: true }),
     );
-
-    this.content.dataset.shape = shapeOf(d);
-    replace(this.content, renderBody(d, { query: this.query }));
-    replace(this.foot, actions(d, this.onSay));
-
-    // Focus goes to the heading rather than to the first control, because this
-    // is a document somebody came to read and the top of it is where reading
-    // starts. It carries tabindex="-1" so it can take focus without joining the
-    // tab order.
-    //
-    // Without preventScroll it would also put the top of the document on the
-    // screen, which is the one place a page opened at line four hundred must
-    // not be. Focus and the scroll position are two different questions here:
-    // reading starts at the heading and the eye starts at the match.
-    this.title.focus({ preventScroll: true });
-    if (!reveal(this.content)) this.el.scrollIntoView({ block: "start" });
+    replace(
+      this.foot,
+      actions(d, this.onSay),
+      control(d, {
+        onSay: this.onSay,
+        onChange: (next) => {
+          d.verified = next;
+          this.stamp(d);
+        },
+      }),
+      note(d.verified),
+    );
   }
 
   /**

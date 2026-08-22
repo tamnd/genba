@@ -41,6 +41,12 @@ type Store struct {
 	// opens is what each person has been reading, keyed by tenant and subject.
 	opens map[[2]string]*opened
 
+	// verified is who vouched for what, keyed by document id. The tenant is not
+	// in the key because the document id already carries it here, and the read
+	// goes through the document anyway so that a claim cannot outlive the
+	// permission to see what it is about.
+	verified map[string]store.Verification
+
 	// feeds is how the connectors were configured, keyed by tenant and source.
 	// It is in memory like everything else here, so a restart forgets it, which
 	// is the documented behaviour of this driver rather than an oversight.
@@ -52,10 +58,11 @@ type Store struct {
 // New returns an empty store.
 func New() *Store {
 	return &Store{
-		docs:    make(map[string]doc.Document),
-		content: make(map[string]doc.Content),
-		opens:   make(map[[2]string]*opened),
-		feeds:   make(map[[2]string]store.Feed),
+		docs:     make(map[string]doc.Document),
+		content:  make(map[string]doc.Content),
+		opens:    make(map[[2]string]*opened),
+		feeds:    make(map[[2]string]store.Feed),
+		verified: make(map[string]store.Verification),
 	}
 }
 
@@ -67,6 +74,7 @@ var (
 	_ store.Quarantine   = (*Store)(nil)
 	_ store.Access       = (*Store)(nil)
 	_ store.Feeds        = (*Store)(nil)
+	_ store.Verifier     = (*Store)(nil)
 )
 
 // Put inserts or replaces documents.
@@ -137,6 +145,7 @@ func (s *Store) remove(ids []string) (map[string][]string, error) {
 		}
 		delete(s.docs, id)
 		delete(s.content, id)
+		delete(s.verified, id)
 	}
 	return removed, nil
 }

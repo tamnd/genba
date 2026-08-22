@@ -178,6 +178,23 @@ fi
 # encoder rather than into the string.
 ID=$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$ID")
 
+# One verified document, so that the badge is on a screen the audit looks at.
+# Nothing in a file corpus is verified by itself and a state nobody produces is
+# a state nobody checks, which is how the expired badge would ship drawn in a
+# colour that fails contrast and read out as nothing at all.
+#
+# dev is the subject the interface sends by default and the administrator this
+# server was started with, so it is the one identity that may vouch for a
+# document the file connector found no owner for.
+curl -fsS -o /dev/null -X POST "$BASE/api/v1/documents/$ID/verify" \
+	-H "X-Genba-Tenant: $TENANT" \
+	-H "X-Genba-Subject: dev" \
+	-H "Content-Type: application/json" \
+	-d '{"note":"checked against the current deployment"}' || {
+	echo "ui-gate: the document could not be verified, so the badge would be on no screen this audits" >&2
+	exit 1
+}
+
 status=0
 
 # The walk runs first and needs nothing downloaded, so it still reports on a

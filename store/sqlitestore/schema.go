@@ -260,6 +260,36 @@ var migrations = []step{
 		updated INTEGER NOT NULL,
 		PRIMARY KEY (tenant, source)
 	) WITHOUT ROWID`),
+
+	// document_verify is who vouched for a document and until when.
+	//
+	// One row per document rather than a history, because what a reader needs is
+	// the current claim and reconstructing it from a log would mean reading every
+	// line ever written about the document to draw one badge. Who verified what
+	// and when is the audit log's question, and it is a different table with a
+	// different retention.
+	//
+	// The verifier is denormalised into three columns rather than joined to a
+	// person, because there is no person table: a subject is whatever the
+	// identity provider called them and the name on the badge is the name at the
+	// moment the claim was made. A claim that silently changes whose name is on
+	// it when somebody's profile is updated is not the same claim.
+	//
+	// The cascade is what keeps it honest. A document that leaves the corpus
+	// takes its verification with it, so this table cannot hold an id nothing
+	// else in the database knows about, and re-crawling a document that was
+	// deleted brings back the document without bringing back a claim nobody made
+	// about the new version.
+	ddl(`CREATE TABLE document_verify (
+		doc_id      TEXT PRIMARY KEY REFERENCES document(id) ON DELETE CASCADE,
+		by_subject  TEXT    NOT NULL,
+		by_name     TEXT    NOT NULL,
+		by_email    TEXT    NOT NULL,
+		verified_at INTEGER NOT NULL,
+		expires_at  INTEGER NOT NULL,
+		note        TEXT    NOT NULL
+	) WITHOUT ROWID`),
+	ddl(`CREATE INDEX document_verify_expiry ON document_verify (expires_at)`),
 }
 
 // backfill recomputes the ranking statistics for every document already stored.

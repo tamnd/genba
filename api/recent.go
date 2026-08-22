@@ -114,6 +114,19 @@ func (s *Server) handleRecent(w http.ResponseWriter, r *http.Request, p *acl.Pri
 	for _, d := range changed {
 		out.Changed = append(out.Changed, hitOf(d))
 	}
+
+	// One question for both halves, because they are one screen. A badge that
+	// showed up in results and not here would read as a bug in the badge rather
+	// than as two endpoints that were written a week apart.
+	if vouched := s.verifications(r, p, recentIDs(out)); len(vouched) > 0 {
+		now := s.now()
+		for i := range out.Opened {
+			out.Opened[i].Verified = verifiedOf(vouched[out.Opened[i].ID], now)
+		}
+		for i := range out.Changed {
+			out.Changed[i].Verified = verifiedOf(vouched[out.Changed[i].ID], now)
+		}
+	}
 	writeConditional(w, r, http.StatusOK, out, out.identity())
 }
 
@@ -143,6 +156,22 @@ func (s *Server) handleRecordOpen(w http.ResponseWriter, r *http.Request, p *acl
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// recentIDs is every document on the screen, in one slice.
+//
+// A document that is in both halves is in here twice, which costs a repeated id
+// in one query and saves the caller a set. The two lists are twenty rows each
+// and the driver answers on a primary key.
+func recentIDs(out recentResponse) []string {
+	ids := make([]string, 0, len(out.Opened)+len(out.Changed))
+	for _, h := range out.Opened {
+		ids = append(ids, h.ID)
+	}
+	for _, h := range out.Changed {
+		ids = append(ids, h.ID)
+	}
+	return ids
 }
 
 // hitOf is the wire shape of a document on its own, with no search behind it.
