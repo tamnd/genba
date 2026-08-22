@@ -140,8 +140,7 @@ func (s *Store) Rank(ctx context.Context, p *acl.Principal, r store.Request, sel
 func (s *Store) candidates(ctx context.Context, from string, c *clause, order string, limit int) ([]store.Candidate, []int64, error) {
 	args := append(append([]any{}, c.args...), limit)
 	rows, err := s.query(ctx, `
-		SELECT d.id, d.source, d.kind, d.container, d.author_name, d.modified_at,
-		       d.title_tokens, d.body_tokens, d.rowid
+		SELECT d.id, d.modified_at, d.title_tokens, d.body_tokens, d.rowid
 		FROM `+from+`
 		WHERE `+c.where()+`
 		ORDER BY `+order+`
@@ -158,16 +157,13 @@ func (s *Store) candidates(ctx context.Context, from string, c *clause, order st
 	for rows.Next() {
 		var (
 			cand     store.Candidate
-			kind     string
 			modified sql.NullInt64
 			rowid    int64
 		)
-		if err := rows.Scan(&cand.ID, &cand.Source, &kind, &cand.Container, &cand.Author,
-			&modified, &cand.TitleTokens, &cand.BodyTokens, &rowid); err != nil {
+		if err := rows.Scan(&cand.ID, &modified, &cand.TitleTokens, &cand.BodyTokens, &rowid); err != nil {
 			return nil, nil, fmt.Errorf("sqlitestore: rank: %w", err)
 		}
 		s.counters.rows.Add(1)
-		cand.Kind = doc.Kind(kind)
 		if modified.Valid {
 			cand.ModifiedAt = unixNano(modified.Int64)
 		}

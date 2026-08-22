@@ -286,10 +286,6 @@ func candidateOf(d doc.Document, terms []string) store.Candidate {
 	a := d.Analyze()
 	c := store.Candidate{
 		ID:          d.ID,
-		Source:      d.Source,
-		Kind:        d.Kind,
-		Container:   d.Container,
-		Author:      d.Author.Display(),
 		ModifiedAt:  d.ModifiedAt,
 		TitleTokens: a.TitleTokens,
 		BodyTokens:  a.BodyTokens,
