@@ -27,7 +27,10 @@ import (
 // written at index time that disagrees with what the tokenizer produces now
 // moves every score that document is compared against.
 
-func TestDriversAgree(t *testing.T) {
+// searchers is the same corpus behind both paths, with the capability checks
+// that say each searcher is still on the path it is here to cover.
+func searchers(t *testing.T) (scanning, retrieving *index.Searcher) {
+	t.Helper()
 	mem := memstore.New()
 	t.Cleanup(func() { _ = mem.Close() })
 
@@ -54,14 +57,19 @@ func TestDriversAgree(t *testing.T) {
 		}
 	}
 
-	scanning := index.New(mem, index.WithClock(clock))
-	retrieving := index.New(sq, index.WithClock(clock))
+	scanning = index.New(mem, index.WithClock(clock))
+	retrieving = index.New(sq, index.WithClock(clock))
 	if scanning.Ranking() {
 		t.Fatal("the memstore searcher reports that it ranks in the driver")
 	}
 	if !retrieving.Ranking() {
 		t.Fatal("the sqlite searcher reports that it scans")
 	}
+	return scanning, retrieving
+}
+
+func TestDriversAgree(t *testing.T) {
+	scanning, retrieving := searchers(t)
 
 	p := &acl.Principal{
 		Tenant:  "acme",
@@ -140,6 +148,40 @@ func TestDriversAgree(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The filter rail is the same rail whichever driver drew it, and it is the same
+// rail a search would have drawn.
+//
+// It used to be drawn from a search with a limit of one, which is where the
+// counts came from and is why they were right. Now it is drawn from a selection
+// that asks for the counts and no candidates, so the thing worth asserting is
+// that nothing moved: the values, the counts and the order are what the search
+// reports, on the driver that counts in SQL and on the one that counts in Go.
+func TestFiltersMatchWhatASearchWouldHaveCounted(t *testing.T) {
+	scanning, retrieving := searchers(t)
+
+	for _, who := range []*acl.Principal{
+		{Tenant: "acme", Subject: "u_mei", Groups: acl.GroupSet{Version: 1, Members: []string{"gdrive:eng@acme.com"}}},
+		{Tenant: "acme", Subject: "u_nobody", Groups: acl.GroupSet{Version: 1}},
+	} {
+		for name, s := range map[string]*index.Searcher{"memstore": scanning, "sqlite": retrieving} {
+			res, err := s.Search(t.Context(), who, index.Query{Limit: 1})
+			if err != nil {
+				t.Fatalf("%s Search: %v", name, err)
+			}
+			got, err := s.Filters(t.Context(), who)
+			if err != nil {
+				t.Fatalf("%s Filters: %v", name, err)
+			}
+			for _, field := range []string{"source", "kind", "container", "author"} {
+				if !slices.Equal(got[field], res.Facets[field]) {
+					t.Errorf("%s %s filters for %s = %v, a search counted %v",
+						name, field, who.Subject, got[field], res.Facets[field])
+				}
+			}
+		}
 	}
 }
 

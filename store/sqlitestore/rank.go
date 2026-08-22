@@ -35,8 +35,8 @@ func (s *Store) Rank(ctx context.Context, p *acl.Principal, r store.Request, sel
 	if p == nil {
 		return store.Ranked{}, genba.ErrNoPrincipal
 	}
-	if sel.Limit <= 0 {
-		return store.Ranked{}, errors.New("sqlitestore: rank: no candidate limit")
+	if sel.Limit <= 0 && !sel.Counts {
+		return store.Ranked{}, errors.New("sqlitestore: rank: asked for neither candidates nor counts")
 	}
 
 	// The predicate for a request, built the same way whatever is being asked
@@ -91,11 +91,21 @@ func (s *Store) Rank(ctx context.Context, p *acl.Principal, r store.Request, sel
 		}
 	}
 
-	cands, rowids, err := s.candidates(ctx, from, c, order, sel.Limit)
-	if err != nil {
-		return store.Ranked{}, err
+	// A selection that asked for no pool skips both of the statements that read
+	// the match set row by row. What is left is the counting, which is what it
+	// asked for.
+	var (
+		cands  []store.Candidate
+		rowids []int64
+		err    error
+	)
+	if sel.Limit > 0 {
+		cands, rowids, err = s.candidates(ctx, from, c, order, sel.Limit)
+		if err != nil {
+			return store.Ranked{}, err
+		}
+		s.counters.candidates.Add(int64(len(cands)))
 	}
-	s.counters.candidates.Add(int64(len(cands)))
 
 	out := store.Ranked{Candidates: cands}
 	if len(cands) > 0 && len(r.Terms) > 0 {
@@ -121,7 +131,7 @@ func (s *Store) Rank(ctx context.Context, p *acl.Principal, r store.Request, sel
 	// thing that knows whether it did. A lifted count has no total to be compared
 	// against, so stopped carries the same claim for those.
 	out.Approximate = counted < out.Total || stopped
-	out.Truncated = out.Total > len(cands)
+	out.Truncated = sel.Limit > 0 && out.Total > len(cands)
 	return out, nil
 }
 

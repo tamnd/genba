@@ -465,6 +465,38 @@ func (s *Searcher) Recent(ctx context.Context, p *acl.Principal, limit int) ([]d
 	return out, nil
 }
 
+// Filters is what a filter rail is drawn from: every facet value the principal
+// can see, and how many documents carry each.
+//
+// It is a separate method rather than a search with a tiny limit because the
+// candidate pool has a floor. Asking for one result asks the driver for five
+// hundred, which are then scored, sorted, paged and thrown away unread, and that
+// is what the first request of every session did. It made the endpoint that has
+// to answer before anything can be drawn the most expensive one in the product,
+// more expensive than a real search, for two lists that are the same on every
+// page load.
+//
+// It is also not a special case inside Search, because a search that returns no
+// results is a different thing from a request for the counts, and folding the
+// two together is how a limit of zero comes to mean whichever of them the reader
+// guesses.
+//
+// The counts are bounded by [FacetPool], which is the same bound a search puts
+// on its sidebar and the same one this endpoint was already getting when it went
+// through Search. Counting them exactly is a read of four columns of every
+// document the principal can see, and it was measured: on twenty thousand
+// documents the exact count costs more than the five hundred candidates removing
+// it saved, so a change made to take work off this path would have put more
+// back. What the bound costs is that the rail's numbers are lower bounds on a
+// corpus larger than the pool, which is #142.
+func (s *Searcher) Filters(ctx context.Context, p *acl.Principal) (map[string][]Facet, error) {
+	found, err := s.collect(ctx, p, store.Request{}, store.Selection{Counts: true, Facets: FacetPool})
+	if err != nil {
+		return nil, err
+	}
+	return found.facets, nil
+}
+
 // fetch reads the documents behind one page.
 //
 // A driver that can do it in one statement is asked to. One that cannot is

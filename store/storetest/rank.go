@@ -47,6 +47,7 @@ var rankCases = []rankCase{
 	{"a facet count lifts its own filter and applies the others", testRankDrillDown},
 	{"a facet bound counts a sample and says the counts are a lower bound", testRankFacetBound},
 	{"a selection with no counts ranks the same documents", testRankWithoutCounts},
+	{"a selection with no candidates counts the same documents", testRankCountsWithoutCandidates},
 	{"the principal is applied inside rank", testRankPermission},
 	{"a nil principal ranks nothing", testRankNilPrincipal},
 	{"a candidate carries the token counts the analyzer produces", testRankTokens},
@@ -393,6 +394,42 @@ func testRankWithoutCounts(t *testing.T, s store.Store) {
 			if len(values) != 0 {
 				t.Fatalf("the %s facet was counted for a selection that asked for no counts: %v", field, values)
 			}
+		}
+	}
+}
+
+// A selection that asks for no candidates gets the counts and nothing else, and
+// they are the same counts a selection with a pool would have produced.
+//
+// This is what the filter rail is drawn from, and it is the first request of
+// every session. It used to be a search with a limit of one, which asked for
+// five hundred candidates because the pool has a floor and then read none of
+// them, so it was the most expensive endpoint in the product. What matters here
+// is that the cheap answer is the same answer: a driver that counted a different
+// set when it stopped fetching rows would draw a rail nobody can reconcile with
+// the results they get from ticking it.
+func testRankCountsWithoutCandidates(t *testing.T, s store.Store) {
+	rk := ranker(t, s)
+	mustPut(t, s, corpus()...)
+
+	for _, r := range []store.Request{{}, {Terms: []string{"payments"}}, {Sources: []string{"gdrive"}}} {
+		full := mustRank(t, rk, reader(), r, pool())
+		bare := mustRank(t, rk, reader(), r, store.Selection{Counts: true})
+
+		if len(bare.Candidates) != 0 {
+			t.Fatalf("a selection that asked for no candidates got %d of them for %+v", len(bare.Candidates), r)
+		}
+		if bare.Total != full.Total {
+			t.Fatalf("Total = %d without a pool and %d with one, for %+v", bare.Total, full.Total, r)
+		}
+		// There is no ranking to be a claim about, and the pool it would be
+		// compared against is empty, so a driver reporting one would be telling
+		// every caller of this that its results are partial.
+		if bare.Truncated {
+			t.Fatalf("Truncated is set for a selection that asked for no candidates, for %+v", r)
+		}
+		if got, want := gotFacets(t, bare), gotFacets(t, full); !maps.EqualFunc(got, want, maps.Equal) {
+			t.Fatalf("facets without a pool are %v for %+v, and with one they are %v", got, r, want)
 		}
 	}
 }

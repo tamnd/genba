@@ -37,8 +37,8 @@ func (s *Store) Rank(ctx context.Context, p *acl.Principal, r store.Request, sel
 	if p == nil {
 		return store.Ranked{}, genba.ErrNoPrincipal
 	}
-	if sel.Limit <= 0 {
-		return store.Ranked{}, errors.New("pgstore: rank: no candidate limit")
+	if sel.Limit <= 0 && !sel.Counts {
+		return store.Ranked{}, errors.New("pgstore: rank: asked for neither candidates nor counts")
 	}
 
 	// The predicate for a request, built the same way whatever is being asked
@@ -80,9 +80,15 @@ func (s *Store) Rank(ctx context.Context, p *acl.Principal, r store.Request, sel
 
 	out := store.Ranked{}
 	err := s.retry(ctx, func(ctx context.Context) error {
-		cands, err := s.candidates(ctx, c, order, orderArgs, sel.Limit)
-		if err != nil {
-			return err
+		// A selection that asked for no pool skips both of the statements that
+		// read the match set row by row. What is left is the counting, which is
+		// what it asked for.
+		var cands []store.Candidate
+		if sel.Limit > 0 {
+			var err error
+			if cands, err = s.candidates(ctx, c, order, orderArgs, sel.Limit); err != nil {
+				return err
+			}
 		}
 		if len(cands) > 0 && len(r.Terms) > 0 {
 			if err := s.frequencies(ctx, cands, r.Terms); err != nil {
@@ -113,7 +119,7 @@ func (s *Store) Rank(ctx context.Context, p *acl.Principal, r store.Request, sel
 			// count has no total to be compared against, so stopped carries the
 			// same claim for those.
 			Approximate: counted < total || stopped,
-			Truncated:   total > len(cands),
+			Truncated:   sel.Limit > 0 && total > len(cands),
 		}
 		return nil
 	})
