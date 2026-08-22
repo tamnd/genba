@@ -7,7 +7,7 @@
 
 const LIST_KEYS = ["source", "kind", "container", "author", "owner"];
 
-// The two screens that are a path rather than a query string.
+// The three screens that are a path rather than a query string.
 //
 // A document is the thing somebody pastes into a message, so it gets an address
 // that survives being read out loud and does not carry the state of whoever
@@ -15,9 +15,11 @@ const LIST_KEYS = ["source", "kind", "container", "author", "owner"];
 // is written on documentPath below. Recent is a path because it is not a view
 // of a search: it answers what has been going on rather than what matches, and
 // a rail entry that ran a recency sorted search was answering the wrong
-// question with the right rows.
+// question with the right rows. Settings is a path because none of the query
+// state means anything on it.
 const DOCUMENT = "/d/";
 export const RECENT = "/recent";
+export const SETTINGS = "/settings";
 
 /**
  * route says which screen the path names.
@@ -27,6 +29,7 @@ export const RECENT = "/recent";
  */
 export function route(pathname = location.pathname) {
   if (pathname === RECENT) return { name: "recent", id: "" };
+  if (pathname === SETTINGS) return { name: "settings", id: "" };
   if (!pathname.startsWith(DOCUMENT)) return { name: "search", id: "" };
   const id = decode(pathname.slice(DOCUMENT.length));
   return id ? { name: "document", id } : { name: "search", id: "" };

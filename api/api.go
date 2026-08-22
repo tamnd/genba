@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/tamnd/genba"
@@ -67,6 +68,19 @@ type Server struct {
 	// started is when the process came up, reported by the health endpoint.
 	started time.Time
 	now     func() time.Time
+
+	// driver names the storage this process was started with. It is passed in
+	// rather than derived from the store, because the name an operator knows is
+	// the one they typed on the command line and a Go type name is not it.
+	driver string
+
+	// indexed is when the store last reported a committed write, as Unix
+	// nanoseconds, and zero until one happens.
+	//
+	// It is not persisted and it is not asked of the driver. A process that has
+	// just started has not seen a sync, and saying so is more honest than
+	// reporting one it was not there for.
+	indexed atomic.Int64
 
 	// heartbeat is how often an idle event stream sends a comment.
 	heartbeat time.Duration
@@ -113,6 +127,13 @@ func WithClock(now func() time.Time) Option {
 	}
 }
 
+// WithDriver names the storage driver this process was started with, for the
+// stats endpoint to report. Without it the server says nothing about its
+// storage, which is what an embedder that never chose a driver name should say.
+func WithDriver(name string) Option {
+	return func(s *Server) { s.driver = name }
+}
+
 // WithHeartbeat sets how often an idle event stream sends a comment. It exists
 // so that a test does not have to wait [HeartbeatInterval] to see one.
 func WithHeartbeat(d time.Duration) Option {
@@ -144,6 +165,13 @@ func New(st store.Store, searcher *index.Searcher, auth Authenticator, opts ...O
 	// what the counters read and both arrive with the server rather than with
 	// the registry.
 	s.metrics = newMetrics(s)
+	// A driver that reports its writes is how this process knows a sync
+	// happened. The unsubscribe is dropped on purpose: a server is built once
+	// and lives as long as the process does, so there is no point in the life
+	// of one where this should stop listening.
+	if n, ok := st.(store.Notifier); ok {
+		n.OnChange(func(store.Change) { s.indexed.Store(s.now().UnixNano()) })
+	}
 	return s
 }
 
@@ -198,6 +226,7 @@ type healthResponse struct {
 	Status  string `json:"status"`
 	Version string `json:"version"`
 	Commit  string `json:"commit"`
+	Built   string `json:"built"`
 	Uptime  string `json:"uptime"`
 }
 
@@ -206,6 +235,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		Status:  "ok",
 		Version: genba.Version,
 		Commit:  genba.Commit,
+		Built:   genba.Date,
 		Uptime:  time.Since(s.started).Round(time.Second).String(),
 	})
 }
@@ -456,6 +486,13 @@ type meResponse struct {
 	Tenant  string   `json:"tenant"`
 	Roles   []string `json:"roles,omitempty"`
 
+	// Groups is what the principal is a member of, as the authenticator
+	// resolved it. It is on the wire because the first question somebody asks
+	// when a document says they may not read it is which groups they are in,
+	// and the answer they need is the server's rather than whatever the browser
+	// last sent. Absent where the principal is in none.
+	Groups []string `json:"groups,omitempty"`
+
 	// View names what this principal can see, and is the same fingerprint the
 	// server keys its own caches by.
 	//
@@ -484,6 +521,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request, p *acl.Princip
 		Subject: p.Subject,
 		Tenant:  p.Tenant,
 		Roles:   p.Roles,
+		Groups:  p.Groups.Members,
 		View:    acl.Fingerprint(p),
 		Sources: []facet{},
 		Kinds:   []facet{},
@@ -741,6 +779,17 @@ type statsResponse struct {
 	Documents   int                    `json:"documents"`
 	Quarantined int                    `json:"quarantined"`
 	Cache       map[string]cache.Stats `json:"cache,omitempty"`
+
+	// Driver is the storage this process was started with, and IndexedAt is
+	// when it last committed a write, in RFC 3339. Both are empty where there
+	// is nothing true to say: an embedder that named no driver, and a process
+	// that has not seen the corpus move since it came up.
+	//
+	// They are here rather than on the health endpoint because that one is
+	// unauthenticated, and what a deployment runs on is not something to hand
+	// to anybody who can reach the port.
+	Driver    string `json:"driver,omitempty"`
+	IndexedAt string `json:"indexed_at,omitempty"`
 }
 
 // handleStats reports the corpus and the cache counters.
@@ -766,7 +815,19 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request, _ *acl.Prin
 		Documents:   st.Documents,
 		Quarantined: st.Quarantined,
 		Cache:       s.cacheStats(),
+		Driver:      s.driver,
+		IndexedAt:   s.indexedAt(),
 	})
+}
+
+// indexedAt is when the corpus last moved, or empty if it has not moved since
+// this process came up.
+func (s *Server) indexedAt() string {
+	ns := s.indexed.Load()
+	if ns == 0 {
+		return ""
+	}
+	return time.Unix(0, ns).UTC().Format(time.RFC3339)
 }
 
 // cacheStats is every cache the process runs, under one name each.

@@ -2,10 +2,11 @@
 # The browser half of the performance gate.
 #
 # It starts the real binary over a real corpus, which is this repository, and
-# audits nine screens: the home page, the home page over an index holding
+# audits ten screens: the home page, the home page over an index holding
 # nothing, a results page, a results page with the document drawer open, a
 # search that matched nothing, a filter that matched nothing, a grid of
-# pictures, a document on a page of its own and the recent screen. They are
+# pictures, a document on a page of its own, the recent screen and the settings
+# screen. They are
 # states rather than layouts, because a layout is looked at every day and a
 # state is looked at once. Auditing a static fixture would audit the fixture,
 # and every accessibility bug this is meant to catch lives in the markup the
@@ -189,15 +190,14 @@ if [ -n "${CHROMEDRIVER:-}" ]; then
 	DRIVER="--chromedriver-path $CHROMEDRIVER"
 fi
 
-# Nine screens, and they are states rather than layouts. Three of them, the
+# Ten screens, and they are states rather than layouts. Three of them, the
 # empty index, the query that matched nothing and the filter that matched
 # nothing, produce markup no other screen produces, and that markup is where an
 # accessibility bug survives longest: nobody looks at an empty page twice.
 #
-# The settings screen the specification lists is not among them because it does
-# not exist yet. When it does it belongs here, and until then a screen audited
-# on a corpus that has no filter left to remove is worth more than a placeholder.
-# It is #133.
+# The settings screen is the tenth. It is the only screen in the product built
+# out of form controls, and a radio group that has lost its label is the kind of
+# thing that reads perfectly to whoever wrote it and not at all to anybody else.
 for url in \
 	"$BASE/" \
 	"$EMPTY/" \
@@ -207,7 +207,8 @@ for url in \
 	"$BASE/?q=cache&kind=image" \
 	"$BASE/?q=gatepix&kind=image&view=grid" \
 	"$BASE/d/$ID" \
-	"$BASE/recent"; do
+	"$BASE/recent" \
+	"$BASE/settings"; do
 	echo "ui-gate: axe $url"
 	# The interface renders after a fetch, so the audit waits for the first
 	# paint to have happened. Auditing an empty document passes and proves

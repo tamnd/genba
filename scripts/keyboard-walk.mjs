@@ -544,6 +544,62 @@ async function walk(session) {
     })()`,
   );
 
+  // The settings screen, reached the way the screen itself says it is reached.
+  // A shortcut that is printed on a list and does not work is worse than one
+  // that was never written down, so the walk presses the keys off the list.
+  await visit(session, `${BASE}/?q=cache`, "document.querySelectorAll('.result').length > 0");
+  await press(session, "g", "KeyG", 71);
+  await press(session, ",", "Comma", 188);
+  await settle(session, "location.pathname === '/settings'");
+  await check(
+    session,
+    "g then comma reaches the settings screen and the rail says so",
+    `document.querySelector('.rail__link[data-route="settings"]').getAttribute('aria-current') === 'page' &&
+      document.activeElement === document.querySelector('.settings__title')`,
+  );
+
+  // The reason keys.js exists. Both lists are drawn from the same rows, so the
+  // count on this screen is the count the sheet shows, and neither of them can
+  // be a key that nothing answers.
+  await check(
+    session,
+    "the printed list of keys is the table the handler reads",
+    `(() => {
+      const printed = [...document.querySelectorAll('.settings .shortcut')];
+      const keyed = printed.filter((row) => row.querySelectorAll('.kbd').length > 0);
+      return printed.length >= 15 && keyed.length === printed.length;
+    })()`,
+  );
+
+  await evaluate(
+    session,
+    "document.querySelector('.choice input[value=\"dark\"]').click()",
+  );
+  await check(
+    session,
+    "choosing a theme applies it at once and remembers it",
+    `document.documentElement.dataset.theme === 'dark' &&
+      localStorage.getItem('genba.theme') === 'dark'`,
+  );
+
+  await evaluate(
+    session,
+    "document.querySelector('.choice input[value=\"\"]').click()",
+  );
+  await check(
+    session,
+    "following the system again forgets the choice rather than storing one",
+    "localStorage.getItem('genba.theme') === null",
+  );
+
+  await evaluate(session, "document.querySelector('.settings .page__back-link').click()");
+  await settle(session, "location.pathname === '/'");
+  await check(
+    session,
+    "the way out leads back to the search it was opened from",
+    "location.search.includes('q=cache')",
+  );
+
   // The grid. The pictures behind this query are written into the corpus by the
   // gate before the server starts, because the repository itself holds none.
   await visit(session, `${BASE}/?q=gatepix`, "document.querySelectorAll('.cell').length > 0");

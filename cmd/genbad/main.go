@@ -136,6 +136,22 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		}
 	}()
 
+	opts := []api.Option{api.WithLogger(log), api.WithDriver(string(cfg.Store))}
+	if h := web.Handler(); h != nil {
+		opts = append(opts, api.WithAssets(h))
+	}
+
+	// The searcher subscribes the cache to the store's writes, so it is closed
+	// before the store is, and it holds nothing else.
+	searcher := index.New(st, searchOptions(cfg)...)
+	defer func() { _ = searcher.Close() }()
+
+	// Built before anything is indexed rather than after, because the server
+	// listens for the store's writes and the first sync is a write like any
+	// other. Building it afterwards left it reporting that nothing had been
+	// indexed since it came up while sitting on a corpus it had just loaded.
+	srv := api.New(st, searcher, api.HeaderAuth{Tenant: cfg.Tenant}, opts...)
+
 	// The first sync of each source runs here, before the listener opens, so
 	// that the server is useful the moment it says it is up. A server pointed at
 	// both indexes both, and the two are separate feeds with separate cursors
@@ -152,18 +168,6 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return err
 	}
 	defer waitForBucket()
-
-	opts := []api.Option{api.WithLogger(log)}
-	if h := web.Handler(); h != nil {
-		opts = append(opts, api.WithAssets(h))
-	}
-
-	// The searcher subscribes the cache to the store's writes, so it is closed
-	// before the store is, and it holds nothing else.
-	searcher := index.New(st, searchOptions(cfg)...)
-	defer func() { _ = searcher.Close() }()
-
-	srv := api.New(st, searcher, api.HeaderAuth{Tenant: cfg.Tenant}, opts...)
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,

@@ -144,7 +144,7 @@ func TestTheCacheKeepsNothingOnDisk(t *testing.T) {
 	// typed are the whole of what may persist, and none of them is anything the
 	// corpus said. A query is the asker's own words, which is why it stays on
 	// their machine rather than being kept for them on the server.
-	persist := map[string]bool{"api.js": true, "app.js": true, "queries.js": true}
+	persist := map[string]bool{"api.js": true, "prefs.js": true, "queries.js": true}
 
 	err := fs.WalkDir(os.DirFS("dist"), ".", func(name string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || path.Ext(name) != ".js" {
