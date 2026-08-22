@@ -6,10 +6,10 @@
 // holds, which documents are being held back and why, and what one named person
 // can actually see.
 //
-// Nothing on it writes. That is deliberate for now and it is not a permanent
-// shape: adding and starting connectors from here is the other half of the
-// screen and it is a change to the server as much as to this file, so it is a
-// separate piece of work rather than a button that half exists.
+// Doing something about it is the fifth part and it lives in connectors.js. The
+// two are kept apart because everything on this file is a read that can be
+// repainted whenever an answer arrives, and everything in that one is a write
+// with a form in front of it that must survive the repaint.
 //
 // The one rule this screen keeps that no other screen has to is that the
 // numbers on it have to agree with each other. That is why it is one request:
@@ -23,6 +23,7 @@ import { cache } from "genba/cache.js";
 import { bytes, duration, exact, icon, label, number, when } from "genba/format.js";
 import { failed as failedState } from "genba/states.js";
 import { Access } from "genba/access.js";
+import { Connectors } from "genba/connectors.js";
 
 // REFRESH is how often the screen asks again while somebody is looking at it.
 //
@@ -40,11 +41,39 @@ export class Admin {
     this.data = null;
     this.error = null;
     this.timer = 0;
-    this.title = null;
-    // Built once and reused by every paint, because it holds a form and this
-    // screen repaints itself on a timer. See paint.
+    // Whether this paint is the one that opened the screen. Only that one takes
+    // the focus. See paint.
+    this.opening = false;
+    // The heading is one node for the life of the screen rather than one per
+    // paint, so that the check below for whether the cursor is already on it
+    // still means something after the second paint.
+    this.title = h("h1", { class: "admin__title", tabindex: "-1" }, "Administration");
+    // Both built once and reused by every paint, because they hold forms and
+    // this screen repaints itself on a timer. See paint.
     this.access = new Access();
+    this.writes = new Connectors({ onChanged: (ops) => this.changed(ops) });
     this.el = h("div", { class: "admin" });
+  }
+
+  /**
+   * changed takes what a write answered with and repaints from it.
+   *
+   * The answer is the connector list and nothing else, so it is merged into
+   * what was already on the screen rather than replacing it: the corpus counts
+   * and the quarantine were read a moment ago and are still the best thing this
+   * screen knows. The next poll brings the rest along.
+   *
+   * A null is a change to this screen rather than to the server, such as asking
+   * to confirm a removal, and only needs the paint.
+   */
+  changed(ops) {
+    if (ops && ops.connectors) {
+      this.data = { ...(this.data || {}), connectors: ops.connectors };
+      // Not written to the cache. What is held there is the whole screen as one
+      // entity tag's worth of answer, and half of one written under that tag
+      // would be served on the next visit as though the server had said it.
+    }
+    this.paint();
   }
 
   /** key is the entry this screen paints from, which the offline banner names. */
@@ -62,6 +91,12 @@ export class Admin {
    * in flight, so the numbers land in place rather than after a blank.
    */
   async render() {
+    // The screen is being opened, so the first paint of it takes the focus and
+    // no paint after it does. The ones that follow are a poll on a timer and a
+    // write coming back, and a heading that took the cursor every five seconds
+    // would make the screen unusable from a keyboard and unreadable with a
+    // screen reader.
+    this.opening = true;
     const k = this.key();
     const held = cache.read(k).data || null;
     if (held) {
@@ -121,10 +156,9 @@ export class Admin {
   }
 
   paint() {
-    // Whether anything on this screen already has focus, read before the paint
-    // takes it away. This screen repaints every five seconds on its own, so
-    // pulling focus back to the heading each time would make it impossible to
-    // read the table with a keyboard.
+    // Whether the cursor is on something here, read before the paint takes it
+    // away. The heading is left out because that is where the cursor is put
+    // when the screen opens rather than somewhere anybody chose to be.
     const held = this.el.contains(document.activeElement) && document.activeElement !== this.title;
     // Which element, and where the caret was in it. The access panel below is
     // the same node across repaints, so its contents survive, but a node that
@@ -132,8 +166,12 @@ export class Admin {
     // the caret out of a half typed group name is a form nobody can use.
     const focused = held ? document.activeElement : null;
     const caret = selectionOf(focused);
+    // What the focused thing was, for the controls that are rebuilt on every
+    // paint. A button cannot be put back by holding on to it, because the node
+    // that comes back is a different one, so the ones that matter carry a name
+    // and are found again by it. See regain.
+    const key = (focused && focused.dataset && focused.dataset.focusKey) || "";
 
-    this.title = h("h1", { class: "admin__title", tabindex: "-1" }, "Administration");
     // Nothing arrived and nothing was held, so there is nothing to draw. The
     // three zeroes this screen would otherwise print are not the state of the
     // deployment, they are the state of this browser, and on the one screen
@@ -160,14 +198,39 @@ export class Admin {
       failed ? null : this.banner(),
       failed ? null : this.corpus(data),
       failed ? null : this.connectors(data),
+      failed ? null : this.adder(data),
       failed ? null : this.quarantine(data),
       failed ? null : this.access.el,
     );
-    if (!held) {
+    if (this.opening) {
+      this.opening = false;
       this.title.focus();
       return;
     }
-    if (focused && focused.isConnected) restore(focused, caret);
+    // Focus is somewhere else on the page, such as the search box in the rail,
+    // and this paint was the server answering rather than anything somebody
+    // did. Leave it where it is.
+    if (!held) return;
+    if (focused && focused.isConnected) {
+      restore(focused, caret);
+      return;
+    }
+    if (key) this.regain(key);
+  }
+
+  /**
+   * regain puts focus back on a control that was rebuilt, by name.
+   *
+   * The fallback is what a removal needs. The button that was pressed is gone
+   * along with the connector it was on, and dropping focus to the top of the
+   * document would leave somebody with a keyboard where they started. What it
+   * lands on instead is the line that says the connector was removed.
+   */
+  regain(key) {
+    const back =
+      this.el.querySelector(`[data-focus-key="${CSS.escape(key)}"]`) ||
+      this.el.querySelector("[data-focus-fallback]");
+    if (back) back.focus();
   }
 
   /** retry reads again after a failure, from the button the failure offers. */
@@ -249,16 +312,41 @@ export class Admin {
       "section",
       { class: "panel" },
       h("div", { class: "panel__head" }, h("h2", { class: "panel__title" }, "Connectors")),
+      // What the last write did, above the list it changed. It is the one node
+      // on this screen that does not move when a connector appears or goes
+      // away, which is what makes it the place to say that one did.
+      this.writes.output,
       list.length
-        ? list.map((c) => this.connector(c))
+        ? list.map((c) => this.connector(c, Boolean(data.manageable)))
         : note(
             "This process runs no connectors.",
-            "Its index is filled by something else, so there is nothing to report here.",
+            "Nothing is being indexed here yet.",
           ),
     );
   }
 
-  connector(c) {
+  /**
+   * adder is the form, or the reason there is not one.
+   *
+   * A deployment whose storage driver cannot remember a connector across a
+   * restart gets the sentence rather than the form, because a form whose
+   * answers disappear at the next deployment is worse than no form at all.
+   */
+  adder(data) {
+    if (data.manageable) return this.writes.el;
+    if (!this.data) return null;
+    return h(
+      "section",
+      { class: "panel" },
+      h("div", { class: "panel__head" }, h("h2", { class: "panel__title" }, "Adding a connector")),
+      note(
+        "Connectors are configured where this server is started.",
+        "Either they were named on the command line, or this storage driver cannot remember one across a restart, so there is nothing here that could add one.",
+      ),
+    );
+  }
+
+  connector(c, manageable) {
     const runs = c.runs || [];
     const last = runs[0] || null;
     const failing = Boolean(last && last.error);
@@ -280,15 +368,18 @@ export class Admin {
           ? h("span", { class: "pill pill--busy" }, "Syncing")
           : failing
             ? h("span", { class: "pill pill--bad" }, "Last sync failed")
-            : runs.length
-              ? h("span", { class: "pill pill--good" }, "Healthy")
-              : h("span", { class: "pill" }, "Not run yet"),
+            : !c.enabled
+              ? h("span", { class: "pill" }, "Switched off")
+              : runs.length
+                ? h("span", { class: "pill pill--good" }, "Healthy")
+                : h("span", { class: "pill" }, "Not run yet"),
       ),
       facts([
         ["Reads", c.target],
         ["Tenant", c.tenant],
         ["Refreshes", c.refresh ? `every ${c.refresh}` : "once at startup"],
       ]),
+      manageable ? this.writes.controls(c) : null,
       this.mapping(c.permissions),
       runs.length ? this.runs(runs) : null,
     );

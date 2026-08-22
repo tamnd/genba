@@ -111,8 +111,12 @@ The words that were searched for are marked in the body with a count beside them
 The identity switcher at the bottom of the rail sends a different subject, tenant and set of groups with every request.
 It is there because the permission model is the part of this system worth checking by hand, and the fastest way to check it is to run the same query as two different people and watch the results change.
 
+The administration screen reports what every connector is doing, what the corpus holds, which documents are being held back and why, and what one named person can see.
+It is also the one screen that writes: a connector is added, switched off, asked to sync and removed from there, and the change takes effect without a restart.
+A connector that was named on the command line is on that screen because it is running, and says where it is configured rather than offering a button that cannot work.
+
 The whole interface is hand written HTML, CSS and ES modules, committed exactly as they are served, so a clone builds a working interface with the Go toolchain and nothing else.
-There is no bundler and there is not going to be one, since the graph is twenty five modules of our own with no third party dependency anywhere in it.
+There is no bundler and there is not going to be one, since the graph is thirty two modules of our own with no third party dependency anywhere in it.
 What a bundler would have bought is done by the server instead.
 Every file is hashed as it is read and served under a second name that says what is in it, cacheable for a year, and the document is rewritten on the way out so that its import map and its preload list point at those names.
 Bodies are compressed with brotli and gzip once at startup rather than once per request.

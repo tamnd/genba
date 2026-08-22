@@ -86,22 +86,57 @@ async function get(path, params, opts = {}) {
   if (opts.etag) sent["If-None-Match"] = opts.etag;
   const res = await fetch(url, { headers: sent, signal: opts.signal });
   if (res.status === 304) return { modified: false, etag: opts.etag };
-  if (!res.ok) {
-    let code = "error";
-    let message = `the server returned ${res.status}`;
-    try {
-      const body = await res.json();
-      if (body && body.error) {
-        code = body.error.code || code;
-        message = body.error.message || message;
-      }
-    } catch {
-      // A response that is not JSON is still a failure, and the status line
-      // above is a better message than a parse error.
-    }
-    throw new ApiError(res.status, code, message, res.headers.get("X-Request-Id") || "");
-  }
+  if (!res.ok) throw await failure(res);
   return { modified: true, etag: res.headers.get("ETag") || "", data: await res.json() };
+}
+
+/**
+ * failure turns a refusal into the error a screen prints.
+ *
+ * The server's own sentence is used wherever there is one, because it is the
+ * only part of this that knows why. A connector that was configured on the
+ * command line comes back from here saying where to change it, and no message
+ * written in this file could have known that.
+ */
+async function failure(res) {
+  let code = "error";
+  let message = `the server returned ${res.status}`;
+  try {
+    const body = await res.json();
+    if (body && body.error) {
+      code = body.error.code || code;
+      message = body.error.message || message;
+    }
+  } catch {
+    // A response that is not JSON is still a failure, and the status line
+    // above is a better message than a parse error.
+  }
+  return new ApiError(res.status, code, message, res.headers.get("X-Request-Id") || "");
+}
+
+/**
+ * send is a write, and returns the state that resulted from it.
+ *
+ * Every one of these endpoints answers with the whole connector list rather
+ * than with an acknowledgement, so a screen paints what is true after the
+ * change instead of guessing and then asking. Nothing here is cached and
+ * nothing here is retried: a retried start is a second crawler.
+ */
+async function send(method, path, body) {
+  const sent = headers();
+  if (body) sent["Content-Type"] = "application/json";
+  const res = await fetch(BASE + path, {
+    method,
+    headers: sent,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) throw await failure(res);
+  return res.json();
+}
+
+/** connector is one source's path under the administration endpoints. */
+function connector(source, action = "") {
+  return `/admin/connectors/${encodeURIComponent(source)}${action}`;
 }
 
 /**
@@ -203,6 +238,14 @@ export const api = {
   // beside them is two indexed reads, so a screen that wants the check does not
   // wait on the aggregate.
   access: (question, opts) => get("/admin/access", question, opts),
+  // The five writes on the administration screen. The tenant is not sent with
+  // any of them: the server uses the operator's own, so a form cannot be used
+  // to reach into somebody else's corpus.
+  addConnector: (c) => send("POST", "/admin/connectors", c),
+  dropConnector: (source) => send("DELETE", connector(source)),
+  startConnector: (source) => send("POST", connector(source, "/start")),
+  stopConnector: (source) => send("POST", connector(source, "/stop")),
+  syncConnector: (source) => send("POST", connector(source, "/sync")),
   search: (query, opts) => get("/search", query, opts),
   // One request for both halves of the recent screen, because the screen asks
   // both questions at once and a screen that paints in two stages paints twice.
