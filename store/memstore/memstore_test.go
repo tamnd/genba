@@ -16,6 +16,7 @@ func TestConformance(t *testing.T) {
 
 func TestMaintenanceConformance(t *testing.T) {
 	storetest.RunMaintenance(t, newStore)
+	storetest.RunQuarantine(t, newStore)
 }
 
 // memstore implements store.Statistician and neither of the other two, so most

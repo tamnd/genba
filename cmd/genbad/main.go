@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -69,6 +70,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	fs.StringVar(&cfg.DSN, "dsn", cfg.DSN, "storage data source")
 	fs.StringVar(&cfg.Tenant, "tenant", cfg.Tenant, "tenant served by a single tenant deployment")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "debug, info, warn or error")
+	// A string rather than a repeated flag, because it is a list of a handful of
+	// names that is written once in a unit file. Empty means nobody is an
+	// administrator, which is the right default for a deployment that has not
+	// said who operates it.
+	admins := fs.String("admins", strings.Join(cfg.Admins, ","), "subjects that hold the administrator role, comma separated")
 
 	var corpus corpusOptions
 	fs.StringVar(&corpus.Dir, "corpus", "", "directory to index at startup")
@@ -113,6 +119,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		fmt.Fprintf(stdout, "genbad %s (%s, built %s)\n", genba.Version, genba.Commit, genba.Date)
 		return nil
 	}
+	cfg.Admins = subjects(*admins)
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
@@ -142,10 +149,15 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	// empty index and there is exactly one moment at which that can be asked.
 	track := newIndexing(ctx, st)
 
+	// The same arrangement for what the connectors are doing, which the
+	// administration screen reads and nothing else does.
+	ops := newOperations()
+
 	opts := []api.Option{
 		api.WithLogger(log),
 		api.WithDriver(string(cfg.Store)),
 		api.WithIndexing(track.State),
+		api.WithOperations(ops.State),
 	}
 	if h := web.Handler(); h != nil {
 		opts = append(opts, api.WithAssets(h))
@@ -160,7 +172,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	// listens for the store's writes and the first sync is a write like any
 	// other. Building it afterwards left it reporting that nothing had been
 	// indexed since it came up while sitting on a corpus it had just loaded.
-	srv := api.New(st, searcher, api.HeaderAuth{Tenant: cfg.Tenant}, opts...)
+	srv := api.New(st, searcher, api.HeaderAuth{Tenant: cfg.Tenant, Admins: cfg.Admins}, opts...)
 
 	// Each source starts syncing here and keeps going behind the listener. What
 	// is built here and not in the background is everything that can be wrong
@@ -169,13 +181,13 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	// later. A server pointed at both indexes both, and the two are separate
 	// feeds with separate cursors rather than one merged crawl, because a bucket
 	// that is refusing requests should not stop a directory being reindexed.
-	waitForCorpus, err := ingestCorpus(ctx, st, corpus, cfg.Tenant, track, log)
+	waitForCorpus, err := ingestCorpus(ctx, st, corpus, cfg.Tenant, track, ops, log)
 	if err != nil {
 		return err
 	}
 	defer waitForCorpus()
 
-	waitForBucket, err := ingestBucket(ctx, st, bucket, cfg.Tenant, track, log)
+	waitForBucket, err := ingestBucket(ctx, st, bucket, cfg.Tenant, track, ops, log)
 	if err != nil {
 		return err
 	}
@@ -299,4 +311,20 @@ func searchOptions(cfg config.Config) []index.Option {
 	return []index.Option{
 		index.WithCache(index.NewCache(index.WithResultExpiry(cfg.CacheResultExpiry))),
 	}
+}
+
+// subjects splits a comma separated list of names, dropping the empties.
+//
+// The empties matter. A flag left at its default is an empty string, and a
+// naive split of that is a list holding one name that is nothing at all, which
+// would make an unauthenticated request an administrator on any deployment
+// where the subject is also empty.
+func subjects(v string) []string {
+	var out []string
+	for _, s := range strings.Split(v, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }

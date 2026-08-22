@@ -20,6 +20,7 @@ import { Drawer } from "genba/drawer.js";
 import { Page } from "genba/page.js";
 import { Home } from "genba/home.js";
 import { Recent } from "genba/recent.js";
+import { Admin } from "genba/admin.js";
 import { Settings } from "genba/settings.js";
 import { forget, remember } from "genba/queries.js";
 import { failed } from "genba/states.js";
@@ -131,6 +132,7 @@ class App {
       onIdentity: () => this.switchIdentity(),
       onSay: (text) => this.say(text),
     });
+    this.admin = new Admin({ onBack: () => this.backFromAdmin() });
 
     this.main = h("main", {
       class: "main",
@@ -328,6 +330,11 @@ class App {
           h("span", { class: "rail__label" }, "Settings"),
         ),
       ),
+      // Filled once the session says whether this person holds the role. It is
+      // empty for everybody else rather than a link that leads to a refusal,
+      // because a rail entry is a promise and one that always fails is worse
+      // than no entry at all.
+      h("div", { class: "rail__section", id: "rail-admin" }),
       // Both of these are filled once the session says what the corpus holds.
       // They are empty until then rather than full of guesses, because a rail
       // that shortens a moment after it paints is worse than one that arrives a
@@ -377,7 +384,8 @@ class App {
     // Where the settings screen was opened from, taken before the address
     // moves. No other screen needs this: the rest either carry their own state
     // in the address or have a list behind them to go back to.
-    if (path === urlState.SETTINGS && urlState.route().name !== "settings") {
+    const aside = path === urlState.SETTINGS || path === urlState.ADMIN;
+    if (aside && !["settings", "admin"].includes(urlState.route().name)) {
       this.lastScreen = location.pathname + location.search;
     }
     if (location.pathname !== path || location.search) history.pushState(null, "", path);
@@ -394,6 +402,7 @@ class App {
       cache.as(this.session.view || "");
       this.results.verticals = verticalsFor(this.session.kinds);
       this.results.knows({ sources: this.session.sources || [] });
+      this.renderAdmin();
       this.renderVerticals();
       this.renderSources();
     } catch (err) {
@@ -423,6 +432,38 @@ class App {
       // An interface that cannot count what is indexed says nothing about it,
       // which is what it said before this ran.
     }
+  }
+
+  /**
+   * renderAdmin puts the administration entry on the rail, for the people who
+   * can reach it.
+   *
+   * The role is the server's answer rather than this browser's, because it is
+   * the server that decides and a client that guessed would either hide a
+   * screen from somebody who has it or offer one that refuses.
+   */
+  renderAdmin() {
+    const holder = this.rail.querySelector("#rail-admin");
+    const roles = (this.session && this.session.roles) || [];
+    if (!roles.includes("admin")) {
+      replace(holder);
+      return;
+    }
+    replace(
+      holder,
+      h(
+        "a",
+        {
+          class: "rail__link",
+          href: urlState.ADMIN,
+          title: "Administration",
+          dataset: { route: "admin" },
+          onClick: (e) => this.follow(e, urlState.ADMIN),
+        },
+        svg(icon("slider"), 20),
+        h("span", { class: "rail__label" }, "Admin"),
+      ),
+    );
   }
 
   /** renderVerticals fills the rail with the verticals the corpus has. */
@@ -547,6 +588,10 @@ class App {
       this.showSettings();
       return;
     }
+    if (route.name === "admin") {
+      this.showAdmin();
+      return;
+    }
 
     document.title = "genba";
     this.omnibox.value = this.query.q;
@@ -629,6 +674,36 @@ class App {
   }
 
   /**
+   * showAdmin renders what the deployment is doing.
+   *
+   * It polls while it is on screen, which no other screen does, and it stops
+   * itself by noticing it has been taken off the page. The endpoint refuses
+   * anybody without the role, so somebody who typed the address rather than
+   * following the rail entry lands on the error the server gave rather than on
+   * a screen that pretends.
+   */
+  async showAdmin() {
+    this.currentKey = this.admin.key();
+    this.drawer.currentId = null;
+    if (this.drawer.open) this.drawer.close({ notify: false, focus: false });
+    document.title = "Administration \u00b7 genba";
+    if (this.main.firstChild !== this.admin.el) replace(this.main, this.admin.el);
+    await this.admin.render();
+  }
+
+  /** backFromAdmin is the way out, which is the same one settings offers. */
+  backFromAdmin() {
+    const back = this.backFromSettings();
+    return {
+      ...back,
+      go: () => {
+        this.admin.stop();
+        back.go();
+      },
+    };
+  }
+
+  /**
    * backFromSettings is the way out, which is wherever this screen was opened
    * from.
    *
@@ -681,7 +756,7 @@ class App {
     const searching = Boolean(this.query.q) || urlState.count(this.query) > 0 || Boolean(this.query.sort);
     const route = urlState.route();
     const here =
-      route.name === "recent" || route.name === "settings"
+      route.name === "recent" || route.name === "settings" || route.name === "admin"
         ? route.name
         : route.name === "search" && !searching
           ? "home"

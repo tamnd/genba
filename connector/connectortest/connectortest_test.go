@@ -130,7 +130,7 @@ func (m *memsource) unresolvable(name string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if e, ok := m.entries[name]; ok {
-		e.perms = connector.Unresolved(m.name)
+		e.perms = connector.Unresolved(m.name, "the fixture says so")
 		e.shared = m.tick()
 	}
 }

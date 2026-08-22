@@ -171,7 +171,7 @@ func (f *fake) restrict(roomID, id string, p acl.Permissions) {
 
 // quarantine puts one thread's rule beyond working out.
 func (f *fake) quarantine(roomID, id string) {
-	f.restrict(roomID, id, connector.Unresolved(source))
+	f.restrict(roomID, id, connector.Unresolved(source, "the fake says so"))
 }
 
 // unruled takes the rule off a room entirely, which is the state a source

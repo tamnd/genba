@@ -23,6 +23,7 @@
     <script type="importmap">
       {
         "imports": {
+          "genba/admin.js": "/assets/admin.js",
           "genba/answer.js": "/assets/answer.js",
           "genba/api.js": "/assets/api.js",
           "genba/app.js": "/assets/app.js",
@@ -59,9 +60,10 @@
     <!--
       The whole module graph, flattened. Without this the browser learns about
       markdown.js only after content.js has arrived, which is four levels deep
-      on a graph that is twenty eight files wide. graph_test.go computes the
+      on a graph that is thirty files wide. graph_test.go computes the
       closure from app.js and fails if this list is not exactly it.
     -->
+    <link rel="modulepreload" href="/assets/admin.js" />
     <link rel="modulepreload" href="/assets/answer.js" />
     <link rel="modulepreload" href="/assets/api.js" />
     <link rel="modulepreload" href="/assets/app.js" />

@@ -112,7 +112,7 @@ func (s *Service) access(ctx context.Context, ch channel) (acl.Permissions, time
 		// channel, this token cannot list it, and there is nothing in the index
 		// from it to reapply anything to: the same refusal keeps its
 		// conversations out in the first place.
-		return connector.Unresolved(s.name), at, nil
+		return connector.Unresolved(s.name, fmt.Sprintf("who may read #%s: %s", ch.Name, err)), at, nil
 	default:
 		return acl.Permissions{}, time.Time{}, err
 	}

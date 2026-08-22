@@ -57,6 +57,11 @@ type Config struct {
 	// deployments leave it empty and resolve the tenant per request.
 	Tenant string
 
+	// Admins are the subjects that may see how the deployment is running. It is
+	// empty by default, which means nobody, and the reason it is not everybody
+	// is written on [api.HeaderAuth].
+	Admins []string
+
 	// ReadTimeout and WriteTimeout bound a request. They exist so that one slow
 	// connector or one enormous export cannot hold a connection open forever.
 	ReadTimeout  time.Duration
@@ -118,6 +123,9 @@ func Load(getenv func(string) string) (Config, error) {
 	str(getenv, "GENBA_DSN", &c.DSN)
 	str(getenv, "GENBA_TENANT", &c.Tenant)
 	str(getenv, "GENBA_LOG_LEVEL", &c.LogLevel)
+	if v := getenv("GENBA_ADMINS"); v != "" {
+		c.Admins = list(v)
+	}
 	if v := getenv("GENBA_STORE"); v != "" {
 		c.Store = Store(strings.ToLower(v))
 	}
@@ -230,4 +238,17 @@ func dur(getenv func(string) string, key string, dst *time.Duration) error {
 	}
 	*dst = d
 	return nil
+}
+
+// list reads a comma separated setting, dropping the empty entries a trailing
+// comma or a stray space leaves behind.
+func list(v string) []string {
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

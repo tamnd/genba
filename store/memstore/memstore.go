@@ -320,6 +320,45 @@ func (s *Store) Stats(ctx context.Context) (store.Stats, error) {
 	return st, nil
 }
 
+// Quarantined returns documents this driver is holding back.
+//
+// The map is walked in whatever order Go feels like, which is unspecified and
+// is what the interface promises. It is also, on this driver, a different
+// hundred documents each time it is asked, and that is worth knowing rather
+// than worth fixing: nothing above it may assume the list is stable, and a
+// driver whose order happened to be stable would let something start assuming
+// it.
+func (s *Store) Quarantined(ctx context.Context, tenant string, limit int) ([]store.Held, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return nil, genba.ErrClosed
+	}
+	out := make([]store.Held, 0, min(limit, len(s.docs)))
+	for _, d := range s.docs {
+		if d.Queryable() || d.Tenant != tenant {
+			continue
+		}
+		out = append(out, store.Held{
+			ID:     d.ID,
+			Title:  d.Title,
+			Source: d.Permissions.Source,
+			Reason: d.Permissions.Reason,
+			At:     d.ModifiedAt,
+		})
+		if len(out) == limit {
+			break
+		}
+	}
+	return out, nil
+}
+
 // Close releases the store.
 func (s *Store) Close() error {
 	s.mu.Lock()

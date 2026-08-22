@@ -160,7 +160,7 @@ func (p *BucketPolicy) load(ctx context.Context) (acl.Permissions, error) {
 		// Recorded rather than retried per object. A bucket whose list cannot be
 		// read has one problem, and asking it a million more times turns one
 		// failure into a denial of service against the store.
-		p.loaded, p.perms, p.err = true, connector.Unresolved(p.source), err
+		p.loaded, p.perms, p.err = true, connector.Unresolved(p.source, "the access control list of the bucket could not be read: "+err.Error()), err
 		return p.perms, p.err
 	}
 
@@ -209,7 +209,7 @@ func NewObjectPolicy(c *Client, source, identity string, domains ...string) (*Ob
 func (p *ObjectPolicy) Permissions(ctx context.Context, key string) (acl.Permissions, error) {
 	list, _, err := p.client.acl(ctx, key)
 	if err != nil {
-		return connector.Unresolved(p.source), err
+		return connector.Unresolved(p.source, "the access control list of this object could not be read: "+err.Error()), err
 	}
 	return p.acls.Normalize(grantsOf(list))
 }
