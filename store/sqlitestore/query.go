@@ -70,6 +70,63 @@ func visible(p *acl.Principal) *clause {
 	return c
 }
 
+// reachable is the same rule as [visible], written for the one query that has
+// to apply it to every row rather than to a candidate set.
+//
+// Every other read path here reaches [visible] with a match set already in
+// hand, so the correlated subqueries in it run over the few hundred documents a
+// query produced. Counting what somebody can reach has no match set, and the
+// same clause over a whole corpus re-reads the principal's keys once per
+// document, which on twenty thousand documents is most of a tenth of a second
+// for an answer of six numbers.
+//
+// So the keys are read once into a set and joined against the reference table
+// once, and what comes out is the two document sets the rule asks about: the
+// documents a deny names and the documents an allow names. The order after that
+// is the order [visible] applies and the order acl.Permissions.Allows applies:
+// unresolved is already excluded by queryable, then a deny denies, then the
+// owner is allowed, then the mode decides.
+//
+// It is a second expression of the rule and that is the thing to be careful
+// about, so it is held to the first by storetest.RunReachable, which walks the
+// order clause by clause against every driver.
+func reachable(p *acl.Principal) (query string, args []any) {
+	users, _ := json.Marshal(nonEmpty(p.UserKeys()))
+	groups, _ := json.Marshal(nonEmpty(p.GroupKeys()))
+
+	// The two halves are separate SELECTs rather than one with an OR because an
+	// OR over two columns cannot use document_ref_key and a scan of the whole
+	// reference table is what this is avoiding. MATERIALIZED is not decoration
+	// either: without it SQLite is free to inline the whole thing back into the
+	// places it is used, which is the shape being replaced.
+	const q = `
+		WITH named(doc_id, effect) AS MATERIALIZED (
+			SELECT doc_id, effect FROM document_ref
+			WHERE scope = 0 AND key IN (SELECT value FROM json_each(?))
+			UNION
+			SELECT doc_id, effect FROM document_ref
+			WHERE scope = 1 AND key IN (SELECT value FROM json_each(?))
+		)
+		SELECT d.source, count(*) FROM document d
+		WHERE d.queryable = 1
+		  AND d.tenant = ?
+		  AND d.id NOT IN (SELECT doc_id FROM named WHERE effect = 1)
+		  AND (
+		    (d.owner_key <> '' AND d.owner_key IN (SELECT value FROM json_each(?)))
+		    OR d.mode = ?
+		    OR (d.mode = ? AND d.id IN (SELECT doc_id FROM named WHERE effect = 0))
+		  )
+		GROUP BY d.source`
+
+	return q, []any{
+		string(users), string(groups),
+		p.Tenant,
+		string(users),
+		int(acl.ModePublicToTenant),
+		int(acl.ModeACL),
+	}
+}
+
 // filters is store.Request without the terms, in SQL.
 //
 // Each field is a membership test against a bound JSON array, which keeps the

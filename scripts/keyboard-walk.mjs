@@ -17,6 +17,7 @@ import {
   reporter,
   settle,
   SHIFT,
+  sleep,
   type,
   visit,
 } from "./chrome.mjs";
@@ -666,6 +667,60 @@ async function walk(session) {
       const note = document.querySelector('.admin__note-title');
       return Boolean(note) && note.textContent.includes('Nothing is being held back');
     })()`,
+  );
+
+  // The access check. The subject to ask about is the gate's own, because it is
+  // the only identity in this corpus whose answer is known: it is the one the
+  // browser has been searching as all the way down this walk.
+  await settle(session, "document.querySelector('#access-subject') !== null");
+  await evaluate(session, "document.querySelector('#access-subject').focus()");
+  await type(session, "dev");
+  await evaluate(session, "document.querySelector('.access .button--primary').click()");
+  await check(
+    session,
+    "the access check answers about the person it was asked about",
+    `(() => {
+      const values = [...document.querySelectorAll('.access__asked .facts__value')].map((d) => d.textContent);
+      return values[0] === 'dev' && values.length === 3;
+    })()`,
+  );
+
+  // Nothing was asked for yet, so nothing is counted. The aggregate is behind
+  // its own button because it reads every document in the tenant, and a screen
+  // that quietly ran it would be a screen nobody can keep open.
+  await check(
+    session,
+    "the reach is not counted until somebody asks for it",
+    "document.querySelector('.access__reach') === null",
+  );
+
+  await evaluate(
+    session,
+    "[...document.querySelectorAll('.access__actions .button')].find((b) => b.textContent.includes('Count')).click()",
+  );
+  await settle(session, "document.querySelector('.access__reach') !== null");
+  await check(
+    session,
+    "the count of what one person can reach is a real count of this corpus",
+    `(() => {
+      const total = Number(document.querySelector('.access__total strong').textContent.replace(/[^0-9]/g, ''));
+      const rows = document.querySelectorAll('.access__reach tbody tr').length;
+      return total > 0 && rows >= 1;
+    })()`,
+  );
+
+  // This screen asks the server again every five seconds. A repaint that took
+  // the caret out of a half typed group name would be a form nobody could use,
+  // so the wait here is longer than the interval on purpose.
+  await evaluate(session, "document.querySelector('#access-groups').focus()");
+  await type(session, "eng");
+  await sleep(6000);
+  await check(
+    session,
+    "a repaint on the timer leaves the half typed question and the caret alone",
+    `document.activeElement === document.querySelector('#access-groups') &&
+      document.querySelector('#access-groups').value === 'eng' &&
+      document.querySelector('#access-groups').selectionStart === 3`,
   );
 
   await evaluate(session, "document.querySelector('.admin .page__back-link').click()");

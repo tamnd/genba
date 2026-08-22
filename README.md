@@ -130,14 +130,20 @@ Everything the interface does is an HTTP call, and there is nothing it can reach
 | `GET /api/v1/me` | the caller, and the sources and kinds that caller can actually see |
 | `GET /api/v1/stats` | how much is indexed and how much is quarantined |
 | `GET /api/v1/admin/operations` | what the connectors are doing, and what is being held back and why |
+| `GET /api/v1/admin/access` | whether one named person can read one document, and why |
 | `GET /healthz`, `GET /readyz` | liveness, and whether the store answers |
 
 `search` takes `q` for the text and the operators, and `source`, `kind`, `container`, `author` and `owner` as repeated or comma separated parameters, plus `since`, `until`, `sort`, `limit` and `offset`.
 The snippet comes back as marked passages rather than as offsets, so a client highlights what the analyzer matched without reimplementing the analyzer.
 
-`admin/operations` needs the `admin` role, which comes from `X-Genba-Roles` or from `GENBA_ADMINS`, and the default is that nobody has it.
+Both `admin` endpoints need the `admin` role, which comes from `X-Genba-Roles` or from `GENBA_ADMINS`, and the default is that nobody has it.
 The role grants nothing over documents and it must not start to.
 Both the reads and the refusals are logged with the subject.
+
+`admin/access` takes `subject`, `groups` and `identities` for the person being asked about, `id` to ask about one document, and `counts=1` to also count what that person can reach.
+It answers as that person, by the same rule a search applies, and it never returns a document or a title.
+A yes about a document says which clause admitted them and which group or account it matched; a no says nothing further, because the difference between held back, another tenant, not on the list and not there would prove a document exists.
+The counts are asked for rather than always returned because they are an aggregate over every document in the tenant, and the log line names both the operator and the person they asked about.
 
 By default every file in the corpus is readable by everybody in the tenant, which is the right rule for a public checkout and the wrong one for almost anything else.
 If the tree has OWNERS files in it, `-corpus-acl owners` reads them instead, and a query then returns different results depending on who is asking.

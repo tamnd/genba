@@ -242,29 +242,106 @@ type Permissions struct {
 	Reason string `json:",omitempty"`
 }
 
+// Rule names the clause of the permission rule that settled a question.
+type Rule string
+
+// The clauses, in the order [Permissions.Decide] applies them.
+const (
+	// RuleNoPrincipal is nobody asking, which is a programming error rather
+	// than an anonymous reader.
+	RuleNoPrincipal Rule = "no-principal"
+
+	// RuleUnresolved is a descriptor the source's rules never resolved into.
+	// The document is held back from everybody.
+	RuleUnresolved Rule = "unresolved"
+
+	// RuleDenied is an explicit deny, which beats every allow.
+	RuleDenied Rule = "denied"
+
+	// RuleOwner is the subject owning the document.
+	RuleOwner Rule = "owner"
+
+	// RuleOwnerOnly is a document only its owner may read, read by somebody
+	// else.
+	RuleOwnerOnly Rule = "owner-only"
+
+	// RuleTenant is a document the source said everybody in the deployment may
+	// read.
+	RuleTenant Rule = "tenant"
+
+	// RuleListed and RuleNotListed are the access control list admitting the
+	// subject, and failing to.
+	RuleListed    Rule = "listed"
+	RuleNotListed Rule = "not-listed"
+)
+
+// Decision is the answer [Permissions.Allows] gives, with the reason for it.
+//
+// It exists for the administration screen that answers what a given person can
+// see, where "no" on its own is not an answer somebody can act on. What they
+// need is which clause settled it and which reference it matched, because the
+// action is different for each: a deny is a decision somebody made, an empty
+// access control list is usually a connector that has not finished, and an
+// unresolved descriptor is a bug in whichever mapping gave up.
+//
+// It is a separate type rather than three return values because it is served on
+// the wire, and it does not carry a sentence because the words belong on the
+// screen that shows them rather than in the package that decides.
+type Decision struct {
+	// Allowed is the answer, and it is exactly what Allows returns.
+	Allowed bool
+
+	// Rule is the clause that settled it.
+	Rule Rule
+
+	// Ref is the reference that matched, where one did. It is the deny that
+	// won, the allow that admitted them, or the owner, and it is zero for the
+	// clauses that match nothing.
+	Ref Ref
+}
+
 // Allows reports whether the principal may read the document.
+func (perm Permissions) Allows(p *Principal) bool { return perm.Decide(p).Allowed }
+
+// Decide answers whether the principal may read the document, and why.
 //
 // The order is fixed and is the whole point of the function: an unresolved
 // descriptor denies, then an explicit deny denies, then an allow allows.
-func (perm Permissions) Allows(p *Principal) bool {
-	if p == nil || perm.Mode == ModeUnknown {
-		return false
+//
+// It is the one implementation of that order. Allows is written in terms of it
+// rather than beside it, because two copies of a rule drift and the way this
+// one drifts is that somebody sees a document.
+func (perm Permissions) Decide(p *Principal) Decision {
+	if p == nil {
+		return Decision{Rule: RuleNoPrincipal}
 	}
-	if perm.matchesUser(p, perm.DenyUsers) || perm.matchesGroup(p, perm.DenyGroups) {
-		return false
+	if perm.Mode == ModeUnknown {
+		return Decision{Rule: RuleUnresolved}
+	}
+	if r, ok := perm.matchesUser(p, perm.DenyUsers); ok {
+		return Decision{Rule: RuleDenied, Ref: r}
+	}
+	if r, ok := perm.matchesGroup(p, perm.DenyGroups); ok {
+		return Decision{Rule: RuleDenied, Ref: r}
 	}
 	if perm.isOwner(p) {
-		return true
+		return Decision{Allowed: true, Rule: RuleOwner, Ref: perm.Owner}
 	}
 	switch perm.Mode {
 	case ModeOwnerOnly:
-		return false
+		return Decision{Rule: RuleOwnerOnly}
 	case ModePublicToTenant:
-		return true
+		return Decision{Allowed: true, Rule: RuleTenant}
 	case ModeACL:
-		return perm.matchesUser(p, perm.AllowUsers) || perm.matchesGroup(p, perm.AllowGroups)
+		if r, ok := perm.matchesUser(p, perm.AllowUsers); ok {
+			return Decision{Allowed: true, Rule: RuleListed, Ref: r}
+		}
+		if r, ok := perm.matchesGroup(p, perm.AllowGroups); ok {
+			return Decision{Allowed: true, Rule: RuleListed, Ref: r}
+		}
+		return Decision{Rule: RuleNotListed}
 	default:
-		return false
+		return Decision{Rule: RuleNotListed}
 	}
 }
 
@@ -272,16 +349,22 @@ func (perm Permissions) isOwner(p *Principal) bool {
 	if perm.Owner.Value == "" {
 		return false
 	}
-	return perm.matchesUser(p, []Ref{perm.Owner})
+	_, ok := perm.matchesUser(p, []Ref{perm.Owner})
+	return ok
 }
 
 // matchesUser and matchesGroup are the same set membership a storage driver
 // runs inside its own query, expressed over the key forms in ref.go so that
 // there is one definition of the rule rather than one per driver.
-func (perm Permissions) matchesUser(p *Principal, refs []Ref) bool {
+//
+// They return which reference matched as well as whether one did. The decision
+// does not need it and the screen that explains the decision does, and working
+// it out a second time afterwards would be a second implementation of the
+// comparison.
+func (perm Permissions) matchesUser(p *Principal, refs []Ref) (Ref, bool) {
 	return matchesKey(p.UserKeys(), refs, Ref.UserKey)
 }
 
-func (perm Permissions) matchesGroup(p *Principal, refs []Ref) bool {
+func (perm Permissions) matchesGroup(p *Principal, refs []Ref) (Ref, bool) {
 	return matchesKey(p.GroupKeys(), refs, Ref.GroupKey)
 }

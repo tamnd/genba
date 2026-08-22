@@ -127,33 +127,44 @@ func TestStatsCarryNoTagBecauseReadingThemMovesThem(t *testing.T) {
 	}
 }
 
-// TestAdministrationCarriesNoTagForTheSameReasonStatsDoNot covers the second
-// and last endpoint excused the tag. Half of what it reports is what the
+// TestAdministrationCarriesNoTagForTheSameReasonStatsDoNot covers the endpoints
+// excused the tag. Half of what the operations screen reports is what the
 // connectors are doing right now, and a sync that starts between two requests
 // changes the body without changing anything a tag could be computed over
 // cheaply. Tagging it would either produce a tag that never matches, which is a
 // revalidation that can never succeed, or a tag computed over the parts that
 // hold still, which would pin an operator to the first answer they ever saw on
-// the one screen they open to find out whether anything is wrong.
+// the one screen they open to find out whether anything is wrong. The access
+// screen is the same argument reached from the other side: the answer moves
+// whenever a connector reindexes anything the subject can reach, which is a
+// change nowhere near the request that would have to notice it.
 //
 // The headers that keep the answer out of a shared cache still apply, because
-// this body names documents that are being held back and who is allowed to see
-// them is exactly what a proxy in the middle does not know.
+// one body names documents that are being held back and the other says what a
+// named person can reach, and who is allowed to see either is exactly what a
+// proxy in the middle does not know.
 func TestAdministrationCarriesNoTagForTheSameReasonStatsDoNot(t *testing.T) {
 	_, h := cachingServer(t)
 
-	w := request(t, h, http.MethodGet, "/api/v1/admin/operations", operator())
-	if w.Code != http.StatusOK {
-		t.Fatalf("got %d, want 200: %s", w.Code, w.Body)
-	}
-	if got := w.Header().Get("ETag"); got != "" {
-		t.Errorf("administration carries ETag %q, which no later request can match", got)
-	}
-	if got := w.Header().Get("Cache-Control"); got != "private, max-age=0, must-revalidate" {
-		t.Errorf("Cache-Control is %q, want a private response that must be revalidated", got)
-	}
-	if got := w.Header().Get("Vary"); !strings.Contains(got, "Authorization") || !strings.Contains(got, "Cookie") {
-		t.Errorf("Vary is %q, want the credential headers: without them a cache may serve this to somebody without the role", got)
+	for _, path := range []string{
+		"/api/v1/admin/operations",
+		"/api/v1/admin/access?subject=u_mei",
+	} {
+		t.Run(path, func(t *testing.T) {
+			w := request(t, h, http.MethodGet, path, operator())
+			if w.Code != http.StatusOK {
+				t.Fatalf("got %d, want 200: %s", w.Code, w.Body)
+			}
+			if got := w.Header().Get("ETag"); got != "" {
+				t.Errorf("administration carries ETag %q, which no later request can match", got)
+			}
+			if got := w.Header().Get("Cache-Control"); got != "private, max-age=0, must-revalidate" {
+				t.Errorf("Cache-Control is %q, want a private response that must be revalidated", got)
+			}
+			if got := w.Header().Get("Vary"); !strings.Contains(got, "Authorization") || !strings.Contains(got, "Cookie") {
+				t.Errorf("Vary is %q, want the credential headers: without them a cache may serve this to somebody without the role", got)
+			}
+		})
 	}
 }
 
