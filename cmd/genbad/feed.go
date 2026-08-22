@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tamnd/genba"
+	"github.com/tamnd/genba/api"
 	"github.com/tamnd/genba/connector"
 	"github.com/tamnd/genba/connector/aclmap"
 	"github.com/tamnd/genba/ingest"
@@ -29,6 +30,11 @@ type feed struct {
 
 	// Source is the connector to sync.
 	Source connector.Connector
+
+	// Target is which directory or bucket this feed reads, for the
+	// administration screen. Two directories are two rows a person can tell
+	// apart only if each says which one it is.
+	Target string
 
 	// Tenant is who the documents belong to.
 	Tenant string
@@ -59,6 +65,13 @@ type feed struct {
 	// A nil one is a feed nobody is watching.
 	Track *indexing
 
+	// Ops is where each sync is recorded for the administration screen. It is
+	// the same arrangement as Track and it is separate from it because the two
+	// answer different questions: Track is how far the first crawl has got, and
+	// this is what every run since then did and which of them failed. A nil one
+	// records nothing.
+	Ops *operations
+
 	// Release is called once the last sync has returned, and is where a watcher
 	// and a source get closed.
 	Release func()
@@ -88,12 +101,39 @@ func runFeed(ctx context.Context, st store.Store, f feed, log *slog.Logger) (fun
 		return nil, err
 	}
 
+	// Said here rather than in the goroutine, so that the answer to whether this
+	// process is still reading its sources is already correct by the time the
+	// listener opens. A readiness check that arrives in the microsecond between
+	// the two would otherwise be told the crawl is over because it has not
+	// started.
+	source := f.Source.Source()
+	tracked := f.Track != nil && f.Track.expect(source)
+	if f.Ops != nil {
+		// Registered before the first sync, so a screen opened during the first
+		// crawl of a large corpus shows the connector with no runs yet rather
+		// than showing nothing at all.
+		f.Ops.register(api.Connector{
+			Source:  source,
+			Kind:    f.Kind,
+			Target:  f.Target,
+			Tenant:  f.Tenant,
+			Refresh: refreshOf(f.Refresh),
+		}, f.Policy)
+	}
+
 	var swept time.Time
 	sync := func(ctx context.Context) {
 		var before, after runtime.MemStats
 		runtime.ReadMemStats(&before)
 
+		started := time.Now()
+		if f.Ops != nil {
+			f.Ops.starting(source, started)
+		}
 		stats, err := pipeline.Run(ctx, genba.TenantID(f.Tenant), f.Source)
+		if f.Ops != nil {
+			f.Ops.finished(source, time.Since(started), stats, err)
+		}
 		if err != nil {
 			log.Error(f.Kind+" sync failed", append(slices.Clone(f.Fields),
 				"error", err,
@@ -138,14 +178,6 @@ func runFeed(ctx context.Context, st store.Store, f feed, log *slog.Logger) (fun
 	if release == nil {
 		release = func() {}
 	}
-
-	// Said here rather than in the goroutine, so that the answer to whether this
-	// process is still reading its sources is already correct by the time the
-	// listener opens. A readiness check that arrives in the microsecond between
-	// the two would otherwise be told the crawl is over because it has not
-	// started.
-	source := f.Source.Source()
-	tracked := f.Track != nil && f.Track.expect(source)
 
 	done := make(chan struct{})
 	go func() {

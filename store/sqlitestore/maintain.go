@@ -6,12 +6,74 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/tamnd/genba/acl"
 	"github.com/tamnd/genba/store"
 )
 
 var _ store.Maintenance = (*Store)(nil)
+var _ store.Quarantine = (*Store)(nil)
+
+// Quarantined returns documents this driver is holding back, newest first.
+//
+// The two fields that come out of the stored JSON are pulled out in SQL rather
+// than by decoding the row. Decoding is how every other read path here gets at
+// a document, and it is the wrong tool for this one: the body is in that JSON,
+// a held document is as large as any other, and a hundred of them is megabytes
+// read and parsed to reach two short strings. json_extract reads the same
+// column and returns the two.
+//
+// Newest first because the question somebody has when they open this screen is
+// whether the connector they just fixed has stopped producing them, and that is
+// answered by the top of the list rather than by a hundred entries from
+// whenever the corpus was first crawled.
+func (s *Store) Quarantined(ctx context.Context, tenant string, limit int) ([]store.Held, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.query(ctx, `
+		SELECT
+			d.id,
+			d.source,
+			d.modified_at,
+			json_extract(dd.data, '$.Title'),
+			json_extract(dd.data, '$.Permissions.Reason')
+		FROM document d
+		JOIN document_data dd ON dd.doc_id = d.id
+		WHERE d.tenant = ? AND d.queryable = 0
+		ORDER BY d.modified_at DESC
+		LIMIT ?`, tenant, limit)
+	if err != nil {
+		return nil, fmt.Errorf("sqlitestore: quarantined: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]store.Held, 0, limit)
+	for rows.Next() {
+		var (
+			h        store.Held
+			modified sql.NullInt64
+			title    sql.NullString
+			reason   sql.NullString
+		)
+		if err := rows.Scan(&h.ID, &h.Source, &modified, &title, &reason); err != nil {
+			return nil, fmt.Errorf("sqlitestore: quarantined: %w", err)
+		}
+		h.Title, h.Reason = title.String, reason.String
+		if modified.Valid {
+			h.At = time.Unix(0, modified.Int64).UTC()
+		}
+		out = append(out, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlitestore: quarantined: %w", err)
+	}
+	return out, nil
+}
 
 // Inventory calls fn for every document held for one tenant and source.
 //

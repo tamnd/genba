@@ -341,7 +341,7 @@ func (n *Normalizer) Normalize(grants []Grant) (acl.Permissions, error) {
 	for _, g := range grants {
 		if err := n.apply(&perm, g, &owners); err != nil {
 			n.count(err)
-			return n.unresolved(), err
+			return n.unresolved(err), err
 		}
 	}
 
@@ -460,11 +460,24 @@ func (n *Normalizer) widen(perm *acl.Permissions, m acl.Mode) {
 	}
 }
 
-// unresolved is the descriptor a quarantined document gets. It names its source
-// so that a report can say which connector the document came from, and says
-// nothing else, because nothing else was established.
-func (n *Normalizer) unresolved() acl.Permissions {
-	return acl.Permissions{Mode: acl.ModeUnknown, Source: n.rules.Source}
+// unresolved is the descriptor a quarantined document gets.
+//
+// It names its source so that a report can say which connector the document
+// came from, and it carries why it failed, and it says nothing else, because
+// nothing else was established. The reason is the whole of what an operator can
+// act on: eleven hundred documents held back on a foreign domain is a tenant
+// boundary doing its job, and eleven hundred held back on a malformed grant is
+// a connector to go and fix. Without it both are the same number.
+func (n *Normalizer) unresolved(err error) acl.Permissions {
+	perm := acl.Permissions{Mode: acl.ModeUnknown, Source: n.rules.Source}
+	var e *Error
+	if errors.As(err, &e) {
+		// The reason and the statement it gave up on, which is the difference
+		// between a screen that says a document could not be mapped and one that
+		// says which line of which access control list to go and look at.
+		perm.Reason = e.Reason.String() + ": " + e.Detail
+	}
+	return perm
 }
 
 // confers reports whether a role grants reading.

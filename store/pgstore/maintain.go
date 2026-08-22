@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -14,6 +15,80 @@ import (
 )
 
 var _ store.Maintenance = (*Store)(nil)
+var _ store.Quarantine = (*Store)(nil)
+
+// Quarantined returns documents this driver is holding back, newest first.
+//
+// The title and the reason are pulled out of the stored JSON in SQL rather than
+// by decoding the row, for the same reason [Store.Inventory] reads two columns:
+// the body is in that JSON, a held document is as large as any other, and a
+// hundred of them is megabytes read and parsed to reach two short strings. The
+// cast to json is per row and it is a hundred rows, which is the whole of what
+// this pays and is a great deal less than shipping the bodies.
+//
+// Newest first because the question somebody has when they open this screen is
+// whether the connector they just fixed has stopped producing them, and that is
+// answered by the top of the list rather than by a hundred entries from
+// whenever the corpus was first crawled. A document whose source never gave a
+// date sorts last, because the alternative in Postgres is for it to sort first
+// and push the answer off the screen.
+func (s *Store) Quarantined(ctx context.Context, tenant string, limit int) ([]store.Held, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
+	var out []store.Held
+	err := s.retry(ctx, func(ctx context.Context) error {
+		rows, err := s.query(ctx, `
+			SELECT
+				d.id,
+				d.source,
+				d.modified_at,
+				dd.data::json ->> 'Title',
+				dd.data::json -> 'Permissions' ->> 'Reason'
+			FROM document d
+			JOIN document_data dd ON dd.doc_id = d.id
+			WHERE d.tenant = $1 AND NOT d.queryable
+			ORDER BY d.modified_at DESC NULLS LAST
+			LIMIT $2`, tenant, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		// Cleared on every attempt. A retry that appended to what the failed
+		// attempt had already read would return the first page twice.
+		out = make([]store.Held, 0, limit)
+		for rows.Next() {
+			var (
+				h        store.Held
+				modified *int64
+				title    *string
+				reason   *string
+			)
+			if err := rows.Scan(&h.ID, &h.Source, &modified, &title, &reason); err != nil {
+				return err
+			}
+			if title != nil {
+				h.Title = *title
+			}
+			if reason != nil {
+				h.Reason = *reason
+			}
+			if modified != nil {
+				h.At = time.Unix(0, *modified).UTC()
+			}
+			out = append(out, h)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pgstore: quarantined: %w", err)
+	}
+	return out, nil
+}
 
 // Inventory calls fn for every document held for one tenant and source.
 //

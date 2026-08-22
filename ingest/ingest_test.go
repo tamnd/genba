@@ -144,7 +144,7 @@ func TestUnresolvedPermissionsAreQuarantinedNotIndexed(t *testing.T) {
 	ch := changes(10)
 	for i := range ch {
 		if i%2 == 0 {
-			ch[i].Document.Permissions = connector.Unresolved("test")
+			ch[i].Document.Permissions = connector.Unresolved("test", "the test says so")
 		}
 	}
 	stats := run(t, p, &fakeSource{name: "test", changes: ch})

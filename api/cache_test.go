@@ -127,6 +127,36 @@ func TestStatsCarryNoTagBecauseReadingThemMovesThem(t *testing.T) {
 	}
 }
 
+// TestAdministrationCarriesNoTagForTheSameReasonStatsDoNot covers the second
+// and last endpoint excused the tag. Half of what it reports is what the
+// connectors are doing right now, and a sync that starts between two requests
+// changes the body without changing anything a tag could be computed over
+// cheaply. Tagging it would either produce a tag that never matches, which is a
+// revalidation that can never succeed, or a tag computed over the parts that
+// hold still, which would pin an operator to the first answer they ever saw on
+// the one screen they open to find out whether anything is wrong.
+//
+// The headers that keep the answer out of a shared cache still apply, because
+// this body names documents that are being held back and who is allowed to see
+// them is exactly what a proxy in the middle does not know.
+func TestAdministrationCarriesNoTagForTheSameReasonStatsDoNot(t *testing.T) {
+	_, h := cachingServer(t)
+
+	w := request(t, h, http.MethodGet, "/api/v1/admin/operations", operator())
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200: %s", w.Code, w.Body)
+	}
+	if got := w.Header().Get("ETag"); got != "" {
+		t.Errorf("administration carries ETag %q, which no later request can match", got)
+	}
+	if got := w.Header().Get("Cache-Control"); got != "private, max-age=0, must-revalidate" {
+		t.Errorf("Cache-Control is %q, want a private response that must be revalidated", got)
+	}
+	if got := w.Header().Get("Vary"); !strings.Contains(got, "Authorization") || !strings.Contains(got, "Cookie") {
+		t.Errorf("Vary is %q, want the credential headers: without them a cache may serve this to somebody without the role", got)
+	}
+}
+
 func TestARepeatedRequestIsAnsweredWithoutABody(t *testing.T) {
 	_, h := cachingServer(t)
 

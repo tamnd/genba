@@ -382,7 +382,7 @@ func (s *Source) refresh(ctx context.Context, o object, start syncPoint, emit fu
 		// Quarantining is the only safe reading: a document nobody can
 		// currently say who may read is not one to keep serving on last week's
 		// answer.
-		perms = connector.Unresolved(s.name)
+		perms = connector.Unresolved(s.name, "the rule that used to govern this object stopped resolving: "+err.Error())
 		s.skipped(o.Key, err)
 	}
 	return at, emit(ctx, connector.Change{
@@ -417,7 +417,7 @@ func (s *Source) wanted(o object) bool {
 // quarantines every document rather than publishing the bucket.
 func (s *Source) permissions(ctx context.Context, key string) (acl.Permissions, error) {
 	if s.policy == nil {
-		return connector.Unresolved(s.name), nil
+		return connector.Unresolved(s.name, "this source was built without a permission policy, so nothing in the bucket resolves"), nil
 	}
 	return s.policy.Permissions(ctx, key)
 }
@@ -518,7 +518,7 @@ func (s *Source) document(ctx context.Context, o object, raw []byte) (doc.Docume
 	if err != nil {
 		// The document keeps the unresolved descriptor and is quarantined by
 		// the pipeline. Failing to answer is not permission to publish.
-		perms = connector.Unresolved(s.name)
+		perms = connector.Unresolved(s.name, "who may read this object did not resolve: "+err.Error())
 		s.skipped(o.Key, err)
 	}
 

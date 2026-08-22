@@ -316,6 +316,14 @@
   --border-control: #3c4045;
   --border-strong: #e8eaed;
 
+  /* The functional hues lift on this ground. The light values are chosen to
+     clear the contrast ratio against white and none of them clears it against
+     a near black one, so the same three meanings get lighter shades here
+     rather than the screens that use them getting a second rule each. */
+  --success-700: #34d399;
+  --warning-700: #fbbf24;
+  --danger-700: #f87171;
+
   --accent: var(--brand-400);
   --focus-ring: var(--brand-400);
 

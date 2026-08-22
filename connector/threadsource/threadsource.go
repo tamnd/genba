@@ -582,7 +582,7 @@ func (s *Source) access(th Thread, c Container) acl.Permissions {
 	case resolved(c.Access):
 		return c.Access
 	default:
-		return connector.Unresolved(s.name)
+		return connector.Unresolved(s.name, "neither the conversation nor the container it is in said who may read it")
 	}
 }
 

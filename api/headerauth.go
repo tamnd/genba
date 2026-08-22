@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -23,6 +24,21 @@ type HeaderAuth struct {
 	// Tenant is used when the request does not carry one. A single tenant
 	// deployment sets it here and never sends the header.
 	Tenant string
+
+	// Admins are the subjects that hold [acl.RoleAdmin] whatever the request
+	// says, named by whoever started the process.
+	//
+	// It is here rather than only in the roles header because of what the two
+	// are for. The header is how a proxy that has already authenticated
+	// somebody passes their roles down, and it is only as trustworthy as the
+	// proxy stripping it. This is how a deployment with no proxy in front of it
+	// still has an administrator, which is every first install and every
+	// laptop, and it is a list somebody typed rather than a default: empty
+	// means nobody is an administrator and the screens that need one are
+	// refused. That is the right way round. A deployment that has not decided
+	// who operates it has not decided, and guessing everybody is the answer
+	// that cannot be taken back.
+	Admins []string
 }
 
 // Header names read by [HeaderAuth].
@@ -32,6 +48,7 @@ const (
 	HeaderGroups       = "X-Genba-Groups"
 	HeaderGroupVersion = "X-Genba-Group-Version"
 	HeaderIdentities   = "X-Genba-Identities"
+	HeaderRoles        = "X-Genba-Roles"
 )
 
 // Authenticate builds a principal from the headers.
@@ -58,6 +75,14 @@ func (h HeaderAuth) Authenticate(r *http.Request) (*acl.Principal, error) {
 		Subject: subject,
 		Kind:    acl.KindUser,
 		Groups:  acl.GroupSet{Version: version, Members: splitCSV(r.Header.Get(HeaderGroups))},
+		Roles:   splitCSV(r.Header.Get(HeaderRoles)),
+	}
+	// The configured list wins over the header in the only direction that
+	// matters: it can add the role and it never takes it away, so a proxy that
+	// hands down roles and an operator who named themselves at startup do not
+	// have to agree.
+	if slices.Contains(h.Admins, subject) && !p.HasRole(acl.RoleAdmin) {
+		p.Roles = append(p.Roles, acl.RoleAdmin)
 	}
 	for _, raw := range splitCSV(r.Header.Get(HeaderIdentities)) {
 		source, value, ok := strings.Cut(raw, ":")

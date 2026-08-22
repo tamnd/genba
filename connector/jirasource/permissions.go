@@ -106,7 +106,7 @@ func (s *Service) access(ctx context.Context, p project) (acl.Permissions, error
 		// sites, and this account may only be a user. Quarantining is the only
 		// safe answer and staying quiet about it is the only unsafe one.
 		s.skip(p.Key, fmt.Errorf("who may browse %s: %w", p.Key, err))
-		return connector.Unresolved(s.name), nil
+		return connector.Unresolved(s.name, fmt.Sprintf("reading the permission scheme for %s needs an administrator and this account is not one", p.Key)), nil
 	default:
 		return acl.Permissions{}, err
 	}
@@ -152,7 +152,7 @@ func (s *Service) access(ctx context.Context, p project) (acl.Permissions, error
 		// A scheme that grants browse to nothing is not a project everybody can
 		// read, it is a project we failed to understand. Say so.
 		s.skip(p.Key, fmt.Errorf("the permission scheme for %s grants %s to nobody", p.Key, browse))
-		return connector.Unresolved(s.name), nil
+		return connector.Unresolved(s.name, fmt.Sprintf("the permission scheme for %s grants %s to nobody, which is a scheme we failed to understand rather than a project everybody may read", p.Key, browse)), nil
 	}
 
 	return acl.Permissions{
@@ -310,7 +310,7 @@ func (l *security) resolve(ctx context.Context, id, name string) acl.Permissions
 	})
 	if err != nil {
 		s.skip("security level "+id, fmt.Errorf("who may read issues at security level %q: %w", name, err))
-		return connector.Unresolved(s.name)
+		return connector.Unresolved(s.name, fmt.Sprintf("the members of security level %q could not be listed", name))
 	}
 
 	var users, groups []acl.Ref
@@ -329,13 +329,13 @@ func (l *security) resolve(ctx context.Context, id, name string) acl.Permissions
 			s.skip("security level "+id, fmt.Errorf(
 				"security level %q is granted to project role %d, which cannot be resolved without the project",
 				name, m.Holder.ProjectRole.ID))
-			return connector.Unresolved(s.name)
+			return connector.Unresolved(s.name, fmt.Sprintf("security level %q is granted to a project role, and a role cannot be resolved without knowing which project the issue is in", name))
 		}
 	}
 
 	if len(users) == 0 && len(groups) == 0 {
 		s.skip("security level "+id, fmt.Errorf("security level %q resolves to nobody", name))
-		return connector.Unresolved(s.name)
+		return connector.Unresolved(s.name, fmt.Sprintf("security level %q resolves to nobody", name))
 	}
 
 	return acl.Permissions{

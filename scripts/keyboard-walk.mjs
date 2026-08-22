@@ -600,6 +600,82 @@ async function walk(session) {
     "location.search.includes('q=cache')",
   );
 
+  // Administration. The gate names the browser's development subject as an
+  // administrator, so the rail offers it here and offers it to nobody else,
+  // which is the half of this that cannot be checked from a screen that already
+  // has the role.
+  await visit(session, `${BASE}/?q=cache`, "document.querySelectorAll('.result').length > 0");
+  await check(
+    session,
+    "the rail offers administration to somebody who holds the role",
+    "document.querySelectorAll('.rail__link[data-route=\"admin\"]').length === 1",
+  );
+
+  await evaluate(session, "document.querySelector('.rail__link[data-route=\"admin\"]').click()");
+  await settle(session, "location.pathname === '/admin'");
+  await check(
+    session,
+    "the rail entry reaches administration and the screen takes the focus",
+    `document.querySelector('.rail__link[data-route="admin"]').getAttribute('aria-current') === 'page' &&
+      document.activeElement === document.querySelector('.admin__title')`,
+  );
+
+  await settle(session, "document.querySelectorAll('.admin .stat__value').length >= 2");
+  await check(
+    session,
+    "the corpus is reported as what is servable and what is held back",
+    `(() => {
+      const labels = [...document.querySelectorAll('.admin__corpus .stat__label')].map((s) => s.textContent);
+      const values = [...document.querySelectorAll('.admin__corpus .stat__value')].map((s) => s.textContent);
+      return labels.includes('Servable') && labels.includes('Held back') &&
+        values.every((v) => v.trim().length > 0);
+    })()`,
+  );
+
+  // The connector the gate started, reported back. A screen that draws its
+  // cards from a fixture would pass this and say nothing.
+  await check(
+    session,
+    "the connector this process is running is named with its history",
+    `(() => {
+      const card = document.querySelector('.connector');
+      if (!card) return false;
+      const title = card.querySelector('.connector__title').textContent.trim();
+      const rows = card.querySelectorAll('.connector__runs tbody tr').length;
+      return title === 'repo' && rows >= 1;
+    })()`,
+  );
+
+  // A table whose headers are not headers reads as a grid of unrelated cells,
+  // and there is no way to tell from looking at it.
+  await check(
+    session,
+    "every column on this screen is headed by a real header cell",
+    `[...document.querySelectorAll('.admin__table')].every((t) =>
+      t.tHead && [...t.tHead.rows[0].cells].every((c) =>
+        c.tagName === 'TH' && c.getAttribute('scope') === 'col'))`,
+  );
+
+  // The corpus here is a checkout that everybody in the tenant may read, so
+  // nothing is held back and the screen has to say so rather than drawing an
+  // empty table under a heading.
+  await check(
+    session,
+    "an empty quarantine is said out loud rather than drawn as an empty table",
+    `(() => {
+      const note = document.querySelector('.admin__note-title');
+      return Boolean(note) && note.textContent.includes('Nothing is being held back');
+    })()`,
+  );
+
+  await evaluate(session, "document.querySelector('.admin .page__back-link').click()");
+  await settle(session, "location.pathname === '/'");
+  await check(
+    session,
+    "the way out of administration leads back to the search it was opened from",
+    "location.search.includes('q=cache')",
+  );
+
   // The answer above the results.
   //
   // The query is one this corpus can answer. A repository is mostly source

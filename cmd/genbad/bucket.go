@@ -196,7 +196,7 @@ func bucketPolicyFor(c *objectsource.Client, o bucketOptions) (objectsource.Poli
 // It runs on the same schedule the directory does, for the same reason: every
 // sync including the first runs behind the listener, and later ones are
 // incremental against the cursor the last one saved.
-func ingestBucket(ctx context.Context, st store.Store, cfg bucketOptions, tenant string, track *indexing, log *slog.Logger) (func(), error) {
+func ingestBucket(ctx context.Context, st store.Store, cfg bucketOptions, tenant string, track *indexing, ops *operations, log *slog.Logger) (func(), error) {
 	if cfg.Bucket == "" {
 		return func() {}, nil
 	}
@@ -251,6 +251,7 @@ func ingestBucket(ctx context.Context, st store.Store, cfg bucketOptions, tenant
 	return runFeed(ctx, st, feed{
 		Kind:      "bucket",
 		Source:    src,
+		Target:    cfg.Bucket,
 		Tenant:    tenant,
 		Refresh:   cfg.Refresh,
 		Reconcile: cfg.Reconcile,
@@ -258,6 +259,7 @@ func ingestBucket(ctx context.Context, st store.Store, cfg bucketOptions, tenant
 		Report:    func() []any { return requesting(client, limiter) },
 		Policy:    policy,
 		Track:     track,
+		Ops:       ops,
 		Release:   func() { _ = src.Close() },
 	}, log)
 }

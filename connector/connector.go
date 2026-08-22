@@ -259,14 +259,23 @@ type Cursor struct {
 func (c Cursor) IsZero() bool { return c.Value == "" }
 
 // Unresolved returns the permission descriptor for a document whose access
-// control list a connector could not work out.
+// control list a connector could not work out, and why.
 //
 // Use it rather than leaving the field zero. Both produce [acl.ModeUnknown] and
 // both quarantine the document, but this one says at the call site that the
 // connector considered the question and failed, which is a different bug from
 // having forgotten to set the field at all.
-func Unresolved(source string) acl.Permissions {
-	return acl.Permissions{Mode: acl.ModeUnknown, Source: source}
+//
+// The reason is not optional and it is not decoration. A document held back is
+// invisible from every angle except a counter, and a counter cannot tell a
+// token that may not list a channel from a connector that has stopped
+// understanding a permission scheme. Every call site here already knows which
+// it was, usually because it is about to log it, so it says so once and the
+// sentence travels with the document to whoever has to fix it. Write it as
+// something a person can act on: name the thing that failed, not the function
+// that noticed.
+func Unresolved(source, reason string) acl.Permissions {
+	return acl.Permissions{Mode: acl.ModeUnknown, Source: source, Reason: reason}
 }
 
 // Checkpoints is where resume points are kept between runs.

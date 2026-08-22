@@ -552,7 +552,7 @@ func (s *Source) syncWatched(ctx context.Context, from connector.Cursor, since t
 		if ops := changed[rel]; ops.chmod && !ops.write && !ops.remove {
 			perms, err := s.permissions(ctx, rel, info)
 			if err != nil {
-				perms = connector.Unresolved(s.name)
+				perms = connector.Unresolved(s.name, "the file mode changed and the new rule did not resolve: "+err.Error())
 				s.skipped(full, err)
 			}
 			if err := emit(ctx, connector.Change{
@@ -623,7 +623,7 @@ func (s *Source) refresh(ctx context.Context, rel string, info fs.FileInfo, sinc
 		// The rule that used to govern this file stopped resolving. Quarantining
 		// is the only safe reading: a document nobody can currently say who may
 		// read is not a document to keep serving on last week's answer.
-		perms = connector.Unresolved(s.name)
+		perms = connector.Unresolved(s.name, "the rule that used to govern this file stopped resolving: "+err.Error())
 		s.skipped(rel, err)
 	}
 	return at, emit(ctx, connector.Change{
@@ -645,7 +645,7 @@ func (s *Source) refresh(ctx context.Context, rel string, info fs.FileInfo, sinc
 // quarantines every document rather than publishing the tree.
 func (s *Source) permissions(ctx context.Context, rel string, info fs.FileInfo) (acl.Permissions, error) {
 	if s.policy == nil {
-		return connector.Unresolved(s.name), nil
+		return connector.Unresolved(s.name, "this source was built without a permission policy, so nothing in the tree resolves"), nil
 	}
 	if p, ok := s.policy.(statPolicy); ok {
 		return p.permissionsFor(ctx, rel, info)
@@ -701,7 +701,7 @@ func (s *Source) read(ctx context.Context, full, rel string, info fs.FileInfo) (
 	if err != nil {
 		// The document keeps the unresolved descriptor and is quarantined by the
 		// pipeline. Failing to answer is not permission to publish.
-		perms = connector.Unresolved(s.name)
+		perms = connector.Unresolved(s.name, "who may read this file did not resolve: "+err.Error())
 		s.skipped(full, err)
 	}
 

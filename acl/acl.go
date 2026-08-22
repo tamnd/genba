@@ -89,6 +89,17 @@ func (p *Principal) IdentityIn(source string) (string, bool) {
 	return "", false
 }
 
+// RoleAdmin is the role that may see how the deployment is running.
+//
+// It grants nothing over documents and it must not start to. Everything it
+// opens up is about the machinery: which connectors are syncing, which runs
+// failed, what is being held back and why. A person holding it sees the same
+// search results as they did without it, because an operator being able to read
+// the corpus is a decision about that person and not about that job, and the
+// day the two are the same role is the day nobody can be given the second
+// without the first.
+const RoleAdmin = "admin"
+
 // HasRole reports whether the principal holds the named role.
 func (p *Principal) HasRole(role string) bool {
 	return p != nil && slices.Contains(p.Roles, role)
@@ -210,6 +221,25 @@ type Permissions struct {
 	// Version increases every time the source reports a change. It is what a
 	// revocation bumps, and what derived bitmaps are keyed on.
 	Version uint64
+
+	// Reason says why the mode is unknown, in the words of whatever failed to
+	// resolve it. It is empty for every descriptor that resolved, and nothing
+	// reads it to decide anything.
+	//
+	// It is here because a quarantined document is otherwise a number. An
+	// operator looking at a count of eleven hundred held back documents has no
+	// way to tell one connector's broken role mapping from a tenant boundary
+	// working exactly as intended, and the two want opposite actions. The
+	// mapping already knows which it was at the moment it gave up, so the
+	// sentence it would have logged and thrown away travels with the document
+	// instead, and the screen that lists the quarantine can say why for each
+	// entry rather than in aggregate.
+	//
+	// It is the one field here with a JSON tag, because every document in the
+	// store is written as JSON with these names and almost none of them have a
+	// reason. An always present empty string on every row of a corpus is a cost
+	// paid by the many for the few.
+	Reason string `json:",omitempty"`
 }
 
 // Allows reports whether the principal may read the document.

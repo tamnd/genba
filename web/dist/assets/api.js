@@ -194,6 +194,10 @@ async function bytes(path, opts = {}) {
 export const api = {
   me: (opts) => get("/me", {}, opts),
   stats: (opts) => get("/stats", {}, opts),
+  // One request for the whole administration screen, because every number on
+  // it is a snapshot of the same moment and three requests would let the count
+  // of held documents disagree with the list under it.
+  admin: (opts) => get("/admin/operations", {}, opts),
   search: (query, opts) => get("/search", query, opts),
   // One request for both halves of the recent screen, because the screen asks
   // both questions at once and a screen that paints in two stages paints twice.

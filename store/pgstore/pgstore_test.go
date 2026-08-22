@@ -117,6 +117,7 @@ func TestConformance(t *testing.T) {
 
 func TestMaintenanceConformance(t *testing.T) {
 	storetest.RunMaintenance(t, newStore)
+	storetest.RunQuarantine(t, newStore)
 }
 
 func TestRetrieverConformance(t *testing.T) {

@@ -148,7 +148,7 @@ node scripts/gate-images.mjs "$IMAGES" 24
 # than printing none: it read as the product being two hundred times over its
 # budget, and the budget was never being watched on the path anybody is on.
 "$BIN" -addr "127.0.0.1:$PORT" -store sqlite -dsn "$STATE/corpus.db" \
-	-tenant "$TENANT" -corpus . -corpus-name repo -log-level error &
+	-tenant "$TENANT" -corpus . -corpus-name repo -admins dev -log-level error &
 SERVER=$!
 
 # The same binary with nothing to index. It is one more process rather than a
@@ -235,7 +235,7 @@ if [ -n "${CHROMEDRIVER:-}" ]; then
 	DRIVER="--chromedriver-path $CHROMEDRIVER"
 fi
 
-# Eleven screens, and they are states rather than layouts. Three of them, the
+# Twelve screens, and they are states rather than layouts. Three of them, the
 # empty index, the query that matched nothing and the filter that matched
 # nothing, produce markup no other screen produces, and that markup is where an
 # accessibility bug survives longest: nobody looks at an empty page twice.
@@ -248,6 +248,12 @@ fi
 # The settings screen is the tenth. It is the only screen in the product built
 # out of form controls, and a radio group that has lost its label is the kind of
 # thing that reads perfectly to whoever wrote it and not at all to anybody else.
+#
+# The twelfth is administration. It is the only screen in the product built out
+# of tables, and a table whose headers are not headers is unreadable to anybody
+# using a screen reader and looks perfect to everybody else. It is also the only
+# screen that repaints itself on a timer, so it is the one place a focus ring
+# can be quietly taken away from somebody five seconds after they put it there.
 for url in \
 	"$BASE/" \
 	"$EMPTY/" \
@@ -259,7 +265,8 @@ for url in \
 	"$BASE/?q=gatepix&kind=image&view=grid" \
 	"$BASE/d/$ID" \
 	"$BASE/recent" \
-	"$BASE/settings"; do
+	"$BASE/settings" \
+	"$BASE/admin"; do
 	echo "ui-gate: axe $url"
 	# The interface renders after a fetch, so the audit waits for the first
 	# paint to have happened. Auditing an empty document passes and proves

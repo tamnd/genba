@@ -7,7 +7,7 @@
 
 const LIST_KEYS = ["source", "kind", "container", "author", "owner"];
 
-// The three screens that are a path rather than a query string.
+// The four screens that are a path rather than a query string.
 //
 // A document is the thing somebody pastes into a message, so it gets an address
 // that survives being read out loud and does not carry the state of whoever
@@ -16,10 +16,14 @@ const LIST_KEYS = ["source", "kind", "container", "author", "owner"];
 // of a search: it answers what has been going on rather than what matches, and
 // a rail entry that ran a recency sorted search was answering the wrong
 // question with the right rows. Settings is a path because none of the query
-// state means anything on it.
+// state means anything on it. Administration is a path for the same reason and
+// for one more: it is not about the corpus at all, it is about the process, and
+// carrying a search filter onto it would be carrying it onto a screen where it
+// means nothing.
 const DOCUMENT = "/d/";
 export const RECENT = "/recent";
 export const SETTINGS = "/settings";
+export const ADMIN = "/admin";
 
 /**
  * route says which screen the path names.
@@ -30,6 +34,7 @@ export const SETTINGS = "/settings";
 export function route(pathname = location.pathname) {
   if (pathname === RECENT) return { name: "recent", id: "" };
   if (pathname === SETTINGS) return { name: "settings", id: "" };
+  if (pathname === ADMIN) return { name: "admin", id: "" };
   if (!pathname.startsWith(DOCUMENT)) return { name: "search", id: "" };
   const id = decode(pathname.slice(DOCUMENT.length));
   return id ? { name: "document", id } : { name: "search", id: "" };

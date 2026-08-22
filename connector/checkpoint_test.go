@@ -163,7 +163,7 @@ func TestACheckpointDirectoryIsCreated(t *testing.T) {
 }
 
 func TestUnresolvedNeverAllowsAnybody(t *testing.T) {
-	perm := connector.Unresolved("wiki")
+	perm := connector.Unresolved("wiki", "the test says so")
 	if perm.Mode != acl.ModeUnknown {
 		t.Errorf("mode is %v, want ModeUnknown", perm.Mode)
 	}

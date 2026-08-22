@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,11 +24,11 @@ import (
 // and a number there are comparable and the difference between them is the cost
 // of the HTTP layer.
 
-func handler(b *testing.B) (h http.Handler, ids map[string]string) {
+func handler(b *testing.B, opts ...api.Option) (h http.Handler, ids map[string]string) {
 	b.Helper()
 	st, spec := benchcorpus.Fixture(b)
 	s := api.New(st, index.New(st, index.WithClock(func() time.Time { return benchcorpus.Epoch })),
-		api.HeaderAuth{Tenant: benchcorpus.Tenant})
+		api.HeaderAuth{Tenant: benchcorpus.Tenant}, opts...)
 	return s.Handler(), headers(spec.Principal())
 }
 
@@ -182,6 +183,26 @@ func BenchmarkAPIStats(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		get(b, h, "/api/v1/stats", hdr)
+	}
+}
+
+// BenchmarkAPIAdmin is the administration screen, which repaints itself every
+// five seconds for as long as somebody leaves it open. That is the reason it is
+// measured: an endpoint nobody calls twice can afford to be slow and one that
+// answers on a timer cannot. It reads memory for the connectors and then asks
+// the store for its counts and for a bounded page of what is being held back,
+// so the number here is the cost of those two queries over the whole corpus.
+// Every read of it is audited, and the audit goes to the process log, so the
+// logger is thrown away here. Measuring an endpoint with its log line going to
+// a terminal measures the terminal.
+func BenchmarkAPIAdmin(b *testing.B) {
+	h, hdr := handler(b, api.WithLogger(slog.New(slog.DiscardHandler)))
+	hdr[api.HeaderRoles] = acl.RoleAdmin
+	get(b, h, "/api/v1/admin/operations", hdr)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		get(b, h, "/api/v1/admin/operations", hdr)
 	}
 }
 

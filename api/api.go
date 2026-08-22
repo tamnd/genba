@@ -87,6 +87,11 @@ type Server struct {
 	// that runs no connectors, and a nil one is the same answer as no.
 	indexing func() (Indexing, bool)
 
+	// operations is asked, on every administration request, what the connectors
+	// are doing. It is nil for an embedder that runs none, and a nil one is the
+	// same answer as no connectors.
+	operations func() Operations
+
 	// heartbeat is how often an idle event stream sends a comment.
 	heartbeat time.Duration
 
@@ -219,6 +224,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/recent", s.authenticated(s.handleRecordOpen))
 	mux.Handle("GET /api/v1/stats", s.authenticated(s.handleStats))
 	mux.Handle("GET /api/v1/events", s.authenticated(s.handleEvents))
+	mux.Handle("GET /api/v1/admin/operations", s.admin(s.handleAdmin))
 	if s.assets != nil {
 		mux.Handle("GET /", s.assets)
 	}

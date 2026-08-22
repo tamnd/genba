@@ -129,10 +129,15 @@ Everything the interface does is an HTTP call, and there is nothing it can reach
 | `GET /api/v1/documents/{id}` | one document, or the same error as one that does not exist |
 | `GET /api/v1/me` | the caller, and the sources and kinds that caller can actually see |
 | `GET /api/v1/stats` | how much is indexed and how much is quarantined |
+| `GET /api/v1/admin/operations` | what the connectors are doing, and what is being held back and why |
 | `GET /healthz`, `GET /readyz` | liveness, and whether the store answers |
 
 `search` takes `q` for the text and the operators, and `source`, `kind`, `container`, `author` and `owner` as repeated or comma separated parameters, plus `since`, `until`, `sort`, `limit` and `offset`.
 The snippet comes back as marked passages rather than as offsets, so a client highlights what the analyzer matched without reimplementing the analyzer.
+
+`admin/operations` needs the `admin` role, which comes from `X-Genba-Roles` or from `GENBA_ADMINS`, and the default is that nobody has it.
+The role grants nothing over documents and it must not start to.
+Both the reads and the refusals are logged with the subject.
 
 By default every file in the corpus is readable by everybody in the tenant, which is the right rule for a public checkout and the wrong one for almost anything else.
 If the tree has OWNERS files in it, `-corpus-acl owners` reads them instead, and a query then returns different results depending on who is asking.
@@ -156,6 +161,7 @@ The environment variable is the flag in upper case with a `GENBA_` prefix, and a
 | `GENBA_STORE` | `memory` | storage driver: `memory`, `sqlite`, `postgres` or `kura` |
 | `GENBA_DSN` | empty | path or connection string for the driver |
 | `GENBA_TENANT` | empty | tenant served by a single tenant deployment |
+| `GENBA_ADMINS` | empty | subjects that hold the administrator role, comma separated |
 | `GENBA_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
 | `GENBA_READ_TIMEOUT` | `30s` | request read timeout |
 | `GENBA_WRITE_TIMEOUT` | `60s` | request write timeout |

@@ -146,7 +146,7 @@ func policyFor(o corpusOptions) (fssource.Policy, error) {
 // from the moment it says it is up and says on screen that the answers are
 // partial while the first read finishes. Later syncs are incremental: the
 // connector reports only what changed since the cursor the last one saved.
-func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant string, track *indexing, log *slog.Logger) (func(), error) {
+func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant string, track *indexing, ops *operations, log *slog.Logger) (func(), error) {
 	if cfg.Dir == "" {
 		return func() {}, nil
 	}
@@ -182,6 +182,7 @@ func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant
 	return runFeed(ctx, st, feed{
 		Kind:      "corpus",
 		Source:    src,
+		Target:    cfg.Dir,
 		Tenant:    tenant,
 		Refresh:   cfg.Refresh,
 		Reconcile: cfg.Reconcile,
@@ -189,6 +190,7 @@ func ingestCorpus(ctx context.Context, st store.Store, cfg corpusOptions, tenant
 		Report:    func() []any { return watching(watcher) },
 		Policy:    policy,
 		Track:     track,
+		Ops:       ops,
 		Release: func() {
 			if watcher != nil {
 				_ = watcher.Close()
