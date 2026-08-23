@@ -227,6 +227,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/v1/documents/{id}/verify", s.authenticated(s.handleUnverify))
 	mux.Handle("PUT /api/v1/documents/{id}/owner", s.authenticated(s.handleSetOwner))
 	mux.Handle("DELETE /api/v1/documents/{id}/owner", s.authenticated(s.handleClearOwner))
+	mux.Handle("POST /api/v1/documents/{id}/stale", s.authenticated(s.handleReport))
+	mux.Handle("DELETE /api/v1/documents/{id}/stale", s.authenticated(s.handleResolve))
 	mux.Handle("GET /api/v1/documents/{id}/content", s.authenticated(s.handleContent))
 	mux.Handle("GET /api/v1/documents/{id}/thumbnail", s.authenticated(s.handleThumbnail))
 	mux.Handle("GET /api/v1/recent", s.authenticated(s.handleRecent))
@@ -813,6 +815,15 @@ func (s *Server) handleDocument(w http.ResponseWriter, r *http.Request, p *acl.P
 	if _, ok := s.ownership(); ok {
 		body.CanReassign = store.MayReassign(p, d)
 	}
+	// What other people have said about the document, on the same request as
+	// everything else on the panel. Reporting needs no permission beyond reading,
+	// so the button is offered to everybody the moment the driver can remember a
+	// report, and only clearing it asks who this is.
+	if _, ok := s.reporter(); ok {
+		body.CanReport = true
+		body.CanResolve = store.MayResolve(p, d)
+		body.Stale = staleOf(s.reported(r, p, d.ID))
+	}
 	writeConditional(w, r, http.StatusOK, body, nil)
 }
 
@@ -849,6 +860,15 @@ type documentBody struct {
 	// the document turns out to be wrong.
 	Owner       *owner `json:"owner,omitempty"`
 	CanReassign bool   `json:"can_reassign,omitempty"`
+
+	// Stale is what readers have said is wrong with the document, absent when
+	// nobody has said anything. CanReport is whether this deployment can remember
+	// a report at all, which is the same question as whether to offer the button,
+	// because anybody who can read the document can make one. CanResolve is
+	// whether this reader is one of the people who could clear what was said.
+	Stale      *staleness `json:"stale,omitempty"`
+	CanReport  bool       `json:"can_report,omitempty"`
+	CanResolve bool       `json:"can_resolve,omitempty"`
 }
 
 // documentResponse is where the wire shape is decided. Permissions are not part

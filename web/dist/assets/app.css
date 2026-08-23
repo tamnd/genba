@@ -753,6 +753,95 @@ time {
   }
 }
 
+/* Reported --------------------------------------------------------------- */
+
+/*
+ * A document somebody has said is out of date.
+ *
+ * This is the one mark on a document allowed to colour its words as well as its
+ * icon, alongside a verification that has run out, and for the same reason: it
+ * is a warning, and a reader who takes a page at face value because the warning
+ * on it was set in the colour of every other crumb has lost the hour the mark
+ * exists to save.
+ *
+ * It is still not filled and it is still not a pill. The line it sits on is a
+ * line of facts about the document, and a red badge on it would be read before
+ * the title.
+ */
+.stale {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  white-space: nowrap;
+  color: var(--danger-700);
+  font-weight: var(--weight-semibold);
+}
+
+.stale svg {
+  flex: none;
+  color: var(--danger-700);
+}
+
+/*
+ * What the reporter said was wrong, on its own line under whatever it belongs
+ * to. It is set as the quotation it is rather than as a warning, because the
+ * mark above has already said this is one and a second red sentence would only
+ * be harder to read.
+ */
+.stale__note {
+  flex-basis: 100%;
+  color: var(--text-secondary);
+  font-size: var(--text-small);
+  line-height: var(--leading-small);
+}
+
+/*
+ * The control, which is a button until somebody presses it and a field after,
+ * exactly as correcting an owner is. The two states are one box so the row does
+ * not move when it changes.
+ */
+.stale-control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.stale__form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.stale__field {
+  width: 320px;
+  max-width: 100%;
+  height: 40px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--text-body);
+}
+
+.stale__field:hover {
+  border-color: var(--border-strong);
+}
+
+/* On a phone the field takes the line it is on, for the reason the address
+   field beside it does. */
+@media (max-width: 560px) {
+  .stale-control,
+  .stale__form {
+    flex-wrap: wrap;
+  }
+
+  .stale__field {
+    flex: 1 1 100%;
+  }
+}
+
 /* Answer ----------------------------------------------------------------- */
 
 /*

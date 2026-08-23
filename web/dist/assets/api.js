@@ -147,6 +147,11 @@ function ownerPath(id) {
   return `/documents/${encodeURIComponent(id)}/owner`;
 }
 
+/** stalePath is what has been said about one document, which is written and cleared. */
+function stalePath(id) {
+  return `/documents/${encodeURIComponent(id)}/stale`;
+}
+
 /** connector is one source's path under the administration endpoints. */
 function connector(source, action = "") {
   return `/admin/connectors/${encodeURIComponent(source)}${action}`;
@@ -279,6 +284,13 @@ export const api = {
   // out what the first one just did.
   setOwner: (id, who) => send("PUT", ownerPath(id), who),
   clearOwner: (id) => send("DELETE", ownerPath(id)),
+  // Saying a document is out of date, and saying that has been dealt with. The
+  // first takes no permission but being able to read the document and the
+  // second is held to the same rule as verifying, which is why they are two
+  // calls rather than one toggle. Reporting answers with the count, because how
+  // many other people had already said the same thing is on the server.
+  report: (id, said) => send("POST", stalePath(id), said),
+  resolve: (id) => send("DELETE", stalePath(id)),
   content: (id, opts) => bytes(`/documents/${encodeURIComponent(id)}/content`, opts),
   // The version goes in the URL rather than in a header, because it is what
   // makes the address of a thumbnail stand for one picture forever. The server

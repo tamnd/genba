@@ -116,7 +116,7 @@ var index = sync.OnceValue(func() map[string]servable {
 		return nil
 	})
 
-	// One goroutine per file, because compressing twenty five modules one after
+	// One goroutine per file, because compressing thirty five modules one after
 	// another is most of the time a process spends starting up and they have
 	// nothing to say to each other.
 	built := make([]*asset, len(files))

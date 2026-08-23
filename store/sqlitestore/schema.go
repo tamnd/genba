@@ -316,6 +316,39 @@ var migrations = []step{
 		corrected_by TEXT    NOT NULL,
 		corrected_at INTEGER NOT NULL
 	) WITHOUT ROWID`),
+
+	// document_report is a reader saying that a document is out of date.
+	//
+	// One row per person per document rather than one per click, which is the
+	// same shape document_open has and is what makes the number under a document
+	// worth printing: it is the count of people who said so. Somebody reporting
+	// the same document twice found it stale again, and the second report lands
+	// on the first.
+	//
+	// by_key is store.ReportKey, which is the principal's own subject folded, so
+	// that the same person reporting from two sessions is one person. The rest of
+	// who they are is JSON in one column rather than three, for the reason
+	// document_own stores its people that way: a person flattened into a subject,
+	// a name and an address comes back missing the source identity, and this one
+	// is read straight onto a screen where the owner has to recognise a name.
+	//
+	// The cascade is the same promise the other tables make. A document that
+	// leaves the corpus takes what was said about it, so a document re-crawled
+	// under an id that was deleted does not arrive already complained about.
+	ddl(`CREATE TABLE document_report (
+		doc_id      TEXT    NOT NULL REFERENCES document(id) ON DELETE CASCADE,
+		by_key      TEXT    NOT NULL,
+		reporter    TEXT    NOT NULL,
+		reported_at INTEGER NOT NULL,
+		note        TEXT    NOT NULL,
+		PRIMARY KEY (doc_id, by_key)
+	) WITHOUT ROWID`),
+
+	// The inbox reads this table newest first and then asks which of those
+	// documents belong to the person asking, so the date is the column it walks.
+	// The primary key above answers the other question, what has been said about
+	// these twenty ids, from a range scan per id.
+	ddl(`CREATE INDEX document_report_recent ON document_report (reported_at DESC)`),
 }
 
 // backfill recomputes the ranking statistics for every document already stored.

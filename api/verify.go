@@ -145,6 +145,9 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request, p *acl.Pri
 		writeError(w, http.StatusInternalServerError, "internal", "the verification could not be recorded")
 		return
 	}
+	// Putting your name to a document answers whatever anybody had said was
+	// wrong with it, so the reports go with it.
+	s.resolveAfterVerify(r, p, d.ID)
 	writeJSON(w, http.StatusOK, verifiedOf(claim, now))
 }
 

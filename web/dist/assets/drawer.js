@@ -17,6 +17,7 @@ import { body as renderBody, shapeOf, detailOf } from "genba/content.js";
 import { reveal } from "genba/marks.js";
 import { badge, note, control } from "genba/verify.js";
 import { owner, reassign } from "genba/own.js";
+import { mark, reason, report } from "genba/stale.js";
 import { NOT_AVAILABLE, NO_ACCESS } from "genba/states.js";
 import { documentPath } from "genba/state.js";
 
@@ -218,6 +219,10 @@ export class Drawer {
       owner(d.owner),
       d.verified && h("span", { class: "crumbs__sep" }, "·"),
       badge(d.verified, { by: true }),
+      // Last on the line, because it is the fact that changes what a reader
+      // does with everything before it.
+      d.stale && h("span", { class: "crumbs__sep" }, "·"),
+      mark(d.stale),
     );
     // Opening at the source is only offered where a browser would go there. For
     // every document the file connector read it would not, so the path takes
@@ -277,7 +282,17 @@ export class Drawer {
           this.stamp(d);
         },
       }),
+      // And saying it is out of date, which is the one control in here that
+      // needs no permission beyond having been able to open the preview.
+      report(d, {
+        onSay: this.onSay,
+        onChange: (next) => {
+          Object.assign(d, next);
+          this.stamp(d);
+        },
+      }),
       note(d.verified),
+      reason(d.stale),
     );
   }
 

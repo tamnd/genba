@@ -43,7 +43,7 @@ const worthKeeping = 0.9
 // squeeze is every encoding worth sending a file in instead of sending the file.
 //
 // It runs once per asset, at startup, because the alternative is compressing
-// the same twenty five modules again for every visitor. Both encoders are asked
+// the same thirty five modules again for every visitor. Both encoders are asked
 // for their best: this is paid once for the life of the process, and what it
 // buys is paid for on every cold load anybody ever has.
 func squeeze(name string, body []byte) map[string][]byte {

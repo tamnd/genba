@@ -82,6 +82,19 @@ var cases = []testCase{
 	{"a deleted document forgets who was said to own it", testOwnerDelete},
 	{"a correction to nobody, or by nobody, is refused", testOwnerRejectsIncomplete},
 	{"a page of ids is one question about owners", testOwnerBatch},
+
+	{"a report comes back with the name and the sentence on it", testReportRoundTrip},
+	{"reporting the same document twice is still one person", testReportReplacesTheirOwn},
+	{"the count under a document is the count of people", testReportCounts},
+	{"a report is neither made nor read across a permission", testReportPermissions},
+	{"a rewrite by a crawl does not erase what somebody said", testReportSurvivesRewrite},
+	{"resolving clears the document rather than one line of it", testResolve},
+	{"a deleted document forgets that it was reported", testReportDelete},
+	{"the inbox holds what was said about the reader's own work", testReportedIsMine},
+	{"writing the document is enough to be told it is stale", testReportedByAuthorship},
+	{"the inbox is most recently reported first and honours a limit", testReportedOrder},
+	{"a report by nobody is refused", testReportRejectsAnonymous},
+	{"a page of ids is one question about reports", testReportBatch},
 }
 
 // contentStore skips a case for a driver that does not hold bytes.
