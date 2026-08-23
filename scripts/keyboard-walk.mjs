@@ -472,6 +472,71 @@ async function walk(session) {
       Boolean(document.querySelector('.page__body [data-walk="kept"]'))`,
   );
 
+  // Saying the document is out of date, from the same screen. This is the one
+  // write in the interface offered to a reader who owns nothing, so what is
+  // being checked is that it is offered at all and that the sentence somebody
+  // typed comes back on the page rather than only into a table.
+  await check(
+    session,
+    "a reader is offered a way to say the document is out of date",
+    `!document.querySelector('.page__meta .stale') && Boolean(${foot("Report as out of date")})`,
+  );
+
+  await evaluate(session, foot("Report as out of date") + ".click()");
+  await check(
+    session,
+    "reporting opens a field and puts the cursor in it",
+    `document.activeElement.classList.contains('stale__field')`,
+  );
+
+  // Escape closes the field rather than the screen around it, exactly as it
+  // does for the address field above, and for the same reason: on a phone the
+  // screen around it is a modal drawer.
+  await press(session, "Escape", "Escape", 27);
+  await check(
+    session,
+    "escape closes the note and leaves the focus where the hand was",
+    `!document.querySelector('.stale__field') &&
+      document.activeElement.classList.contains('button--report')`,
+  );
+
+  await evaluate(
+    session,
+    `(() => {
+      document.querySelector('.button--report').click();
+      const field = document.querySelector('.stale__field');
+      field.value = 'the section about the old cluster is wrong';
+      field.form.requestSubmit();
+      return true;
+    })()`,
+  );
+  await check(
+    session,
+    "the report is on the page, from this screen, with the document untouched",
+    `(() => {
+      const line = document.querySelector('.page__meta .stale');
+      return Boolean(line) && line.textContent.includes('Reported out of date by') &&
+        Boolean(document.querySelector('.page__body [data-walk="kept"]'));
+    })()`,
+  );
+  await check(
+    session,
+    "what the reporter said is on the page and not only in a tooltip",
+    `(document.querySelector('.stale__note') || {}).textContent ===
+      'the section about the old cluster is wrong'`,
+  );
+
+  // And clearing it, which is the half of the pair a reader is not offered. The
+  // walk runs as the administrator this server was started with, so both halves
+  // are on the screen here and the refusal is the API test's business.
+  await evaluate(session, foot("Mark as dealt with") + ".click()");
+  await check(
+    session,
+    "clearing the reports takes the mark off and leaves the document where it was",
+    `!document.querySelector('.page__meta .stale') && !document.querySelector('.stale__note') &&
+      Boolean(document.querySelector('.page__body [data-walk="kept"]'))`,
+  );
+
   // The keyboard on its own. Everything above uses it in passing; this is the
   // part an audit finds and the part somebody using it all day notices.
   await visit(session, `${BASE}/?q=cache`, "document.querySelectorAll('.result').length > 0");

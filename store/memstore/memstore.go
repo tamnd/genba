@@ -53,6 +53,12 @@ type Store struct {
 	// of the two answers it is and who chose it.
 	owners map[string]store.Correction
 
+	// reports is who said what is out of date, keyed by document id and then by
+	// the reporter's key. Two maps rather than a slice because the count under a
+	// document is the count of people, so a second report from the same person
+	// has to land on the first.
+	reports map[string]map[string]store.Report
+
 	// feeds is how the connectors were configured, keyed by tenant and source.
 	// It is in memory like everything else here, so a restart forgets it, which
 	// is the documented behaviour of this driver rather than an oversight.
@@ -70,6 +76,7 @@ func New() *Store {
 		feeds:    make(map[[2]string]store.Feed),
 		verified: make(map[string]store.Verification),
 		owners:   make(map[string]store.Correction),
+		reports:  make(map[string]map[string]store.Report),
 	}
 }
 
@@ -155,6 +162,7 @@ func (s *Store) remove(ids []string) (map[string][]string, error) {
 		delete(s.content, id)
 		delete(s.verified, id)
 		delete(s.owners, id)
+		delete(s.reports, id)
 	}
 	return removed, nil
 }

@@ -116,7 +116,7 @@ It is also the one screen that writes: a connector is added, switched off, asked
 A connector that was named on the command line is on that screen because it is running, and says where it is configured rather than offering a button that cannot work.
 
 The whole interface is hand written HTML, CSS and ES modules, committed exactly as they are served, so a clone builds a working interface with the Go toolchain and nothing else.
-There is no bundler and there is not going to be one, since the graph is thirty four modules of our own with no third party dependency anywhere in it.
+There is no bundler and there is not going to be one, since the graph is thirty five modules of our own with no third party dependency anywhere in it.
 What a bundler would have bought is done by the server instead.
 Every file is hashed as it is read and served under a second name that says what is in it, cacheable for a year, and the document is rewritten on the way out so that its import map and its preload list point at those names.
 Bodies are compressed with brotli and gzip once at startup rather than once per request.
@@ -135,6 +135,8 @@ Everything the interface does is an HTTP call, and there is nothing it can reach
 | `DELETE /api/v1/documents/{id}/verify` | withdraws the claim |
 | `PUT /api/v1/documents/{id}/owner` | corrects who owns a document, when the connector named the account that imported it |
 | `DELETE /api/v1/documents/{id}/owner` | puts back the owner the source reports |
+| `POST /api/v1/documents/{id}/stale` | records that the caller says a document is out of date, with an optional note |
+| `DELETE /api/v1/documents/{id}/stale` | clears the reports, which the owner or the author may do |
 | `GET /api/v1/me` | the caller, and the sources and kinds that caller can actually see |
 | `GET /api/v1/stats` | how much is indexed and how much is quarantined |
 | `GET /api/v1/admin/operations` | what the connectors are doing, and what is being held back and why |

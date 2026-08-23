@@ -27,6 +27,7 @@ import {
 import { body as renderBody, shapeOf, detailOf } from "genba/content.js";
 import { badge, note, control } from "genba/verify.js";
 import { owner, reassign } from "genba/own.js";
+import { mark, reason, report } from "genba/stale.js";
 import { reveal, toLine } from "genba/marks.js";
 import { notPermitted, failedBody, failureTitle, NOT_AVAILABLE } from "genba/states.js";
 import { documentPath } from "genba/state.js";
@@ -191,6 +192,10 @@ export class Page {
       owner(d.owner),
       d.verified && h("span", { class: "crumbs__sep" }, "·"),
       badge(d.verified, { by: true }),
+      // Last on the line, because it is the fact that changes what a reader
+      // does with everything before it.
+      d.stale && h("span", { class: "crumbs__sep" }, "·"),
+      mark(d.stale),
     );
     replace(
       this.foot,
@@ -217,7 +222,19 @@ export class Page {
           this.stamp(d);
         },
       }),
+      // Saying it is out of date is the one control here anybody may use, so it
+      // is drawn last and drawn plainly. The two beside it are for the person
+      // accountable for the document and this one is for whoever was reading
+      // it.
+      report(d, {
+        onSay: this.onSay,
+        onChange: (next) => {
+          Object.assign(d, next);
+          this.stamp(d);
+        },
+      }),
       note(d.verified),
+      reason(d.stale),
     );
   }
 
