@@ -43,6 +43,18 @@ export function mark(s) {
   );
 }
 
+/**
+ * brief is the same fact as the mark, short enough for a row in a panel.
+ *
+ * The owner's list has a title on every row and no space for a sentence, so
+ * what is left is the number, and the number is the part that says which of six
+ * documents to open first.
+ */
+export function brief(s) {
+  if (!s || !s.at) return "";
+  return s.count > 1 ? `${s.count} reports` : "1 report";
+}
+
 /** words is the mark itself, which stays short enough for a crumb. */
 function words(s) {
   if (s.count > 1) return `Reported out of date by ${s.count} people`;
@@ -56,7 +68,7 @@ function words(s) {
  * somebody to ask, exactly as the reader who disagrees with a verification
  * does.
  */
-function sentence(s) {
+export function sentence(s) {
   const who = s.email ? `${s.by} (${s.email})` : s.by || "somebody";
   const parts = [`Reported out of date by ${who} on ${exact(s.at)}`];
   if (s.count > 1) parts.push(`${s.count} people have said so`);
@@ -200,6 +212,7 @@ async function act(button, d, box, run, { onSay = () => {}, onChange = () => {} 
     // what this costs is a revalidation that is usually answered with a 304.
     cache.invalidate(cache.key("search", {}));
     cache.invalidate(cache.key("recent", {}));
+    cache.invalidate(cache.key("reported", {}));
     cache.invalidate(cache.key("document", { id: d.id }));
     // Reporting answers with what stands afterwards and clearing answers with
     // nothing at all, which is the same thing said two ways.

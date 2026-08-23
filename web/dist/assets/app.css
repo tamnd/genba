@@ -1710,6 +1710,18 @@ mark.hit--current::after {
 }
 
 /*
+ * How many people have reported a document, on the owner's panel. It takes the
+ * warning colour the mark on a document takes rather than the secondary one
+ * every other row meta carries, because that panel is a job list and the number
+ * is the job. It has to be written here rather than by putting .stale on the
+ * span, because .panel__row-meta is further down this file and would win.
+ */
+.panel__row-meta--flag {
+  color: var(--danger-700);
+  font-weight: var(--weight-semibold);
+}
+
+/*
  * A row that is a link says so on hover rather than by being blue while it
  * sits there. The tip rows on the home page are not links, so they carry
  * .panel__row--static and their titles stay in the text colour in every

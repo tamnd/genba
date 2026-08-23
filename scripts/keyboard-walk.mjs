@@ -526,9 +526,58 @@ async function walk(session) {
       'the section about the old cluster is wrong'`,
   );
 
-  // And clearing it, which is the half of the pair a reader is not offered. The
-  // walk runs as the administrator this server was started with, so both halves
-  // are on the screen here and the refusal is the API test's business.
+  // The owner's side of the same report, which is the half that decides whether
+  // any of this was worth typing. Nothing a file connector indexes has an owner,
+  // so one is named first: the panel exists for the person accountable for a
+  // document, and until somebody says who that is a report has nowhere to go.
+  await evaluate(
+    session,
+    `(() => {
+      document.querySelector('.button--reassign').click();
+      const field = document.querySelector('.own__field');
+      field.value = 'dev@example.com';
+      field.form.requestSubmit();
+      return true;
+    })()`,
+  );
+  await check(
+    session,
+    "naming an owner is what gives a report somewhere to go",
+    `Boolean(document.querySelector('.page__meta .owner'))`,
+  );
+
+  await visit(session, `${BASE}/`, "document.querySelectorAll('.home .panel').length > 0");
+  await check(
+    session,
+    "what a reader reported is on the home screen of the person who owns the document",
+    `(() => {
+      const panel = [...document.querySelectorAll('.home .panel')].find(
+        (p) => (p.querySelector('.panel__title') || {}).textContent === 'Reported as out of date',
+      );
+      if (!panel) return false;
+      const row = panel.querySelector('.panel__row');
+      return Boolean(row) && (row.querySelector('.panel__row-meta') || {}).textContent === '1 report';
+    })()`,
+  );
+
+  // Back to the document to put both of those away. The marker has to go on
+  // again because this is a fresh load of the page, which costs the claim below
+  // nothing: what it rules out is the clear reloading the document, and the
+  // element it watches was put there before the clear rather than by it.
+  await visit(session, BASE + id, "Boolean(document.querySelector('.page__meta .stale'))");
+  await evaluate(session, "document.querySelector('.page__body > *').dataset.walk = 'kept'");
+  await evaluate(session, foot("Undo correction") + ".click()");
+  await check(
+    session,
+    "putting the source's answer back about who owns it leaves the report standing",
+    `!document.querySelector('.page__meta .owner') &&
+      Boolean(document.querySelector('.page__meta .stale'))`,
+  );
+
+  // And clearing the report, which is the half of the pair a reader is not
+  // offered. The walk runs as the administrator this server was started with, so
+  // both halves are on the screen here and the refusal is the API test's
+  // business.
   await evaluate(session, foot("Mark as dealt with") + ".click()");
   await check(
     session,

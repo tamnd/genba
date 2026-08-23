@@ -291,6 +291,11 @@ export const api = {
   // many other people had already said the same thing is on the server.
   report: (id, said) => send("POST", stalePath(id), said),
   resolve: (id) => send("DELETE", stalePath(id)),
+  // The owner's side of the same feature: the documents this person owns or
+  // wrote that somebody has complained about. A deployment whose driver cannot
+  // remember a report answers with an empty list rather than a refusal, so the
+  // panel this feeds simply does not draw.
+  reported: (limit, opts) => get("/reported", { limit }, opts),
   content: (id, opts) => bytes(`/documents/${encodeURIComponent(id)}/content`, opts),
   // The version goes in the URL rather than in a header, because it is what
   // makes the address of a thumbnail stand for one picture forever. The server
