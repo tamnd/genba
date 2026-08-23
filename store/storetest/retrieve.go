@@ -55,6 +55,7 @@ var retrieveCases = []retrieveCase{
 	{"retrieve stops when the callback says so", testRetrieveEarlyStop},
 	{"retrieve reflects a delete", testRetrieveDelete},
 	{"retrieve reflects a revocation", testRetrieveRevocation},
+	{"an owner filter follows a correction", testRetrieveCorrectedOwner},
 }
 
 // corpus is the fixture the retrieval cases share. The documents differ in
@@ -276,6 +277,37 @@ func testRetrieveDelete(t *testing.T, s store.Store, rt store.Retriever) {
 	got := agree(t, s, rt, reader(), store.Request{Terms: []string{"runbook"}})
 	if slices.Contains(got, "r1") {
 		t.Fatal("retrieved a deleted document, the index still holds its terms")
+	}
+}
+
+// testRetrieveCorrectedOwner is the case the whole design of a correction is
+// for. The owner shown on a result and the owner an owner: filter matches are
+// the same person, and a driver that stores the correction beside the document
+// without writing it into the row the index reads fails here and nowhere else.
+func testRetrieveCorrectedOwner(t *testing.T, s store.Store, rt store.Retriever) {
+	o, ok := s.(store.Ownership)
+	if !ok {
+		t.Skip("driver does not implement store.Ownership")
+	}
+	mustPut(t, s, corpus()...)
+
+	// r1 belongs to Mei according to the source, and somebody says it is Ada's.
+	c := store.Correction{
+		Doc:   "r1",
+		Owner: doc.Person{Subject: "u_ada", Name: "Ada Okafor", Email: "ada@acme.com"},
+		By:    doc.Person{Subject: "u_mei", Name: "Mei Tanaka", Email: "mei@acme.com"},
+		At:    at(0),
+	}
+	if err := o.SetOwner(t.Context(), reader(), c); err != nil {
+		t.Fatalf("SetOwner: %v", err)
+	}
+
+	got := agree(t, s, rt, reader(), store.Request{Owners: []string{"u_ada"}})
+	if !slices.Contains(got, "r1") {
+		t.Fatal("a filter on the corrected owner does not find the document, the index still has the source's answer")
+	}
+	if got := agree(t, s, rt, reader(), store.Request{Owners: []string{"mei@acme.com"}}); slices.Contains(got, "r1") {
+		t.Fatal("a filter on the owner the source reported still finds a document that was handed to somebody else")
 	}
 }
 

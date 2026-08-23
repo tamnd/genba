@@ -74,6 +74,14 @@ var cases = []testCase{
 	{"a claim can be withdrawn, twice", testUnverify},
 	{"a claim with no name or no expiry is refused", testVerifyRejectsIncomplete},
 	{"a page of ids is one question", testVerifyBatch},
+	{"a corrected owner is what the document says", testOwnerRoundTrip},
+	{"correcting again still remembers what the source said", testOwnerReplaces},
+	{"a correction is neither made nor read across a permission", testOwnerPermissions},
+	{"a rewrite by a crawl does not undo a correction", testOwnerSurvivesRewrite},
+	{"clearing a correction puts the source's answer back", testClearOwner},
+	{"a deleted document forgets who was said to own it", testOwnerDelete},
+	{"a correction to nobody, or by nobody, is refused", testOwnerRejectsIncomplete},
+	{"a page of ids is one question about owners", testOwnerBatch},
 }
 
 // contentStore skips a case for a driver that does not hold bytes.

@@ -172,6 +172,24 @@ func (s *Server) handleUnverify(w http.ResponseWriter, r *http.Request, p *acl.P
 // allowed to make a claim about it, writing the refusal itself when they are
 // not.
 func (s *Server) verifiable(w http.ResponseWriter, r *http.Request, p *acl.Principal) (doc.Document, bool) {
+	return s.mayCurate(w, r, p, store.MayVerify,
+		"only the owner or the author of a document can say it is current, and an administrator can do it for them")
+}
+
+// mayCurate is the shape every curation endpoint has: read the document named in
+// the path, refuse the caller who may not see it the way the document itself
+// would, and refuse the caller who may see it but not do this with a reason.
+//
+// The policy is passed in rather than named here so that the two endpoints
+// cannot answer the permission question in two places and eventually differ
+// about which of them is stricter.
+func (s *Server) mayCurate(
+	w http.ResponseWriter,
+	r *http.Request,
+	p *acl.Principal,
+	allow func(*acl.Principal, doc.Document) bool,
+	refusal string,
+) (doc.Document, bool) {
 	d, err := s.store.Get(r.Context(), p, r.PathValue("id"))
 	switch {
 	case errors.Is(err, genba.ErrNotFound):
@@ -181,9 +199,8 @@ func (s *Server) verifiable(w http.ResponseWriter, r *http.Request, p *acl.Princ
 		s.log.Error("document lookup failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal", "the document could not be read")
 		return doc.Document{}, false
-	case !store.MayVerify(p, d):
-		writeError(w, http.StatusForbidden, "forbidden",
-			"only the owner or the author of a document can say it is current, and an administrator can do it for them")
+	case !allow(p, d):
+		writeError(w, http.StatusForbidden, "forbidden", refusal)
 		return doc.Document{}, false
 	}
 	return d, true

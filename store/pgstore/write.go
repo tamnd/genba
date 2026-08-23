@@ -54,6 +54,13 @@ func write(ctx context.Context, tx pgx.Tx, docs []doc.Document) error {
 	if err != nil {
 		return err
 	}
+	// Standing ownership corrections, read once for the batch. A crawl reports
+	// the owner the source believes in every night, and this is what stops it
+	// from undoing a person who said the source is wrong.
+	own, err := keepOwners(ctx, tx, docs)
+	if err != nil {
+		return err
+	}
 
 	b := &pgx.Batch{}
 	retire(b, priors, ids)
@@ -68,6 +75,9 @@ func write(ctx context.Context, tx pgx.Tx, docs []doc.Document) error {
 	written := map[string][]string{}
 	tokens := map[string][2]int64{}
 	for _, d := range docs {
+		if who, ok := own[d.ID]; ok {
+			d.Owner = who
+		}
 		a := d.Analyze()
 		if err := replace(b, d, a); err != nil {
 			return err

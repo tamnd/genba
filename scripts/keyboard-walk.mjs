@@ -410,6 +410,68 @@ async function walk(session) {
     })()`,
   );
 
+  // Correcting the owner, from the same screen and on the same document. The
+  // file connector finds no owner for anything, which is the state this exists
+  // for: a corpus where the owner line is empty or wrong is a corpus where a
+  // stale document has nobody to go to.
+  await check(
+    session,
+    "a document with no owner still offers the person who may name one a way to",
+    `!document.querySelector('.page__meta .owner') && Boolean(${foot("Change owner")})`,
+  );
+
+  await evaluate(session, foot("Change owner") + ".click()");
+  await check(
+    session,
+    "changing the owner opens a field and puts the cursor in it",
+    `document.activeElement.classList.contains('own__field')`,
+  );
+
+  // Escape closes the field it is typed in rather than the screen around it,
+  // and gives the focus back to the button that opened it. On a phone that
+  // screen is a modal drawer, so an Escape that went past the field would take
+  // the document with it.
+  await press(session, "Escape", "Escape", 27);
+  await check(
+    session,
+    "escape closes the field and leaves the focus where the hand was",
+    `!document.querySelector('.own__field') &&
+      document.activeElement.classList.contains('button--reassign')`,
+  );
+
+  await evaluate(
+    session,
+    `(() => {
+      document.querySelector('.button--reassign').click();
+      const field = document.querySelector('.own__field');
+      field.value = 'dev@example.com';
+      field.form.requestSubmit();
+      return true;
+    })()`,
+  );
+  await check(
+    session,
+    "the corrected owner is on the page, from this screen, with the document untouched",
+    `(() => {
+      const line = document.querySelector('.page__meta .owner');
+      return Boolean(line) && line.textContent.includes('Owned by dev@example.com') &&
+        Boolean(document.querySelector('.page__body [data-walk="kept"]'));
+    })()`,
+  );
+  await check(
+    session,
+    "a corrected owner offers the way back to what the source says",
+    `Boolean(${foot("Undo correction")})`,
+  );
+
+  await evaluate(session, foot("Undo correction") + ".click()");
+  await check(
+    session,
+    "undoing the correction puts the source's answer back and leaves the document alone",
+    `!document.querySelector('.page__meta .owner') && !${foot("Undo correction")} &&
+      Boolean(document.querySelector('.page__body [data-walk="kept"]'))`,
+  );
+
   // The keyboard on its own. Everything above uses it in passing; this is the
   // part an audit finds and the part somebody using it all day notices.
   await visit(session, `${BASE}/?q=cache`, "document.querySelectorAll('.result').length > 0");

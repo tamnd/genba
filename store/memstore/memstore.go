@@ -47,6 +47,12 @@ type Store struct {
 	// permission to see what it is about.
 	verified map[string]store.Verification
 
+	// owners is who somebody said really owns what, keyed by document id. The
+	// correction is kept beside the document rather than only inside it because
+	// the document holds one owner and the interface has to be able to say which
+	// of the two answers it is and who chose it.
+	owners map[string]store.Correction
+
 	// feeds is how the connectors were configured, keyed by tenant and source.
 	// It is in memory like everything else here, so a restart forgets it, which
 	// is the documented behaviour of this driver rather than an oversight.
@@ -63,6 +69,7 @@ func New() *Store {
 		opens:    make(map[[2]string]*opened),
 		feeds:    make(map[[2]string]store.Feed),
 		verified: make(map[string]store.Verification),
+		owners:   make(map[string]store.Correction),
 	}
 }
 
@@ -75,6 +82,7 @@ var (
 	_ store.Access       = (*Store)(nil)
 	_ store.Feeds        = (*Store)(nil)
 	_ store.Verifier     = (*Store)(nil)
+	_ store.Ownership    = (*Store)(nil)
 )
 
 // Put inserts or replaces documents.
@@ -110,7 +118,7 @@ func (s *Store) put(docs []doc.Document) (map[string][]string, error) {
 			delete(s.content, d.ID)
 		}
 		d.Content = nil
-		s.docs[d.ID] = d
+		s.docs[d.ID] = s.correct(d)
 		written[d.Tenant] = append(written[d.Tenant], d.ID)
 	}
 	return written, nil
@@ -146,6 +154,7 @@ func (s *Store) remove(ids []string) (map[string][]string, error) {
 		delete(s.docs, id)
 		delete(s.content, id)
 		delete(s.verified, id)
+		delete(s.owners, id)
 	}
 	return removed, nil
 }

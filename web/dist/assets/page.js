@@ -26,6 +26,7 @@ import {
 } from "genba/format.js";
 import { body as renderBody, shapeOf, detailOf } from "genba/content.js";
 import { badge, note, control } from "genba/verify.js";
+import { owner, reassign } from "genba/own.js";
 import { reveal, toLine } from "genba/marks.js";
 import { notPermitted, failedBody, failureTitle, NOT_AVAILABLE } from "genba/states.js";
 import { documentPath } from "genba/state.js";
@@ -186,6 +187,8 @@ export class Page {
       d.modified_at && h("span", { class: "crumbs__sep" }, "·"),
       d.modified_at &&
         h("time", { title: exact(d.modified_at), datetime: d.modified_at }, `Updated ${when(d.modified_at)}`),
+      d.owner && h("span", { class: "crumbs__sep" }, "·"),
+      owner(d.owner),
       d.verified && h("span", { class: "crumbs__sep" }, "·"),
       badge(d.verified, { by: true }),
     );
@@ -196,6 +199,21 @@ export class Page {
         onSay: this.onSay,
         onChange: (next) => {
           d.verified = next;
+          this.stamp(d);
+        },
+      }),
+      // Handing the document over is drawn beside vouching for it because the
+      // two are the same decision from either end: the owner is who may vouch,
+      // so the person reading this line is either the one who should put their
+      // name to it or the one who knows whose name belongs there.
+      reassign(d, {
+        onSay: this.onSay,
+        // The write answers with the owner and with what this reader may do
+        // next, under the same names the document carries them, so merging it
+        // in is the whole update. Somebody who has just given away a document
+        // they did not write loses both controls here.
+        onChange: (next) => {
+          Object.assign(d, next);
           this.stamp(d);
         },
       }),

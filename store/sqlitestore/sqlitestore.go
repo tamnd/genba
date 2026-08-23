@@ -223,8 +223,19 @@ func (s *Store) Put(ctx context.Context, docs ...doc.Document) error {
 	}
 	defer w.close()
 
+	// Standing ownership corrections, read once for the batch. A crawl reports
+	// the owner the source believes in every night, and this is what stops it
+	// from undoing a person who said the source is wrong.
+	own, err := keepOwners(ctx, tx, docs)
+	if err != nil {
+		return fmt.Errorf("sqlitestore: put: %w", err)
+	}
+
 	written := make(map[string][]string)
 	for _, d := range docs {
+		if who, ok := own[d.ID]; ok {
+			d.Owner = who
+		}
 		if err := putOne(ctx, tx, w, d); err != nil {
 			return fmt.Errorf("sqlitestore: put %s: %w", d.ID, err)
 		}
