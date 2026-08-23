@@ -163,6 +163,17 @@ func (s *Store) Reports(ctx context.Context, p *acl.Principal, ids []string) (ma
 // Owns or wrote is the same membership test an owner: filter is, against the
 // folded key columns the index already keeps, so the question is answered while
 // SQLite walks its own rows rather than by reading documents and deciding in Go.
+//
+// The join order is pinned for the reason written out over Verifications and
+// Reports, and this is the query that proves the point rather than restating it.
+// Left to itself the planner drives from document, because it has no statistics
+// saying the report table holds six rows against the corpus's twenty thousand,
+// and then evaluates the ownership test and the visibility predicate over every
+// document in the tenant. Measured on the benchmark corpus that was 900
+// milliseconds for a panel on the front page. Driven from the reports, which is
+// what the CROSS JOIN forces, the same answer is a few hundred microseconds:
+// the work is proportional to what has been reported, which is the only thing
+// this endpoint is about.
 func (s *Store) Reported(ctx context.Context, p *acl.Principal, limit int) ([]store.Flagged, error) {
 	if err := s.ready(ctx); err != nil {
 		return nil, err
@@ -181,8 +192,8 @@ func (s *Store) Reported(ctx context.Context, p *acl.Principal, limit int) ([]st
 	rows, err := s.query(ctx, `
 		SELECT r.doc_id, r.reporter, r.reported_at, r.note, r.n, x.data
 		FROM (`+latest+`) r
-		JOIN document d ON d.id = r.doc_id
-		JOIN document_data x ON x.doc_id = d.id
+		CROSS JOIN document d ON d.id = r.doc_id
+		CROSS JOIN document_data x ON x.doc_id = d.id
 		WHERE r.rn = 1
 		  AND (
 			EXISTS (SELECT 1 FROM json_each(d.owner_keys) k WHERE k.value IN (SELECT value FROM json_each(?)))

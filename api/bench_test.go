@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/tamnd/genba/acl"
 	"github.com/tamnd/genba/api"
 	"github.com/tamnd/genba/benchcorpus"
+	"github.com/tamnd/genba/doc"
 	"github.com/tamnd/genba/index"
 )
 
@@ -174,6 +176,78 @@ func BenchmarkAPIRecent(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		get(b, h, "/api/v1/recent", hdr)
+	}
+}
+
+// BenchmarkAPIReported is the other panel on the home screen: the documents
+// this person owns or wrote that somebody has said are out of date. It is
+// measured for the same reason the recent lists are, which is that the front
+// page reads it on every visit, and a panel that is usually empty still costs a
+// query every time.
+//
+// The corpus draws its owners from its own generated people and the reader
+// every other benchmark runs as owns none of it, so the reports are made by
+// that reader and read back by one carrying the owners' addresses. That is also
+// the shape the endpoint answers in a deployment: the person who complained and
+// the person who has to fix it are not the same person.
+func BenchmarkAPIReported(b *testing.B) {
+	// A screenful, which is what the panel draws and so what it asks for.
+	const rows = 6
+
+	st, spec := benchcorpus.Fixture(b)
+	s := api.New(st, index.New(st, index.WithClock(func() time.Time { return benchcorpus.Epoch })),
+		api.HeaderAuth{Tenant: benchcorpus.Tenant}, api.WithLogger(slog.New(slog.DiscardHandler)))
+	h := s.Handler()
+	reader := headers(spec.Principal())
+
+	owners := make([]string, 0, rows)
+	if err := st.Scan(b.Context(), spec.Principal(), func(d doc.Document) bool {
+		if d.Owner.Email == "" {
+			return true
+		}
+		r := httptest.NewRequestWithContext(b.Context(), http.MethodPost,
+			"/api/v1/documents/"+url.PathEscape(d.ID)+"/stale",
+			strings.NewReader(`{"note":"this names a cluster that was turned off"}`))
+		for k, v := range reader {
+			r.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		if rec.Code != http.StatusOK {
+			b.Fatalf("POST /api/v1/documents/%s/stale = %d, %s", d.ID, rec.Code, rec.Body)
+		}
+		owners = append(owners, "gdrive:"+d.Owner.Email)
+		return len(owners) < rows
+	}); err != nil {
+		b.Fatalf("reading the corpus: %v", err)
+	}
+
+	// The same reader, carrying the addresses those six documents are owned at.
+	// The groups do not move, so what is being measured is the ownership match
+	// on top of the permission predicate rather than a different corpus.
+	owner := headers(spec.Principal())
+	owner[api.HeaderIdentities] = strings.Join(owners, ",")
+
+	target := "/api/v1/reported?limit=" + strconv.Itoa(rows)
+	var inbox struct {
+		Documents []struct {
+			ID string `json:"id"`
+		} `json:"documents"`
+	}
+	if err := json.Unmarshal(get(b, h, target, owner).Body.Bytes(), &inbox); err != nil {
+		b.Fatalf("decoding the inbox: %v", err)
+	}
+	// An empty list is a read of nothing, and a benchmark of it would report a
+	// number that says the panel is free right up until somebody's readers use
+	// the feature.
+	if len(inbox.Documents) != rows {
+		b.Fatalf("the inbox holds %d documents and %d were reported", len(inbox.Documents), rows)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		get(b, h, target, owner)
 	}
 }
 

@@ -231,6 +231,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/v1/documents/{id}/stale", s.authenticated(s.handleResolve))
 	mux.Handle("GET /api/v1/documents/{id}/content", s.authenticated(s.handleContent))
 	mux.Handle("GET /api/v1/documents/{id}/thumbnail", s.authenticated(s.handleThumbnail))
+	mux.Handle("GET /api/v1/reported", s.authenticated(s.handleReported))
 	mux.Handle("GET /api/v1/recent", s.authenticated(s.handleRecent))
 	mux.Handle("POST /api/v1/recent", s.authenticated(s.handleRecordOpen))
 	mux.Handle("GET /api/v1/stats", s.authenticated(s.handleStats))

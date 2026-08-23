@@ -1,17 +1,19 @@
 // The home screen.
 //
-// It answers three questions and nothing else. What is in here, from the session
+// It answers four questions and nothing else. What is in here, from the session
 // and the index statistics. What was I doing, from the recent endpoint and from
 // the searches this browser remembers. What is going on, which is what changed
-// in the corpus. Everything on it is a real read against the same API the search
-// page uses, so nothing here can show a document the person could not have found
-// by searching for it.
+// in the corpus. And what is waiting for me, which is the documents this person
+// owns or wrote that a reader has said are out of date. Everything on it is a
+// real read against the same API the search page uses, so nothing here can show
+// a document the person could not have found by searching for it.
 
 import { h, replace } from "genba/dom.js";
 import { api } from "genba/api.js";
 import { cache } from "genba/cache.js";
 import { queries } from "genba/queries.js";
 import { LIMIT as RECENT_LIMIT } from "genba/recent.js";
+import { brief, sentence } from "genba/stale.js";
 import { label, sourceColor, when, number, initials } from "genba/format.js";
 import { firstRun } from "genba/states.js";
 
@@ -39,9 +41,11 @@ export class Home {
   async render(session) {
     const recentKey = cache.key("recent", { limit: RECENT_LIMIT });
     const statsKey = cache.key("stats", {});
+    const reportedKey = cache.key("reported", { limit: PANEL_ROWS });
     let recent = cache.read(recentKey).data || null;
     let stats = cache.read(statsKey).data || null;
-    this.paint(session, recent, stats);
+    let reported = cache.read(reportedKey).data || null;
+    this.paint(session, recent, stats, reported);
 
     let changed = false;
     // The paint callbacks fire once with what was already on screen, which is
@@ -61,12 +65,22 @@ export class Home {
           changed = true;
         })
         .catch(() => {}),
+      // Only as many as the panel draws, so the request the screen makes and
+      // the list it paints are the same list. The other two reads feed screens
+      // with a see all link and ask for more than they show.
+      cache
+        .swr(reportedKey, (opts) => api.reported(PANEL_ROWS, opts), (d) => {
+          if (d === reported) return;
+          reported = d;
+          changed = true;
+        })
+        .catch(() => {}),
     ]);
-    if (changed) this.paint(session, recent, stats);
+    if (changed) this.paint(session, recent, stats, reported);
   }
 
   /** paint draws the screen, with skeletons standing in for what is not here. */
-  paint(session, recent, stats) {
+  paint(session, recent, stats, reported) {
     // An index with nothing in it gets the screen about that and not this one.
     // A first install currently sees a dashboard reading zero in three places,
     // which is the only first impression this program will ever get and is
@@ -88,6 +102,7 @@ export class Home {
         ? h(
             "div",
             { class: "home__grid" },
+            this.reportedPanel(reported),
             this.openedPanel(recent),
             this.changedPanel(recent),
             this.searchesPanel(),
@@ -107,6 +122,48 @@ export class Home {
         h("div", { class: "skeleton", style: { width: "40%", height: "24px", marginBottom: "24px" } }),
         ...Array.from({ length: 4 }, () =>
           h("div", { class: "skeleton", style: { width: "100%", height: "16px", marginBottom: "24px" } }),
+        ),
+      ),
+    );
+  }
+
+  /**
+   * reportedPanel is what this person's readers have said about this person's
+   * own documents.
+   *
+   * It comes first on the screen and it is the one panel that is not drawn at
+   * all when it is empty, which is the opposite of the two beneath it. Those
+   * are histories, and a history that says it is empty is worth reading. This
+   * one is a job list, and a job list that sits on everybody's home screen
+   * reading nothing every day of the year teaches the whole company to look
+   * past the one place a report ever appears.
+   *
+   * There is no see all link because there is nothing more to see. A person
+   * with more than six reported documents has a bad week rather than a second
+   * page, and the count on each row says which one to start with.
+   */
+  reportedPanel(reported) {
+    const rows = (reported && reported.documents) || [];
+    if (!rows.length) return null;
+    return h(
+      "section",
+      { class: "panel" },
+      h("div", { class: "panel__head" }, h("h2", { class: "panel__title" }, "Reported as out of date")),
+      rows.slice(0, PANEL_ROWS).map((hit) =>
+        h(
+          "button",
+          {
+            class: "panel__row",
+            type: "button",
+            // The whole report on hover, because the sentence somebody wrote is
+            // what says whether this is ten minutes of work or an afternoon,
+            // and it does not fit on the row.
+            title: sentence(hit.stale),
+            onClick: () => this.onOpen(hit.id),
+          },
+          h("span", { class: "source__dot", style: { background: sourceColor(hit.source) } }),
+          h("span", { class: "panel__row-title" }, hit.title || hit.id),
+          h("span", { class: "panel__row-meta panel__row-meta--flag" }, brief(hit.stale)),
         ),
       ),
     );
