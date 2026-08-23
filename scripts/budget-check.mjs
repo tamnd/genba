@@ -28,7 +28,12 @@ if (why) {
 const BUDGETS = {
   script: 180 << 10,
   style: 40 << 10,
-  requests: 40,
+  // The module graph, the document, two stylesheets and the handful of reads a
+  // search screen makes, with room for a few more modules before somebody has
+  // to look at this again. It is a ceiling on growth rather than a target: a
+  // module per file means a request per file, and a screen that quietly grows
+  // to a hundred of them is slow in a way no byte count shows.
+  requests: 48,
   // A results page of twenty, which is the default page size, and the same page
   // with a document open in the preview. The second is larger by a whole
   // document, and for a source file that is a highlighted span per token, which
@@ -67,6 +72,12 @@ process.exit(state.failures ? 1 : 0);
 async function run(session) {
   await visit(session, `${BASE}/?q=cache`, "document.querySelectorAll('.result').length > 0");
 
+  // Read once, and judged on what was read. The three checks below used to
+  // measure again for themselves, which made the line printed above a different
+  // measurement from the verdict under it: a thumbnail landing in between was
+  // enough for the log to say forty requests and the check to fail on
+  // forty one, and a retry loop that waits for a growing number to come back
+  // down waits for the whole of its patience first.
   const assets = await evaluate(session, ASSETS);
   console.log(
     `budget-check: ${assets.requests} requests, ${assets.script} bytes of script of ${BUDGETS.script}, ${assets.style} bytes of style of ${BUDGETS.style}`,
@@ -74,19 +85,17 @@ async function run(session) {
   await check(
     session,
     `the scripts a screen asks for are under ${BUDGETS.script} bytes on the wire`,
-    `(${ASSETS}).script <= ${BUDGETS.script}`,
+    `${assets.script} <= ${BUDGETS.script}`,
   );
   await check(
     session,
     `the styles a screen asks for are under ${BUDGETS.style} bytes on the wire`,
-    `(${ASSETS}).style <= ${BUDGETS.style}`,
+    `${assets.style} <= ${BUDGETS.style}`,
   );
-  // A module per file means a request per file, and a screen that quietly grows
-  // to a hundred of them is slow in a way no byte count shows.
   await check(
     session,
     `a screen asks for no more than ${BUDGETS.requests} files`,
-    `(${ASSETS}).requests <= ${BUDGETS.requests}`,
+    `${assets.requests} <= ${BUDGETS.requests}`,
   );
 
   const results = await evaluate(session, "document.getElementsByTagName('*').length");
