@@ -682,6 +682,77 @@ time {
   line-height: var(--leading-small);
 }
 
+/* Owner ------------------------------------------------------------------ */
+
+/*
+ * Who is accountable for a document, on the same line as where it came from.
+ *
+ * It is set in the same size and colour as the rest of that line rather than
+ * being dressed up, because the owner is a fact about the document and not a
+ * status. What it does get is the icon, so the eye can find the name on a line
+ * that is otherwise words.
+ */
+.owner {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.owner svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+/*
+ * The control, which is a button until somebody presses it and a field after.
+ *
+ * The two states are one box so the row does not move when it changes: the
+ * field takes the width the button had plus what it needs, and the buttons
+ * beside it stay where the hand left them.
+ */
+.own {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.own__form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.own__field {
+  width: 260px;
+  max-width: 100%;
+  height: 40px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--text-body);
+}
+
+.own__field:hover {
+  border-color: var(--border-strong);
+}
+
+/* On a phone the field takes the line it is on, because 260px beside two
+   buttons is a field with room for four characters. */
+@media (max-width: 560px) {
+  .own,
+  .own__form {
+    flex-wrap: wrap;
+  }
+
+  .own__field {
+    flex: 1 1 100%;
+  }
+}
+
 /* Answer ----------------------------------------------------------------- */
 
 /*

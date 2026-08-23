@@ -142,6 +142,11 @@ function verifyPath(id) {
   return `/documents/${encodeURIComponent(id)}/verify`;
 }
 
+/** ownerPath is one document's owner, which is corrected and put back. */
+function ownerPath(id) {
+  return `/documents/${encodeURIComponent(id)}/owner`;
+}
+
 /** connector is one source's path under the administration endpoints. */
 function connector(source, action = "") {
   return `/admin/connectors/${encodeURIComponent(source)}${action}`;
@@ -268,6 +273,12 @@ export const api = {
   // neither, which is what makes the common case one click.
   verify: (id, claim) => send("POST", verifyPath(id), claim),
   unverify: (id) => send("DELETE", verifyPath(id)),
+  // Correcting who owns a document, and undoing that. Both answer with the
+  // owner that stands afterwards, including the undo, because what a connector
+  // says is on the server and asking again would be a second round trip to find
+  // out what the first one just did.
+  setOwner: (id, who) => send("PUT", ownerPath(id), who),
+  clearOwner: (id) => send("DELETE", ownerPath(id)),
   content: (id, opts) => bytes(`/documents/${encodeURIComponent(id)}/content`, opts),
   // The version goes in the URL rather than in a header, because it is what
   // makes the address of a thumbnail stand for one picture forever. The server

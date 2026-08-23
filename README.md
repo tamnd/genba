@@ -116,7 +116,7 @@ It is also the one screen that writes: a connector is added, switched off, asked
 A connector that was named on the command line is on that screen because it is running, and says where it is configured rather than offering a button that cannot work.
 
 The whole interface is hand written HTML, CSS and ES modules, committed exactly as they are served, so a clone builds a working interface with the Go toolchain and nothing else.
-There is no bundler and there is not going to be one, since the graph is thirty two modules of our own with no third party dependency anywhere in it.
+There is no bundler and there is not going to be one, since the graph is thirty four modules of our own with no third party dependency anywhere in it.
 What a bundler would have bought is done by the server instead.
 Every file is hashed as it is read and served under a second name that says what is in it, cacheable for a year, and the document is rewritten on the way out so that its import map and its preload list point at those names.
 Bodies are compressed with brotli and gzip once at startup rather than once per request.
@@ -133,6 +133,8 @@ Everything the interface does is an HTTP call, and there is nothing it can reach
 | `GET /api/v1/documents/{id}` | one document, or the same error as one that does not exist |
 | `POST /api/v1/documents/{id}/verify` | records that the caller vouches for a document, with an optional note and expiry |
 | `DELETE /api/v1/documents/{id}/verify` | withdraws the claim |
+| `PUT /api/v1/documents/{id}/owner` | corrects who owns a document, when the connector named the account that imported it |
+| `DELETE /api/v1/documents/{id}/owner` | puts back the owner the source reports |
 | `GET /api/v1/me` | the caller, and the sources and kinds that caller can actually see |
 | `GET /api/v1/stats` | how much is indexed and how much is quarantined |
 | `GET /api/v1/admin/operations` | what the connectors are doing, and what is being held back and why |
@@ -150,6 +152,10 @@ The snippet comes back as marked passages rather than as offsets, so a client hi
 A verification is a named claim with a date on it rather than a flag, so search results and the document itself carry who vouched for it, when, and when that stops counting.
 It lasts six months unless the verifier says otherwise, and only the owner or the author of a document can make one, because a badge anybody can apply is a badge that means somebody read the title.
 A driver that cannot record one leaves the badge off rather than failing the search behind it.
+
+Ownership is derived from the source, and what a source derives is very often the account that ran the import, so it can be corrected.
+The correction carries the name of the person who made it and the date, it survives every crawl after it, and clearing it puts back whatever the connector reports today rather than what it reported the day somebody disagreed.
+It is the same rule as a verification and deliberately so, because being the owner is what makes somebody able to vouch for a document.
 
 Every `admin` endpoint needs the `admin` role, which comes from `X-Genba-Roles` or from `GENBA_ADMINS`, and the default is that nobody has it.
 The role grants nothing over documents and it must not start to.

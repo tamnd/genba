@@ -225,6 +225,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/documents/{id}", s.authenticated(s.handleDocument))
 	mux.Handle("POST /api/v1/documents/{id}/verify", s.authenticated(s.handleVerify))
 	mux.Handle("DELETE /api/v1/documents/{id}/verify", s.authenticated(s.handleUnverify))
+	mux.Handle("PUT /api/v1/documents/{id}/owner", s.authenticated(s.handleSetOwner))
+	mux.Handle("DELETE /api/v1/documents/{id}/owner", s.authenticated(s.handleClearOwner))
 	mux.Handle("GET /api/v1/documents/{id}/content", s.authenticated(s.handleContent))
 	mux.Handle("GET /api/v1/documents/{id}/thumbnail", s.authenticated(s.handleThumbnail))
 	mux.Handle("GET /api/v1/recent", s.authenticated(s.handleRecent))
@@ -803,6 +805,14 @@ func (s *Server) handleDocument(w http.ResponseWriter, r *http.Request, p *acl.P
 			body.Verified = verifiedOf(got[d.ID], s.now())
 		}
 	}
+	// The owner is on the panel whether or not the driver can remember a
+	// correction, because the document carries one either way. What the
+	// capability adds is where the answer came from and the control to change
+	// it.
+	body.Owner = ownerOf(d, s.correction(r, p, d.ID))
+	if _, ok := s.ownership(); ok {
+		body.CanReassign = store.MayReassign(p, d)
+	}
 	writeConditional(w, r, http.StatusOK, body, nil)
 }
 
@@ -830,6 +840,15 @@ type documentBody struct {
 	// than offer a button that fails.
 	Verified  *verification `json:"verified,omitempty"`
 	CanVerify bool          `json:"can_verify,omitempty"`
+
+	// Owner is who is accountable for the document, with the provenance on it
+	// when somebody has corrected what the source said, and CanReassign says
+	// whether this reader is one of the people who could. It is on the preview
+	// rather than on every result because the owner is not what somebody is
+	// choosing between ten results on, and it is the first thing they want when
+	// the document turns out to be wrong.
+	Owner       *owner `json:"owner,omitempty"`
+	CanReassign bool   `json:"can_reassign,omitempty"`
 }
 
 // documentResponse is where the wire shape is decided. Permissions are not part

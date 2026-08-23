@@ -16,6 +16,7 @@ import { icon, label, sourceColor, when, exact, followable, copyable } from "gen
 import { body as renderBody, shapeOf, detailOf } from "genba/content.js";
 import { reveal } from "genba/marks.js";
 import { badge, note, control } from "genba/verify.js";
+import { owner, reassign } from "genba/own.js";
 import { NOT_AVAILABLE, NO_ACCESS } from "genba/states.js";
 import { documentPath } from "genba/state.js";
 
@@ -213,6 +214,8 @@ export class Drawer {
       detail && h("span", {}, detail),
       d.container && h("span", { class: "crumbs__sep" }, "·"),
       d.container && h("span", {}, d.container),
+      d.owner && h("span", { class: "crumbs__sep" }, "·"),
+      owner(d.owner),
       d.verified && h("span", { class: "crumbs__sep" }, "·"),
       badge(d.verified, { by: true }),
     );
@@ -254,13 +257,23 @@ export class Drawer {
         ),
       d.modified_at &&
         h("span", { class: "meta", title: exact(d.modified_at) }, `Updated ${when(d.modified_at)}`),
-      // The two writes, offered only to somebody the server has already said
-      // may make them. Redrawing this and the header is all a claim changes,
-      // which is why they are the two things in here.
+      // The writes, offered only to somebody the server has already said may
+      // make them. Redrawing this and the header is all any of them changes,
+      // which is why they are in here.
       control(d, {
         onSay: this.onSay,
         onChange: (next) => {
           d.verified = next;
+          this.stamp(d);
+        },
+      }),
+      // Changing who owns it, on the same terms. The write answers with the
+      // owner and with what this reader may do next, under the same names the
+      // document carries them, so merging it in is the whole update.
+      reassign(d, {
+        onSay: this.onSay,
+        onChange: (next) => {
+          Object.assign(d, next);
           this.stamp(d);
         },
       }),

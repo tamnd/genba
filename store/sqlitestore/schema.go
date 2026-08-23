@@ -290,6 +290,32 @@ var migrations = []step{
 		note        TEXT    NOT NULL
 	) WITHOUT ROWID`),
 	ddl(`CREATE INDEX document_verify_expiry ON document_verify (expires_at)`),
+
+	// document_own is a person saying the owner the source reported is wrong.
+	//
+	// The corrected owner is written into the document as well as here, and that
+	// is deliberate: the row the index reads has to name the same person the
+	// reader sees, or an owner: filter and a facet count would answer with the
+	// connector's guess while the interface showed somebody else. This table is
+	// what makes the correction outlive the next crawl and what lets it be
+	// undone, and no query path reads it.
+	//
+	// The three people are stored as JSON rather than as nine columns because
+	// they go back into the document when the correction is cleared, and a
+	// person flattened into a subject, a name and an address comes back missing
+	// the source identity that an owner: filter matches on. The document itself
+	// is stored as JSON in this database for the same reason.
+	//
+	// was is the source's own answer, refreshed on every write, so clearing a
+	// correction puts back what the connector says today rather than what it
+	// said the day somebody first disagreed with it.
+	ddl(`CREATE TABLE document_own (
+		doc_id       TEXT PRIMARY KEY REFERENCES document(id) ON DELETE CASCADE,
+		owner        TEXT    NOT NULL,
+		was          TEXT    NOT NULL,
+		corrected_by TEXT    NOT NULL,
+		corrected_at INTEGER NOT NULL
+	) WITHOUT ROWID`),
 }
 
 // backfill recomputes the ranking statistics for every document already stored.
