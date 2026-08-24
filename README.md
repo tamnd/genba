@@ -210,6 +210,9 @@ The environment variable is the flag in upper case with a `GENBA_` prefix, and a
 | `GENBA_TENANT` | empty | tenant served by a single tenant deployment |
 | `GENBA_ADMINS` | empty | subjects that hold the administrator role, comma separated |
 | `GENBA_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
+| `GENBA_DIRECTORY` | empty | file of subjects and groups to resolve group membership from, empty to believe the request |
+| `GENBA_DIRECTORY_TTL` | `1m` | how long a resolved group set is held |
+| `GENBA_DIRECTORY_REFRESH` | `30s` | how often the file is read again, zero for never |
 | `GENBA_READ_TIMEOUT` | `30s` | request read timeout |
 | `GENBA_WRITE_TIMEOUT` | `60s` | request write timeout |
 | `GENBA_SHUTDOWN_GRACE` | `15s` | how long a shutdown waits for in flight requests |
@@ -290,6 +293,51 @@ Anybody who knows their quota can set a rate high enough that it never binds, wh
 A refusal that says to come back later is waited out rather than failed, with the wait doubling up to half a minute and the source's own `Retry-After` honoured over anything computed, and a source that has been refusing everything stops the sync rather than being retried all afternoon.
 The `bucket synced` line carries `retries`, `throttled`, `throttled_for` and `quota_pauses`, because a crawl that is being throttled looks exactly like a crawl that is slow and the difference decides whether you go looking at the network or ask for more quota.
 
+## Who somebody is, and what they are a member of
+
+Those are two questions and the server answers them from two places.
+
+Who is a credential, and by default it is a header from a proxy that has already checked one.
+What they are a member of is a fact about the company that changes without anybody signing in again, so a header carrying it is a copy of an answer somebody else cached, and the day somebody is taken out of a group is the day the copy is wrong.
+
+Without `-directory` the server believes the groups on the request.
+That is right on a laptop and right behind a proxy that is doing the resolution itself, and it is not right for a company.
+
+With `-directory` the groups on the request are thrown away and the file is asked instead.
+It holds subjects and groups, groups can be members of groups, and the transitive closure is what a request ends up carrying.
+
+```json
+{
+  "name": "acme",
+  "groups": [
+    {"id": "everyone"},
+    {"id": "engineering", "member_of": ["everyone"]},
+    {"id": "storage", "member_of": ["engineering"]}
+  ],
+  "subjects": [
+    {"id": "mei", "email": "mei@acme.com", "identities": ["slack:U04AB"], "member_of": ["storage"]},
+    {"id": "lee", "member_of": ["everyone"], "disabled": true}
+  ]
+}
+```
+
+`mei` resolves to `acme:engineering`, `acme:everyone` and `acme:storage`, and `lee` does not resolve at all, because an account closed on Friday should stop working on Friday.
+The `identities` list is how a rule that names a Slack member id applies to somebody who signed in as themselves.
+
+The file is strict on purpose.
+An unknown field is a typo, a group named in a membership and not defined is a typo, and both refuse at startup rather than turning into somebody mysteriously missing a group at nine o'clock.
+That is the whole advantage a file has over an identity provider: its mistakes can be caught before anybody signs in.
+
+`-directory-refresh` rereads it, because editing a group and then bouncing the server is how somebody ends up not editing the group.
+An edit that does not parse leaves the last good one in place and logs, since an operator halfway through a change should not take everybody's groups away.
+Renaming the directory is refused rather than applied, because every group key carries the name and changing it renames every group in every rule at once.
+
+`-directory-ttl` is the longest a membership change can take to have any effect, and it is one number rather than a property that emerges from a stack of caches.
+[docs/identity.md](docs/identity.md) says why there is exactly one layer.
+
+This is the deployment with forty people and six groups in it.
+Adapters for Okta, Entra ID and Google Workspace are the next piece, and they answer the same two lookups the file does.
+
 ## Metrics
 
 Set `GENBA_METRICS_ADDR` and the process opens a second listener that serves the Prometheus text format at any path on it.
@@ -311,6 +359,7 @@ The deployment that gets this right binds it somewhere the outside cannot reach,
 | `genba_search_matches` | how many matched, before paging |
 | `genba_cache_hits_total` | per layer, alongside misses, evictions and the entry count |
 | `genba_store_rows_total` | rows the driver returned, alongside statements and decodes |
+| `genba_directory_staleness_seconds` | the longest a membership change can take to have any effect, on a deployment with a directory |
 
 The buckets are 1, 2, 5, 10, 25, 50, 100, 250 and 500 milliseconds, which are tighter at the bottom than a default histogram because the question here is what fraction of requests came back in under ten milliseconds.
 

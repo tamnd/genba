@@ -138,7 +138,26 @@ func TestConformance(t *testing.T) {
 ```
 
 `directory.Static` is the reference implementation the suite runs against, and it is also the directory a small deployment actually uses.
-A company with forty people and six groups has the whole thing in its configuration file, and making them stand up an identity provider to try a search engine is how a search engine does not get tried.
+A company with forty people and six groups has the whole thing in a file, and making them stand up an identity provider to try a search engine is how a search engine does not get tried.
+
+## The file
+
+`genbad -directory` points at it, `directory.OpenStatic` reads it, and the README has the shape.
+
+It is strict, and that is the point of it being a file.
+An unknown field is a typo rather than a future version of the format, a group named in a membership and not defined is a typo too, and both refuse at startup rather than turning into somebody mysteriously missing a group at nine o'clock.
+An identity provider cannot offer that, because its mistakes are in somebody else's data.
+
+`-directory-refresh` reads it again on a ticker and swaps the whole thing in at once, so nothing ever reads a directory that is half of the old file and half of the new one.
+A reread that finds the same bytes costs a hash rather than a parse, which is what makes a short interval affordable.
+A reread that finds a change flushes the cache, everybody rather than one person, because the file changed and nothing in it says who was affected.
+
+Two things fail rather than apply.
+An edit that does not parse leaves the last good directory in place and logs, because an operator halfway through a change should not take everybody's groups away, and refusing every request until the file is valid again turns a typo into an outage.
+A change to the directory's own name is refused outright: every group key carries the name, so renaming it renames every group in every rule at once, and that is a different directory rather than an edit to this one.
+
+A file that does not parse at startup is a different matter and the process exits.
+Nothing is loaded, so there is nothing to keep, and coming up resolving nobody would be a server that answers every request with a refusal.
 
 ## Remembering the answer
 
