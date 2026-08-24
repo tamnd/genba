@@ -227,7 +227,7 @@ var allowed = map[string][]string{
 	"benchcorpus/gen": {"benchcorpus", "store/sqlitestore"},
 
 	"cmd/genba":  {""},
-	"cmd/genbad": {"", "api", "config", "connector", "connector/aclmap", "connector/fssource", "connector/limit", "connector/objectsource", "index", "ingest", "store", "store/memstore", "store/pgstore", "store/sqlitestore", "web"},
+	"cmd/genbad": {"", "api", "config", "connector", "connector/aclmap", "connector/fssource", "connector/limit", "connector/objectsource", "directory", "index", "ingest", "store", "store/memstore", "store/pgstore", "store/sqlitestore", "web"},
 }
 
 func TestDependencyDirection(t *testing.T) {

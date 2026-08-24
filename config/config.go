@@ -78,6 +78,22 @@ type Config struct {
 	// which is the property that makes a cache safe to have in the first place.
 	Cache bool
 
+	// Directory is the path to a directory of subjects and groups, and it is
+	// empty by default. A deployment with one resolves the groups on every
+	// request out of it and throws away whatever the request claimed. A
+	// deployment without one believes the groups it is given, which is right for
+	// a laptop and behind a proxy that is doing the resolution itself.
+	Directory string
+
+	// DirectoryTTL is how long a resolved group set is held for, and therefore
+	// the longest a membership change can take to have any effect.
+	DirectoryTTL time.Duration
+
+	// DirectoryRefresh is how often the file is read again, and zero means
+	// never. It exists because editing a group and then bouncing the server is
+	// how somebody ends up not editing the group.
+	DirectoryRefresh time.Duration
+
 	// CacheResultExpiry is the backstop on how long a ranked ordering may be
 	// reused. A write to the tenant drops its orderings whatever this says, so
 	// this is what bounds a driver that cannot report its writes.
@@ -104,6 +120,10 @@ func Default() Config {
 		// again rather than imported because configuration sits below everything
 		// and importing the query layer to read one constant would invert that.
 		CacheResultExpiry: 30 * time.Second,
+		// The same minute as directory.DefaultTTL, written again rather than
+		// imported for the same reason as the line above.
+		DirectoryTTL:     time.Minute,
+		DirectoryRefresh: 30 * time.Second,
 	}
 }
 
@@ -123,6 +143,7 @@ func Load(getenv func(string) string) (Config, error) {
 	str(getenv, "GENBA_DSN", &c.DSN)
 	str(getenv, "GENBA_TENANT", &c.Tenant)
 	str(getenv, "GENBA_LOG_LEVEL", &c.LogLevel)
+	str(getenv, "GENBA_DIRECTORY", &c.Directory)
 	if v := getenv("GENBA_ADMINS"); v != "" {
 		c.Admins = list(v)
 	}
@@ -135,6 +156,8 @@ func Load(getenv func(string) string) (Config, error) {
 		dur(getenv, "GENBA_WRITE_TIMEOUT", &c.WriteTimeout),
 		dur(getenv, "GENBA_SHUTDOWN_GRACE", &c.ShutdownGrace),
 		dur(getenv, "GENBA_CACHE_RESULT_EXPIRY", &c.CacheResultExpiry),
+		dur(getenv, "GENBA_DIRECTORY_TTL", &c.DirectoryTTL),
+		dur(getenv, "GENBA_DIRECTORY_REFRESH", &c.DirectoryRefresh),
 		boolean(getenv, "GENBA_CACHE", &c.Cache),
 	)
 	if err != nil {
@@ -181,6 +204,8 @@ func (c Config) Validate() error {
 		{"write timeout", c.WriteTimeout},
 		{"shutdown grace", c.ShutdownGrace},
 		{"cache result expiry", c.CacheResultExpiry},
+		{"directory ttl", c.DirectoryTTL},
+		{"directory refresh", c.DirectoryRefresh},
 	} {
 		if d.value < 0 {
 			errs = append(errs, fmt.Errorf("config: %s is negative", d.name))

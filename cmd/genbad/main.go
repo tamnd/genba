@@ -70,6 +70,13 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	fs.StringVar(&cfg.DSN, "dsn", cfg.DSN, "storage data source")
 	fs.StringVar(&cfg.Tenant, "tenant", cfg.Tenant, "tenant served by a single tenant deployment")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "debug, info, warn or error")
+	// A deployment with a directory resolves the groups on every request out of
+	// it and throws away whatever the request claimed. One without believes the
+	// groups it is given, which is right on a laptop and behind a proxy that is
+	// doing the resolution itself, and is not right for a company.
+	fs.StringVar(&cfg.Directory, "directory", cfg.Directory, "file of subjects and groups to resolve group membership from, empty to believe the request")
+	fs.DurationVar(&cfg.DirectoryTTL, "directory-ttl", cfg.DirectoryTTL, "how long a resolved group set is held, which is the longest a membership change takes to have any effect")
+	fs.DurationVar(&cfg.DirectoryRefresh, "directory-refresh", cfg.DirectoryRefresh, "how often the directory file is read again, zero for never")
 	// A string rather than a repeated flag, because it is a list of a handful of
 	// names that is written once in a unit file. Empty means nobody is an
 	// administrator, which is the right default for a deployment that has not
@@ -188,7 +195,12 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	// listens for the store's writes and the first sync is a write like any
 	// other. Building it afterwards left it reporting that nothing had been
 	// indexed since it came up while sitting on a corpus it had just loaded.
-	srv := api.New(st, searcher, api.HeaderAuth{Tenant: cfg.Tenant, Admins: cfg.Admins}, opts...)
+	auth, err := authenticator(ctx, cfg, log)
+	if err != nil {
+		return err
+	}
+
+	srv := api.New(st, searcher, auth, opts...)
 
 	// Each source starts syncing here and keeps going behind the listener. What
 	// is built here and not in the background is everything that can be wrong
@@ -258,6 +270,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		"store", cfg.Store,
 		"interface", web.Enabled(),
 		"cache", cfg.Cache,
+		"directory", cfg.Directory != "",
 	)
 
 	errc := make(chan error, len(servers))
