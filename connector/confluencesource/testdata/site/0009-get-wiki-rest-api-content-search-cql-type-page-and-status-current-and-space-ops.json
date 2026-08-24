@@ -1,0 +1,123 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://acme.atlassian.net/wiki/rest/api/content/search?cql=type+%3D+page+and+status+%3D+current+and+space+%3D+%22OPS%22+order+by+id+asc\u0026cursor=raNDom2Token\u0026expand=version%2Cancestors%2Crestrictions.read.restrictions.user%2Crestrictions.read.restrictions.group\u0026limit=2",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "cqlQuery": "type = page and status = current and space = \"OPS\" order by id asc",
+        "limit": 2,
+        "results": [
+          {
+            "_links": {
+              "webui": "/spaces/OPS/pages/100003/Incidents"
+            },
+            "ancestors": null,
+            "id": "100003",
+            "restrictions": {
+              "read": {
+                "operation": "read",
+                "restrictions": {
+                  "group": {
+                    "results": [],
+                    "size": 0
+                  },
+                  "user": {
+                    "results": [],
+                    "size": 0
+                  }
+                }
+              }
+            },
+            "status": "current",
+            "title": "Incidents",
+            "type": "page",
+            "version": {
+              "by": {
+                "accountId": "acc-mei",
+                "displayName": "Mei Tanaka",
+                "email": "mei@acme.com",
+                "publicName": "Mei Tanaka",
+                "type": "known"
+              },
+              "number": 1,
+              "when": "2026-04-06T09:07:00.000+00:00"
+            }
+          },
+          {
+            "_links": {
+              "webui": "/spaces/OPS/pages/100004/Pump%20failure"
+            },
+            "ancestors": [
+              {
+                "id": "100003",
+                "title": "Incidents",
+                "type": "page"
+              }
+            ],
+            "id": "100004",
+            "restrictions": {
+              "read": {
+                "operation": "read",
+                "restrictions": {
+                  "group": {
+                    "results": [
+                      {
+                        "id": "g-safety-officers",
+                        "name": "safety-officers",
+                        "type": "group"
+                      }
+                    ],
+                    "size": 1
+                  },
+                  "user": {
+                    "results": [
+                      {
+                        "accountId": "acc-lee",
+                        "displayName": "Lee Berger",
+                        "email": "lee@acme.com",
+                        "publicName": "Lee Berger",
+                        "type": "known"
+                      }
+                    ],
+                    "size": 1
+                  }
+                }
+              }
+            },
+            "status": "current",
+            "title": "Pump failure",
+            "type": "page",
+            "version": {
+              "by": {
+                "accountId": "acc-mei",
+                "displayName": "Mei Tanaka",
+                "email": "mei@acme.com",
+                "publicName": "Mei Tanaka",
+                "type": "known"
+              },
+              "number": 1,
+              "when": "2026-04-06T09:08:00.000+00:00"
+            }
+          }
+        ],
+        "searchDurati": 1,
+        "size": 2,
+        "start": 2,
+        "totalSize": 4
+      }
+    }
+  }
+}

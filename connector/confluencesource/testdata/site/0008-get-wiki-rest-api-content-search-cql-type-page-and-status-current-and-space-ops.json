@@ -1,0 +1,106 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://acme.atlassian.net/wiki/rest/api/content/search?cql=type+%3D+page+and+status+%3D+current+and+space+%3D+%22OPS%22+order+by+id+asc\u0026expand=version%2Cancestors%2Crestrictions.read.restrictions.user%2Crestrictions.read.restrictions.group\u0026limit=50",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "_links": {
+          "next": "/wiki/rest/api/content/search?cql=type+%3D+page+and+status+%3D+current+and+space+%3D+%22OPS%22+order+by+id+asc\u0026cursor=raNDom2Token\u0026expand=version%2Cancestors%2Crestrictions.read.restrictions.user%2Crestrictions.read.restrictions.group\u0026limit=2"
+        },
+        "cqlQuery": "type = page and status = current and space = \"OPS\" order by id asc",
+        "limit": 2,
+        "results": [
+          {
+            "_links": {
+              "webui": "/spaces/OPS/pages/100001/Deploy"
+            },
+            "ancestors": null,
+            "id": "100001",
+            "restrictions": {
+              "read": {
+                "operation": "read",
+                "restrictions": {
+                  "group": {
+                    "results": [],
+                    "size": 0
+                  },
+                  "user": {
+                    "results": [],
+                    "size": 0
+                  }
+                }
+              }
+            },
+            "status": "current",
+            "title": "Deploy",
+            "type": "page",
+            "version": {
+              "by": {
+                "accountId": "acc-mei",
+                "displayName": "Mei Tanaka",
+                "email": "mei@acme.com",
+                "publicName": "Mei Tanaka",
+                "type": "known"
+              },
+              "number": 2,
+              "when": "2026-04-06T09:02:00.000+00:00"
+            }
+          },
+          {
+            "_links": {
+              "webui": "/spaces/OPS/pages/100002/Restarting%20line%20two"
+            },
+            "ancestors": null,
+            "id": "100002",
+            "restrictions": {
+              "read": {
+                "operation": "read",
+                "restrictions": {
+                  "group": {
+                    "results": [],
+                    "size": 0
+                  },
+                  "user": {
+                    "results": [],
+                    "size": 0
+                  }
+                }
+              }
+            },
+            "status": "current",
+            "title": "Restarting line two",
+            "type": "page",
+            "version": {
+              "by": {
+                "accountId": "acc-mei",
+                "displayName": "Mei Tanaka",
+                "email": "mei@acme.com",
+                "publicName": "Mei Tanaka",
+                "type": "known"
+              },
+              "number": 2,
+              "when": "2026-04-06T09:06:00.000+00:00"
+            }
+          }
+        ],
+        "searchDurati": 1,
+        "size": 2,
+        "start": 0,
+        "totalSize": 4
+      }
+    }
+  }
+}

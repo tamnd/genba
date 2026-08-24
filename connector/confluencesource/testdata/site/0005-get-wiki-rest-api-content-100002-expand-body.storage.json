@@ -1,0 +1,36 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://acme.atlassian.net/wiki/rest/api/content/100002?expand=body.storage",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "_links": {
+          "webui": "/spaces/OPS/pages/100002/Restarting%20line%20two"
+        },
+        "body": {
+          "storage": {
+            "representation": "storage",
+            "value": "\u003ch2\u003eRestarting line two\u003c/h2\u003e\u003cp\u003eStop the feed, wait for the \u003cstrong\u003egreen\u003c/strong\u003e light, then run:\u003c/p\u003e\u003cac:structured-macro ac:name=\"code\"\u003e\u003cac:parameter ac:name=\"language\"\u003ebash\u003c/ac:parameter\u003e\u003cac:plain-text-body\u003e\u003c![CDATA[line2ctl stop --drain\nline2ctl start]]\u003e\u003c/ac:plain-text-body\u003e\u003c/ac:structured-macro\u003e\u003cac:structured-macro ac:name=\"warning\"\u003e\u003cac:parameter ac:name=\"title\"\u003eDo not skip the drain\u003c/ac:parameter\u003e\u003cac:rich-text-body\u003e\u003cp\u003eThe gearbox will bind if the feed is still moving.\u003c/p\u003e\u003c/ac:rich-text-body\u003e\u003c/ac:structured-macro\u003e"
+          }
+        },
+        "id": "100002",
+        "status": "current",
+        "title": "Restarting line two",
+        "type": "page"
+      }
+    }
+  }
+}

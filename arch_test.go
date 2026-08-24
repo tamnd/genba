@@ -176,6 +176,13 @@ var allowed = map[string][]string{
 	// document rather than on the container, which is what an issue security
 	// level is, and that is still acl and threadsource rather than anything new.
 	"connector/jirasource": {"acl", "connector", "connector/adf", "connector/limit", "connector/thread", "connector/threadsource", "doc"},
+	// confluencesource is the third adapter and the list is the same list again,
+	// which is the point of there being a list. A wiki has two things the other
+	// two do not, a body written in a markup of its own and a restriction on a
+	// single page that inherits down a tree, and neither of them is a dependency:
+	// the markup is rendered inside the package and the restriction is acl and
+	// threadsource like everything else.
+	"connector/confluencesource": {"acl", "connector", "connector/adf", "connector/limit", "connector/thread", "connector/threadsource", "doc"},
 	// adf imports nothing of ours. It turns one JSON tree into Markdown and it
 	// has never heard of a document, a connector or a permission, which is what
 	// lets two product adapters share it without either of them being able to

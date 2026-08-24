@@ -388,6 +388,7 @@ func main() {
 | `connector/threadsource` | the crawl, cursor and permission refresh chat, ticket trackers and wikis share, [docs/ingestion.md](docs/ingestion.md) |
 | `connector/slacksource` | Slack, a thread at a time, with per method rate limits and a recorded workspace to test against |
 | `connector/jirasource` | Jira, an issue and its comments as one document, with security levels and a recorded site to test against |
+| `connector/confluencesource` | Confluence, a page and its comments as one document, with inherited page restrictions and both body formats |
 | `connector/limit` | the rate limit, backoff and circuit breaker every connector shares, as a round tripper |
 | `connector/recorded` | HTTP exchanges captured from a real service and replayed from a directory, so tests need no account |
 | `extract` | text and structure out of PDF, Word, PowerPoint, Excel, HTML and Markdown, [docs/extraction.md](docs/extraction.md) |
@@ -527,6 +528,14 @@ The sweep is still there and it is only for deletion, because nothing in JQL rep
 Permissions are the hard half instead: browse comes from the project's permission scheme, which grants it to some mixture of groups, named accounts and project roles, and a role is resolved to the people in it rather than left as the name of a thing.
 An issue security level replaces the project's answer rather than adding to it, which is the concrete case a conversation is allowed to override its container for, and a level this token cannot resolve quarantines the ticket instead of falling back to the project, because a security level is the one thing somebody set on purpose to keep other people out.
 A description is not text but a document tree, so it is rendered as Markdown rather than flattened, which keeps the stack trace in a code block and the table of readings a table, since a search result that shows somebody a flattened version of the thing they were looking for has answered the query and failed the person.
+
+`connector/confluencesource` is the third product on it and the one that shows the interface was worth writing, because a wiki turned out to be a container of conversations too and almost none of the crawl had to be written again.
+A space holds pages, a page holds the comments that correct it, and the page with its comments underneath it is one document, since a page saying the deploy runs at nine with a comment saying it moved to eleven is a page that answers with the wrong time on its own.
+CQL is a real change feed like JQL, but Confluence dates a comment and leaves the page alone, so the query asks for comments as well and resolves each one back to the page it is on.
+Permissions are decided twice: a space grants read to accounts, to groups or to anybody signed in, and a page restriction replaces that answer for the page it is on and for everything underneath it, so the ancestors have to be walked rather than assumed.
+A page carrying a restriction at two levels is quarantined instead of resolved, because Confluence means the intersection there and publishing the wider of the two would publish exactly the pages somebody restricted on purpose.
+The ancestor answers are cached for one crawl and thrown away at the start of the next, which is the difference between a saving and a revocation that never lands.
+Bodies come in two formats because the editor changed, so a page written in the old one is asked for a second time and its XHTML is rendered to Markdown, which matters because the old pages on any site worth indexing are the runbooks.
 
 What a connector is gets decided by `connector/connectortest` rather than by the interface.
 The interface says what compiles, and the suite says what works: that a full sync finds everything, that resuming from a cursor loses nothing that came after it, that a second sync of a source nothing changed in reads nothing, that a deleted document stops being part of the source one way or the other, and that every document says who may read it.

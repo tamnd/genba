@@ -1,0 +1,218 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://acme.atlassian.net/wiki/rest/api/content/search?cql=%28type+%3D+page+or+type+%3D+comment%29+and+status+%3D+current+and+space+%3D+%22OPS%22+order+by+lastModified+asc\u0026expand=body.atlas_doc_format%2Cversion%2Chistory%2Cspace%2Ccontainer%2Cancestors%2Cmetadata.labels%2Crestrictions.read.restrictions.user%2Crestrictions.read.restrictions.group%2Cchildren.comment.body.atlas_doc_format%2Cchildren.comment.version%2Cchildren.comment.history\u0026limit=50",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "_links": {
+          "next": "/wiki/rest/api/content/search?cql=%28type+%3D+page+or+type+%3D+comment%29+and+status+%3D+current+and+space+%3D+%22OPS%22+order+by+lastModified+asc\u0026cursor=raNDom2Token\u0026expand=body.atlas_doc_format%2Cversion%2Chistory%2Cspace%2Ccontainer%2Cancestors%2Cmetadata.labels%2Crestrictions.read.restrictions.user%2Crestrictions.read.restrictions.group%2Cchildren.comment.body.atlas_doc_format%2Cchildren.comment.version%2Cchildren.comment.history\u0026limit=2"
+        },
+        "cqlQuery": "(type = page or type = comment) and status = current and space = \"OPS\" order by lastModified asc",
+        "limit": 2,
+        "results": [
+          {
+            "_links": {
+              "webui": "/spaces/OPS/pages/100001/Deploy"
+            },
+            "ancestors": null,
+            "body": {
+              "atlas_doc_format": {
+                "representation": "atlas_doc_format",
+                "value": "{\"content\":[{\"content\":[{\"text\":\"The deploy runs at nine every weekday morning.\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"doc\",\"version\":1}"
+              }
+            },
+            "children": {
+              "comment": {
+                "limit": 2,
+                "results": [
+                  {
+                    "body": {
+                      "atlas_doc_format": {
+                        "representation": "atlas_doc_format",
+                        "value": "{\"content\":[{\"content\":[{\"text\":\"It moved to eleven in March when the batch job was added.\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"doc\",\"version\":1}"
+                      }
+                    },
+                    "history": {
+                      "createdBy": {
+                        "accountId": "acc-sam",
+                        "displayName": "Sam Okafor",
+                        "email": "sam@acme.com",
+                        "publicName": "Sam Okafor",
+                        "type": "known"
+                      },
+                      "createdDate": "2026-04-06T09:03:00.000+00:00"
+                    },
+                    "id": "900010",
+                    "status": "current",
+                    "title": "Re: a page",
+                    "type": "comment",
+                    "version": {
+                      "by": {
+                        "accountId": "acc-sam",
+                        "displayName": "Sam Okafor",
+                        "email": "sam@acme.com",
+                        "publicName": "Sam Okafor",
+                        "type": "known"
+                      },
+                      "number": 1,
+                      "when": "2026-04-06T09:03:00.000+00:00"
+                    }
+                  },
+                  {
+                    "body": {
+                      "atlas_doc_format": {
+                        "representation": "atlas_doc_format",
+                        "value": "{\"content\":[{\"content\":[{\"text\":\"Confirmed, eleven. The heading above is out of date.\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"doc\",\"version\":1}"
+                      }
+                    },
+                    "history": {
+                      "createdBy": {
+                        "accountId": "acc-lee",
+                        "displayName": "Lee Berger",
+                        "email": "lee@acme.com",
+                        "publicName": "Lee Berger",
+                        "type": "known"
+                      },
+                      "createdDate": "2026-04-06T09:04:00.000+00:00"
+                    },
+                    "id": "900011",
+                    "status": "current",
+                    "title": "Re: a page",
+                    "type": "comment",
+                    "version": {
+                      "by": {
+                        "accountId": "acc-lee",
+                        "displayName": "Lee Berger",
+                        "email": "lee@acme.com",
+                        "publicName": "Lee Berger",
+                        "type": "known"
+                      },
+                      "number": 1,
+                      "when": "2026-04-06T09:04:00.000+00:00"
+                    }
+                  }
+                ],
+                "size": 2,
+                "start": 0
+              }
+            },
+            "history": {
+              "createdBy": {
+                "accountId": "acc-mei",
+                "displayName": "Mei Tanaka",
+                "email": "mei@acme.com",
+                "publicName": "Mei Tanaka",
+                "type": "known"
+              },
+              "createdDate": "2026-04-06T09:01:00.000+00:00"
+            },
+            "id": "100001",
+            "metadata": {
+              "labels": {
+                "results": [
+                  {
+                    "name": "runbook",
+                    "prefix": "global"
+                  },
+                  {
+                    "name": "deploy",
+                    "prefix": "global"
+                  }
+                ]
+              }
+            },
+            "restrictions": {
+              "read": {
+                "operation": "read",
+                "restrictions": {
+                  "group": {
+                    "results": [],
+                    "size": 0
+                  },
+                  "user": {
+                    "results": [],
+                    "size": 0
+                  }
+                }
+              }
+            },
+            "space": {
+              "id": 100,
+              "key": "OPS",
+              "name": "Line two operations"
+            },
+            "status": "current",
+            "title": "Deploy",
+            "type": "page",
+            "version": {
+              "by": {
+                "accountId": "acc-mei",
+                "displayName": "Mei Tanaka",
+                "email": "mei@acme.com",
+                "publicName": "Mei Tanaka",
+                "type": "known"
+              },
+              "number": 2,
+              "when": "2026-04-06T09:02:00.000+00:00"
+            }
+          },
+          {
+            "body": {
+              "atlas_doc_format": {
+                "representation": "atlas_doc_format",
+                "value": "{\"content\":[{\"content\":[{\"text\":\"It moved to eleven in March when the batch job was added.\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"doc\",\"version\":1}"
+              }
+            },
+            "container": {
+              "id": "100001",
+              "title": "Deploy",
+              "type": "page"
+            },
+            "history": {
+              "createdBy": {
+                "accountId": "acc-sam",
+                "displayName": "Sam Okafor",
+                "email": "sam@acme.com",
+                "publicName": "Sam Okafor",
+                "type": "known"
+              },
+              "createdDate": "2026-04-06T09:03:00.000+00:00"
+            },
+            "id": "900010",
+            "status": "current",
+            "title": "Re: a page",
+            "type": "comment",
+            "version": {
+              "by": {
+                "accountId": "acc-sam",
+                "displayName": "Sam Okafor",
+                "email": "sam@acme.com",
+                "publicName": "Sam Okafor",
+                "type": "known"
+              },
+              "number": 1,
+              "when": "2026-04-06T09:03:00.000+00:00"
+            }
+          }
+        ],
+        "searchDurati": 1,
+        "size": 2,
+        "start": 0,
+        "totalSize": 6
+      }
+    }
+  }
+}
