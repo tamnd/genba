@@ -247,7 +247,11 @@ func (s *Service) oldest(since time.Time) time.Time {
 // This is the only thing that ever removes a deleted thread from the index, and
 // the version is what repairs a thread whose late reply the change feed could
 // not see.
-func (s *Service) List(ctx context.Context, c threadsource.Container, fn func(connector.Item) bool) error {
+//
+// No rule is reported alongside the ids, and that is not an omission. Slack has
+// nowhere to put one: a message is readable by whoever is in the channel it is
+// in, so there is nothing here that could override its container.
+func (s *Service) List(ctx context.Context, c threadsource.Container, fn func(threadsource.Item) bool) error {
 	parents, err := s.history(ctx, c.ID, time.Time{})
 	switch {
 	case err == nil:
@@ -260,10 +264,10 @@ func (s *Service) List(ctx context.Context, c threadsource.Container, fn func(co
 		return err
 	}
 	for _, m := range parents {
-		if !fn(connector.Item{
+		if !fn(threadsource.Item{Item: connector.Item{
 			ID:      s.threadID(c.ID, m.TS),
 			Version: version(m),
-		}) {
+		}}) {
 			return nil
 		}
 	}

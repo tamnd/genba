@@ -1,7 +1,7 @@
 {
   "request": {
     "method": "GET",
-    "url": "https://acme.atlassian.net/rest/api/3/search?fields=updated\u0026jql=project+%3D+%22SAFETY%22+ORDER+BY+key+ASC\u0026maxResults=100\u0026startAt=0",
+    "url": "https://acme.atlassian.net/rest/api/3/search?fields=updated%2Csecurity\u0026jql=project+%3D+%22SAFETY%22+ORDER+BY+key+ASC\u0026maxResults=100\u0026startAt=0",
     "headers": {
       "Accept": [
         "application/json"
@@ -20,6 +20,10 @@
         "issues": [
           {
             "fields": {
+              "security": {
+                "id": "10500",
+                "name": "Incident reports"
+              },
               "updated": "2026-03-02T09:10:00.000+0000"
             },
             "id": "iSAFETY-1",

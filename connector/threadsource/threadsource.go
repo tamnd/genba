@@ -61,6 +61,12 @@
 // when the rule last changed turns that into a permission change carrying no
 // body, which is how a revocation reaches the index without the channel being
 // read again.
+//
+// The conversations that override their container are the exception, and they
+// are the reason a listing reports a rule as well as an id. A refresh that gave
+// them the container's new rule would be handing the rule of a project to the
+// ticket somebody put a security level on, on a schedule, without anybody having
+// done anything.
 package threadsource
 
 import (
@@ -129,6 +135,32 @@ type Thread struct {
 	Updated time.Time
 }
 
+// Item is one conversation as a listing reports it.
+//
+// It is a [connector.Item] with room for the conversation's own access rule
+// beside it, and that rule is there for one reason, which is the permission
+// refresh below.
+type Item struct {
+	connector.Item
+
+	// Access is the conversation's own rule, and the zero value means it
+	// inherits its container's.
+	//
+	// It is on the listing rather than being read one conversation at a time
+	// because reading them is the thing the refresh exists to avoid. A refresh
+	// that had to read a container to find out which conversations in it
+	// override the container is a recrawl, and a recrawl is what the whole
+	// mechanism is instead of.
+	//
+	// An adapter for a product where a conversation cannot carry its own rule
+	// leaves this alone and nothing changes. An adapter for one where it can has
+	// to fill it in, because the alternative is a scheduled refresh handing a
+	// restricted conversation the rule of the container it was restricted out
+	// of, which publishes exactly the documents somebody went out of their way
+	// to keep.
+	Access acl.Permissions
+}
+
 // Service is what a product's API has to be able to answer.
 //
 // An implementation talks to one product and is where every difference between
@@ -162,7 +194,7 @@ type Service interface {
 	// It has to be complete or it has to fail. A listing that quietly returns
 	// part of a channel reads, to the sweep above it, as a channel the rest of
 	// which was deleted.
-	List(ctx context.Context, c Container, fn func(connector.Item) bool) error
+	List(ctx context.Context, c Container, fn func(Item) bool) error
 
 	// Read returns one conversation by the source's own id, which is the
 	// document id with the source name taken off the front.
@@ -421,15 +453,24 @@ func (s *Source) wanted(th Thread, at time.Time, start syncPoint, since time.Tim
 // makes a channel private and nothing inside it is touched, so a sync that only
 // asked what changed would find nothing at all and the index would keep
 // answering with the old rule.
+//
+// A conversation that carries its own rule is the one thing the container's new
+// rule must not be written over. It was restricted out of the container, so
+// giving it the container's answer is not a refresh, it is a disclosure, and it
+// is one that happens on a schedule rather than because anybody did anything.
 func (s *Source) refresh(ctx context.Context, c Container, start syncPoint, emit func(context.Context, connector.Change) error) error {
-	perms := s.access(Thread{}, c)
+	inherited := s.access(Thread{}, c)
 	cursor := resume(start, c.ID, start.At)
 
 	var failed error
 	s.lists.Add(1)
-	err := s.service.List(ctx, c, func(item connector.Item) bool {
+	err := s.service.List(ctx, c, func(item Item) bool {
 		if item.ID == "" {
 			return true
+		}
+		perms := inherited
+		if resolved(item.Access) {
+			perms = item.Access
 		}
 		s.metadata.Add(1)
 		failed = emit(ctx, connector.Change{
@@ -462,12 +503,16 @@ func (s *Source) Enumerate(ctx context.Context, fn func(connector.Item) bool) er
 		}
 		stopped := false
 		s.lists.Add(1)
-		err := s.service.List(ctx, c, func(item connector.Item) bool {
+		err := s.service.List(ctx, c, func(item Item) bool {
 			if item.ID == "" {
 				return true
 			}
-			item.ID = s.id(item.ID)
-			if !fn(item) {
+			// The rule an adapter reported alongside the id is for the refresh
+			// and is nothing to a sweep, which compares versions and has no
+			// opinion about who may read what.
+			out := item.Item
+			out.ID = s.id(out.ID)
+			if !fn(out) {
 				stopped = true
 				return false
 			}

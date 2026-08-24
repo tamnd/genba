@@ -584,6 +584,62 @@ func TestARemovedRoleMemberIsAppliedOnTheSchedule(t *testing.T) {
 	}
 }
 
+// An issue behind a security level is readable by that level and by nobody
+// else, whatever the project it sits in says. The scheduled reapplication above
+// is the one place that is easy to get wrong, because it does not read the
+// issues: it has the project's rule and a listing, and a listing that did not
+// report the security level would have it hand every restricted ticket on the
+// site the rule of the project it was restricted out of, once a day, without
+// anybody having done anything.
+func TestTheScheduleDoesNotWriteAProjectsRuleOverASecurityLevel(t *testing.T) {
+	s := newSite()
+	s.addLevel("10500", "Incident reports", "acc-lee")
+	open := s.file(home, "Gearbox noise", "The gearbox on line two is making a noise.")
+	hidden := s.file(home, "Line two incident", "What happened on line two.")
+	s.restrict(hidden, "10500")
+	src := newSource(t, s)
+
+	changes, cursor := run(t, src, connector.Cursor{})
+	was := find(changes, "jira:"+hidden)
+	if was == nil {
+		t.Fatalf("a first sync emitted %v", ids(changes))
+	}
+	if got := was.Document.Permissions.AllowUsers; len(got) != 1 || got[0].Value != "acc-lee" {
+		t.Fatalf("the first sync gave the restricted issue %v rather than the members of its security level", got)
+	}
+
+	// The project's rule is rewritten and the schedule comes round, which is the
+	// refresh with nothing in hand but the project.
+	s.project(home).grants = []grant{{"group", "engineering"}}
+	s.advance(time.Hour)
+
+	before := src.Counters()
+	changes, _ = run(t, src, cursor)
+
+	now := find(changes, "jira:"+hidden)
+	if now == nil {
+		t.Fatalf("the schedule emitted %v, want the restricted issue among them", ids(changes))
+	}
+	if got := now.Document.Permissions.AllowUsers; len(got) != 1 || got[0].Value != "acc-lee" {
+		t.Errorf("the schedule gave the restricted issue users %v and groups %v, which is the project's rule written over its security level",
+			got, now.Document.Permissions.AllowGroups)
+	}
+
+	// The unrestricted issue takes the project's new rule, because that is what
+	// the schedule is for.
+	if plain := find(changes, "jira:"+open); plain == nil {
+		t.Error("the issue with no security level was left out of the reapplication")
+	} else if got := plain.Document.Permissions.AllowGroups; len(got) != 1 || got[0].Value != "engineering" {
+		t.Errorf("the issue with no security level came back with groups %v rather than the project's new rule", got)
+	}
+
+	// And none of it read an issue, which is the whole reason the level is asked
+	// for on the listing rather than one issue at a time.
+	if spent := src.Counters().Since(before); spent.Fetches != 0 {
+		t.Errorf("the reapplication read %d issues, and the point of it is that it reads none", spent.Fetches)
+	}
+}
+
 // Nothing in JQL reports an issue that was deleted, so the sweep is the only
 // thing that ever takes one out of the index.
 func TestADeletedIssueIsOnlyFoundByTheSweep(t *testing.T) {
@@ -833,10 +889,11 @@ func TestOnlyTheFieldsThatEndUpInTheDocumentAreAskedFor(t *testing.T) {
 	if err := src.Enumerate(t.Context(), func(connector.Item) bool { return true }); err != nil {
 		t.Fatal(err)
 	}
-	// The sweep needs one field, and asking for the description of every issue
-	// in a site to work out which of them changed would be the expensive way to
-	// learn nothing.
-	if got := s.lastFields("/rest/api/3/search"); got != "updated" {
-		t.Errorf("the listing asked for the fields %q, want only the one the sweep compares", got)
+	// The sweep needs the updated time and the permission refresh needs the
+	// security level, and asking for the description of every issue in a site to
+	// work out which of them changed would be the expensive way to learn
+	// nothing.
+	if got := s.lastFields("/rest/api/3/search"); got != "updated,security" {
+		t.Errorf("the listing asked for the fields %q, want the version the sweep compares and the rule the refresh needs", got)
 	}
 }
