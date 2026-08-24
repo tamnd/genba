@@ -349,6 +349,72 @@ var migrations = []step{
 	// The primary key above answers the other question, what has been said about
 	// these twenty ids, from a range scan per id.
 	ddl(`CREATE INDEX document_report_recent ON document_report (reported_at DESC)`),
+
+	// answer is a question somebody answered, and it is the first table here
+	// that is not about a document.
+	//
+	// So it is the first one keyed by tenant. Everything else reaches its tenant
+	// through the document it hangs off, and an answer hangs off nothing: it is
+	// the product's own text rather than a fact about a file, which is also why
+	// it has no cascade to be deleted by.
+	//
+	// question is the canonical phrasing as it was typed, and variants are the
+	// other ways people ask it, both kept verbatim because they are read by a
+	// person maintaining the answer. What a lookup matches against lives in
+	// answer_phrasing below.
+	//
+	// sources are document ids as JSON and not a join table, because nothing
+	// queries into them: they are resolved one page at a time through whoever is
+	// reading, which is what stops an answer from listing the documents a reader
+	// may not open. author is JSON in one column for the reason document_own
+	// stores its people that way.
+	//
+	// written_at and until are unix nanoseconds, like every other time in this
+	// schema. until is stored rather than derived from the cadence, so an answer
+	// written under an older policy keeps the deadline it was given.
+	ddl(`CREATE TABLE answer (
+		id         TEXT    NOT NULL,
+		tenant     TEXT    NOT NULL,
+		question   TEXT    NOT NULL,
+		variants   TEXT    NOT NULL,
+		body       TEXT    NOT NULL,
+		sources    TEXT    NOT NULL,
+		author     TEXT    NOT NULL,
+		written_at INTEGER NOT NULL,
+		until      INTEGER NOT NULL,
+		PRIMARY KEY (tenant, id)
+	) WITHOUT ROWID`),
+
+	// The list of answers is read most recently written first by whoever
+	// maintains them, and it is the only query over this table that is not a
+	// point lookup.
+	ddl(`CREATE INDEX answer_recent ON answer (tenant, written_at DESC)`),
+
+	// answer_phrasing is every way an answer can be asked for, folded by
+	// store.AnswerKey, one row per phrasing.
+	//
+	// A table rather than a JSON column on the answer, because this is the one
+	// thing about an answer that is on the search path: every search asks
+	// whether anybody has written this question down, and that question has to
+	// be a single primary key probe or the card costs more than the results it
+	// sits above.
+	//
+	// The key is unique within the tenant, so a phrasing claimed by a second
+	// answer moves to it. Two answers claiming the same question is a curation
+	// conflict rather than a storage problem, and the resolution that needs no
+	// screen is that the most recent writer wins.
+	ddl(`CREATE TABLE answer_phrasing (
+		tenant TEXT NOT NULL,
+		key    TEXT NOT NULL,
+		id     TEXT NOT NULL,
+		PRIMARY KEY (tenant, key),
+		FOREIGN KEY (tenant, id) REFERENCES answer (tenant, id) ON DELETE CASCADE
+	) WITHOUT ROWID`),
+
+	// Retracting an answer and editing one both have to find the rows pointing
+	// at it, and without this that is a scan of every phrasing in the tenant. It
+	// is also what the foreign key above needs to check without one.
+	ddl(`CREATE INDEX answer_phrasing_answer ON answer_phrasing (tenant, id)`),
 }
 
 // backfill recomputes the ranking statistics for every document already stored.

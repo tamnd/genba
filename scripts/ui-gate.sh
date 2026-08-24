@@ -2,11 +2,12 @@
 # The browser half of the performance gate.
 #
 # It starts the real binary over a real corpus, which is this repository, and
-# audits eleven screens: the home page, the home page over an index holding
+# audits thirteen screens: the home page, the home page over an index holding
 # nothing, a results page, a results page with an answer quoted above it, a
-# results page with the document drawer open, a search that matched nothing, a
-# filter that matched nothing, a grid of pictures, a document on a page of its
-# own, the recent screen and the settings screen. They are
+# results page with a written answer above it, a results page with the document
+# drawer open, a search that matched nothing, a filter that matched nothing, a
+# grid of pictures, a document on a page of its own, the recent screen, the
+# settings screen and administration. They are
 # states rather than layouts, because a layout is looked at every day and a
 # state is looked at once. Auditing a static fixture would audit the fixture,
 # and every accessibility bug this is meant to catch lives in the markup the
@@ -175,7 +176,9 @@ if [ -z "$ID" ]; then
 fi
 
 # A document id carries a source prefix and a path, so it goes through the URL
-# encoder rather than into the string.
+# encoder rather than into the string. The id itself is kept as it is, because a
+# citation inside a JSON body is the id and not an address.
+RAW_ID=$ID
 ID=$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "$ID")
 
 # One verified document, so that the badge is on a screen the audit looks at.
@@ -192,6 +195,20 @@ curl -fsS -o /dev/null -X POST "$BASE/api/v1/documents/$ID/verify" \
 	-H "Content-Type: application/json" \
 	-d '{"note":"checked against the current deployment"}' || {
 	echo "ui-gate: the document could not be verified, so the badge would be on no screen this audits" >&2
+	exit 1
+}
+
+# One written answer, for the same reason. Nothing in a file corpus answers a
+# question in prose, and the card that holds one is a heading, a paragraph of
+# rendered markdown, a signature and a row of citations, none of which any other
+# screen builds. The question is matched whole, so the query that reaches it is
+# the words below and no others.
+curl -fsS -o /dev/null -X PUT "$BASE/api/v1/admin/answers/gate" \
+	-H "X-Genba-Tenant: $TENANT" \
+	-H "X-Genba-Subject: dev" \
+	-H "Content-Type: application/json" \
+	-d '{"question":"what is the cache","variants":["how does caching work here"],"body":"The response cache holds whole answers, keyed by the query and the person asking.\n\n- A repeated search is answered without touching the index.\n- An entry is dropped when the documents behind it change.\n\nCall `cache.clear()` to empty it during a migration.","sources":["'"$RAW_ID"'"]}' || {
+	echo "ui-gate: the answer could not be written, so the card would be on no screen this audits" >&2
 	exit 1
 }
 
@@ -252,30 +269,37 @@ if [ -n "${CHROMEDRIVER:-}" ]; then
 	DRIVER="--chromedriver-path $CHROMEDRIVER"
 fi
 
-# Twelve screens, and they are states rather than layouts. Three of them, the
+# Thirteen screens, and they are states rather than layouts. Three of them, the
 # empty index, the query that matched nothing and the filter that matched
 # nothing, produce markup no other screen produces, and that markup is where an
 # accessibility bug survives longest: nobody looks at an empty page twice.
 #
-# The eleventh is a search that has an answer above it. The region is a heading,
-# a list and a link per quote, none of which the results page below it has, and
-# it appears on some searches and not others, so it is a screen the other ten
-# never reach.
+# One of them is a search that has quotes above it. The region is a heading, a
+# list and a link per quote, none of which the results page below it has, and it
+# appears on some searches and not others, so it is a screen no other one reaches.
 #
-# The settings screen is the tenth. It is the only screen in the product built
-# out of form controls, and a radio group that has lost its label is the kind of
-# thing that reads perfectly to whoever wrote it and not at all to anybody else.
+# Another is a search that has a written answer above it instead. It is the same
+# region and it is different markup: a rendered paragraph of somebody's markdown,
+# a signature with an address in it and a row of citations. It is also the only
+# place in the product where prose nobody indexed is drawn above a list of
+# results, which makes it the one screen where a heading level or a link with no
+# name would go unnoticed.
 #
-# The twelfth is administration. It is the only screen in the product built out
-# of tables, and a table whose headers are not headers is unreadable to anybody
-# using a screen reader and looks perfect to everybody else. It is also the only
-# screen that repaints itself on a timer, so it is the one place a focus ring
-# can be quietly taken away from somebody five seconds after they put it there.
+# The settings screen is the only one built out of form controls, and a radio
+# group that has lost its label is the kind of thing that reads perfectly to
+# whoever wrote it and not at all to anybody else.
+#
+# Administration is the only screen built out of tables, and a table whose
+# headers are not headers is unreadable to anybody using a screen reader and
+# looks perfect to everybody else. It is also the only screen that repaints
+# itself on a timer, so it is the one place a focus ring can be quietly taken
+# away from somebody five seconds after they put it there.
 for url in \
 	"$BASE/" \
 	"$EMPTY/" \
 	"$BASE/?q=cache" \
 	"$BASE/?q=drawer" \
+	"$BASE/?q=what+is+the+cache" \
 	"$BASE/?q=cache&open=$ID" \
 	"$BASE/?q=zzqxzzqx" \
 	"$BASE/?q=cache&kind=image" \

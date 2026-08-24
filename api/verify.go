@@ -227,6 +227,19 @@ func who(p *acl.Principal, d doc.Document) doc.Person {
 			return known
 		}
 	}
+	return whoever(p)
+}
+
+// whoever is the same question with no document to ask.
+//
+// It is the first identity, and failing that the subject. A badge that says
+// u-4181 vouched for this is a poor badge and it is still one somebody can
+// chase down, which is more than an empty one gives them.
+//
+// An answer signs itself with this and nothing else, because there is no
+// document for it to borrow a name from: it is the one thing on this surface
+// that is not about a file.
+func whoever(p *acl.Principal) doc.Person {
 	person := doc.Person{Subject: p.Subject, Name: p.Subject}
 	for _, id := range p.Identities {
 		if id.Value == "" {

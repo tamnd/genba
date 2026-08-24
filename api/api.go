@@ -236,6 +236,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/recent", s.authenticated(s.handleRecordOpen))
 	mux.Handle("GET /api/v1/stats", s.authenticated(s.handleStats))
 	mux.Handle("GET /api/v1/events", s.authenticated(s.handleEvents))
+	mux.Handle("GET /api/v1/admin/answers", s.admin(s.handleAnswers))
+	mux.Handle("PUT /api/v1/admin/answers/{id}", s.admin(s.handleCurate))
+	mux.Handle("DELETE /api/v1/admin/answers/{id}", s.admin(s.handleRetract))
 	mux.Handle("GET /api/v1/admin/operations", s.admin(s.handleAdmin))
 	mux.Handle("GET /api/v1/admin/access", s.admin(s.handleAccess))
 	mux.Handle("POST /api/v1/admin/connectors", s.admin(s.handleAddConnector))
@@ -362,6 +365,16 @@ type searchResponse struct {
 	// no content under it is the most common way an answer surface makes a page
 	// worse than it was.
 	Answer *answer `json:"answer,omitempty"`
+
+	// Curated is an answer a person wrote to exactly this question, and it takes
+	// the place of the quoted one above when there is one.
+	//
+	// Takes the place rather than sits beside, because the region above the
+	// results holds one answer. Two of them is a reader deciding which of the
+	// product's two answers to believe, which is a worse page than either alone,
+	// and it is also the sense in which a written answer outranks the documents
+	// it summarises: it is not scored against them, it stands in front of them.
+	Curated *curatedAnswer `json:"curated,omitempty"`
 
 	// Correction is a spelling of the query that would have found something. It
 	// is only ever present on a search that found nothing, and it has already
@@ -490,6 +503,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Pri
 		Hits:       []searchHit{},
 		Answer:     answerOf(res.Answer),
 		Correction: res.Correction,
+	}
+	// The written answer is asked for by the words that were typed rather than
+	// by the parsed text, because a person writing one writes a question and not
+	// a query, and app:slack what is the deploy freeze is a search rather than a
+	// question. If somebody has answered it, it stands in front of the quotes
+	// rather than beside them.
+	if out.Curated = s.curatedFor(r, p, out.Query); out.Curated != nil {
+		out.Answer = nil
 	}
 	ids := make([]string, 0, len(res.Hits))
 	for _, h := range res.Hits {

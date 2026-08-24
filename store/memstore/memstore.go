@@ -59,6 +59,14 @@ type Store struct {
 	// has to land on the first.
 	reports map[string]map[string]store.Report
 
+	// answers is what somebody wrote down, keyed by tenant and answer id, and
+	// phrasings is the folded question and every variant of it pointing back at
+	// the id it belongs to. Two maps because a lookup is one phrasing and has to
+	// be a single probe, and an edit has to be able to take away a phrasing the
+	// answer no longer claims.
+	answers   map[[2]string]store.Answer
+	phrasings map[[2]string]string
+
 	// feeds is how the connectors were configured, keyed by tenant and source.
 	// It is in memory like everything else here, so a restart forgets it, which
 	// is the documented behaviour of this driver rather than an oversight.
@@ -77,6 +85,9 @@ func New() *Store {
 		verified: make(map[string]store.Verification),
 		owners:   make(map[string]store.Correction),
 		reports:  make(map[string]map[string]store.Report),
+
+		answers:   make(map[[2]string]store.Answer),
+		phrasings: make(map[[2]string]string),
 	}
 }
 
@@ -90,6 +101,7 @@ var (
 	_ store.Feeds        = (*Store)(nil)
 	_ store.Verifier     = (*Store)(nil)
 	_ store.Ownership    = (*Store)(nil)
+	_ store.Curator      = (*Store)(nil)
 )
 
 // Put inserts or replaces documents.

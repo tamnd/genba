@@ -1174,6 +1174,43 @@ async function walk(session) {
     "!location.search.includes('at=') && !location.search.includes('open=')",
   );
 
+  // The answer somebody wrote down, which the gate put there before this ran.
+  //
+  // It is the same region as the quotes and the region holds one of them, so the
+  // assertion worth making is not that the card is on the page. It is that the
+  // quotes are gone: two answers to one question is a reader deciding which of
+  // the product's own answers to believe.
+  await visit(
+    session,
+    `${BASE}/?q=what+is+the+cache`,
+    "document.querySelector('.answer__panel--written') !== null",
+  );
+  await check(
+    session,
+    "a written answer takes the place of the quotes rather than sitting beside them",
+    `(() => {
+      const main = document.querySelector('.results__main');
+      const card = document.querySelector('.answer__panel--written');
+      return document.querySelectorAll('.answer__quote').length === 0 &&
+        main.firstElementChild.contains(card) &&
+        document.querySelector('.answer__question').textContent.trim().length > 0 &&
+        document.querySelector('.answer__body').textContent.trim().length > 0 &&
+        document.querySelector('.answer__author').textContent.trim().length > 0;
+    })()`,
+  );
+
+  // A source of a written answer is a document its author cited rather than a
+  // sentence they pointed at, so it opens the document and highlights nothing.
+  await evaluate(session, "document.querySelector('.answer__source .quote__cite').click()");
+  await settle(session, "!document.querySelector('.drawer').hidden");
+  await check(
+    session,
+    "one click on a source opens that document without inventing a passage to jump to",
+    `location.search.includes('open=') && !location.search.includes('at=') &&
+      document.querySelectorAll('.drawer__body mark.hit--passage').length === 0`,
+  );
+  await press(session, "Escape", "Escape", 27);
+
   // The grid. The pictures behind this query are written into the corpus by the
   // gate before the server starts, because the repository itself holds none.
   await visit(session, `${BASE}/?q=gatepix`, "document.querySelectorAll('.cell').length > 0");

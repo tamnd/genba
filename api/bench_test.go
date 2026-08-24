@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -126,6 +127,74 @@ func BenchmarkAPIDocument(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; b.Loop(); i++ {
 		get(b, h, "/api/v1/documents/"+page.Hits[i%len(page.Hits)].ID, hdr)
+	}
+}
+
+// BenchmarkAPISearchCurated is a search that somebody has written the answer to.
+//
+// The miss is already measured, because every search asks whether this question
+// has been answered and almost none of them have, so the cost of asking is in
+// BenchmarkAPISearch above. This is the other half: the probe finds something,
+// and the answer's sources are then read through the reader asking, which is one
+// more query and a permission check per citation.
+//
+// The question is deliberately not one of the checked in queries. Answering one
+// of those would put a card on a page the benchmark beside this one measures,
+// and the two numbers would stop being comparable.
+func BenchmarkAPISearchCurated(b *testing.B) {
+	const question = "how does the benchmark corpus answer this particular question"
+	h, hdr := handler(b, api.WithLogger(slog.New(slog.DiscardHandler)))
+
+	var page struct {
+		Hits []struct {
+			ID string `json:"id"`
+		} `json:"hits"`
+	}
+	queries := benchcorpus.ByClass(benchcorpus.Queries())[benchcorpus.ClassCommon]
+	w := get(b, h, "/api/v1/search?q="+urlQuery(queries[0].Text), hdr)
+	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+		b.Fatalf("decoding the search page: %v", err)
+	}
+	if len(page.Hits) < api.AnswerSources {
+		b.Fatalf("the corpus returned %d documents, and an answer is measured with %d sources under it",
+			len(page.Hits), api.AnswerSources)
+	}
+
+	sources := make([]string, 0, api.AnswerSources)
+	for _, hit := range page.Hits[:api.AnswerSources] {
+		sources = append(sources, hit.ID)
+	}
+	body, err := json.Marshal(map[string]any{
+		"question": question,
+		"body":     "The corpus is generated from a seed, so every run reads the same documents in the same order.",
+		"sources":  sources,
+	})
+	if err != nil {
+		b.Fatalf("encoding the answer: %v", err)
+	}
+
+	admin := maps.Clone(hdr)
+	admin[api.HeaderRoles] = acl.RoleAdmin
+	r := httptest.NewRequestWithContext(b.Context(), http.MethodPut, "/api/v1/admin/answers/bench", strings.NewReader(string(body)))
+	for k, v := range admin {
+		r.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	if rec.Code != http.StatusOK {
+		b.Fatalf("writing the answer: %d %s", rec.Code, rec.Body)
+	}
+
+	target := "/api/v1/search?q=" + urlQuery(question)
+	got := get(b, h, target, hdr)
+	if !strings.Contains(got.Body.String(), `"curated"`) {
+		b.Fatal("the question that was just answered came back with no answer on it")
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		get(b, h, target, hdr)
 	}
 }
 

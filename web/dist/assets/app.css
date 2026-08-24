@@ -968,6 +968,91 @@ time {
 }
 
 /*
+ * The answer a person in this company wrote down.
+ *
+ * It is the same region as the quotes and it is set larger, because it is prose
+ * somebody wrote to be read rather than a passage lifted out of a document to be
+ * checked. Still no card, no border and no fill: the thing that says this is
+ * worth reading before the ten results underneath it is its size and the name at
+ * the bottom of it, not a box drawn around it.
+ */
+.answer__panel--written {
+  padding-bottom: var(--space-4);
+}
+
+.answer__question {
+  max-width: var(--measure);
+  margin: var(--space-1) 0 0;
+  color: var(--text);
+  font-size: var(--text-title);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-title);
+}
+
+.answer__body {
+  max-width: var(--measure);
+  margin-top: var(--space-4);
+  font-size: var(--text-lead);
+  line-height: var(--leading-prose);
+}
+
+/* Who wrote it, under the words rather than over them. The words are what the
+   reader came for and the name is how they decide whether to trust them, which
+   is the order somebody reads a signed note in anyway. */
+.answer__by {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-small);
+  line-height: var(--leading-small);
+}
+
+.answer__author {
+  color: var(--text);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+}
+
+.answer__author:hover {
+  color: var(--text-link);
+  text-decoration: underline;
+}
+
+/* The name and the date are one sentence and wrap as one. */
+.answer__wrote {
+  min-width: 0;
+}
+
+.answer__sources {
+  margin-top: var(--space-5);
+}
+
+.answer__sources-title {
+  margin: 0 0 var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.answer__source-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The citations line up with the words above them rather than with the quote
+   rule, which is not on this kind of answer. */
+.answer__source .quote__cite {
+  margin-top: 0;
+  margin-left: 0;
+}
+
+/*
  * The passage a citation sent somebody to, inside the document it is in.
  *
  * A wash over the whole sentence rather than the two pixel rule the matched
@@ -2101,13 +2186,27 @@ h6.prose__h {
   color: var(--text-muted);
 }
 
+/* The markers are put back, because the reset above takes them off every list
+   in the product and this is the one place a list is prose rather than a
+   layout. A numbered list with no numbers has lost what the author was saying
+   with it, and a bulleted one reads as three sentences somebody indented for no
+   reason. */
 .prose__list {
   margin: 0 0 var(--space-4);
   padding-left: var(--space-6);
+  list-style: disc;
 }
 
+ol.prose__list {
+  list-style: decimal;
+}
+
+/* A nested list takes a different mark, so a reader can see which level a line
+   is on without counting the indent. A task keeps its own box and no mark,
+   which the rule below it already says. */
 .prose__list .prose__list {
   margin: var(--space-2) 0 0;
+  list-style: circle;
 }
 
 .prose__item {
