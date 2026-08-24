@@ -382,13 +382,25 @@ func TestALostRecordMakesTheNextSyncWalk(t *testing.T) {
 		put(t, root, "docs/"+name, "# "+name+"\n")
 	}
 
-	got, _ := until(t, s, cursor, func(all []connector.Change) bool {
-		return wasRead(all, "repo:docs/a.md") && wasRead(all, "repo:docs/e.md")
-	})
-
 	// Everything is found, which is the point. Losing the record costs a walk
 	// and not a document.
-	for _, name := range []string{"a.md", "b.md", "c.md", "d.md", "e.md"} {
+	//
+	// Waiting for all five rather than for the first and the last of them,
+	// because the walk that finds the overflow is not one sync and there is
+	// nothing that says the two ends of the set arrive last. Stopping as soon
+	// as those two were seen was a test that failed whenever the middle of the
+	// batch happened to land in the sync after them.
+	want := []string{"a.md", "b.md", "c.md", "d.md", "e.md"}
+	got, _ := until(t, s, cursor, func(all []connector.Change) bool {
+		for _, name := range want {
+			if !wasRead(all, "repo:docs/"+name) {
+				return false
+			}
+		}
+		return true
+	})
+
+	for _, name := range want {
 		if !slices.Contains(read(got), "repo:docs/"+name) {
 			t.Fatalf("read %v, which is missing docs/%s", read(got), name)
 		}
@@ -625,8 +637,17 @@ func TestTheWatchedAndWalkedSyncsAgreeOnWhatIsInTheCorpus(t *testing.T) {
 	for rel, body := range files {
 		put(t, root, rel, body+"\n")
 	}
+	// Waiting for the names rather than for the count of them. The two are the
+	// same number here only when the answer is already right, so counting would
+	// have let a run where watching read something else of the same size through
+	// to an assertion that then failed on a set difference.
 	byWatching, _ := until(t, s, cursor, func(all []connector.Change) bool {
-		return len(read(all)) >= len(read(byWalking))
+		for _, id := range read(byWalking) {
+			if !wasRead(all, id) {
+				return false
+			}
+		}
+		return true
 	})
 
 	if !slices.Equal(read(byWatching), read(byWalking)) {
