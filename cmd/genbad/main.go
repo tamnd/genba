@@ -85,6 +85,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	fs.DurationVar(&corpus.Refresh, "corpus-refresh", 0, "how often to reindex the directory, zero for once")
 	fs.BoolVar(&corpus.Watch, "corpus-watch", false, "ask the operating system what changed instead of walking the tree, needs -corpus-refresh")
 	fs.DurationVar(&corpus.Reconcile, "corpus-reconcile", 0, "how often to sweep the index against the directory, zero for after every sync")
+	fs.Float64Var(&corpus.Rate, "corpus-rate", 0, "files a second the read keeps itself under, zero for as fast as the disk allows")
 
 	var bucket bucketOptions
 	fs.StringVar(&bucket.Bucket, "bucket", "", "S3 compatible bucket to index at startup")
