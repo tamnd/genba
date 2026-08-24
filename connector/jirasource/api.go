@@ -301,12 +301,6 @@ func stamp(s string) time.Time {
 	return time.Time{}
 }
 
-// stampMillis renders a date node's timestamp, which arrives as milliseconds
-// since the epoch and is a date rather than an instant.
-func stampMillis(ms int64) string {
-	return time.UnixMilli(ms).UTC().Format("2006-01-02")
-}
-
 // jqlTime is the format JQL wants a time in.
 //
 // It has no seconds. JQL compares to the minute and rejects anything finer, so

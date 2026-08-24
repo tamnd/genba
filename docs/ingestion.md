@@ -531,7 +531,8 @@ Obeying that header is `connector/limit`'s job and it is the same code every oth
 Every call is a GET for the same reason it is in the Slack adapter, that a request carrying a body is never retried, and the fields a search asks for are written down rather than left as everything, because everything on a site with three hundred custom fields is a page of results the size of a small database.
 
 The last part is the description, which is not text.
-It arrives as an Atlassian document tree, and there are two ways to get it wrong.
+It arrives as an Atlassian document tree, which is `connector/adf`'s job rather than the adapter's, because the format belongs to the editor and not to the product: the same tree is a ticket description, a page body and a comment on either.
+There are two ways to get it wrong.
 Concatenating every text node produces a wall with the heading run into the paragraph, and an index built on that cannot tell a phrase somebody wrote from a phrase made by two unrelated lines meeting.
 Throwing the structure away is worse, because a ticket's description is very often a stack trace, a snippet of configuration or a table of what was tried, and a search result that shows the reader a flattened version of the thing they were looking for has answered the query and failed the person.
 So it renders Markdown: headings stay headings, code blocks keep their fences and their language, lists stay lists and tables stay tables.

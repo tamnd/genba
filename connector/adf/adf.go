@@ -1,14 +1,9 @@
-package jirasource
-
-import (
-	"encoding/json"
-	"strconv"
-	"strings"
-)
-
-// A Jira description is not text. It is a document tree, and turning it back
-// into something a person and an index can both read is most of what this file
-// does.
+// Package adf renders an Atlassian document as Markdown.
+//
+// A Jira description is not text. Neither is a Confluence page, a comment on
+// either of them, or anything else written in the editor those products share.
+// It is a document tree, and turning it back into something a person and an
+// index can both read is the whole of what this package does.
 //
 // Two ways of getting it wrong are worth naming, because both are common.
 //
@@ -25,6 +20,20 @@ import (
 // code blocks keep their fences and their language, lists stay lists and tables
 // stay tables. The index reads it as text and the interface renders it as what
 // it is.
+//
+// It is a package rather than a file inside one connector because the format
+// belongs to the editor rather than to the product. Every Atlassian connector
+// meets the same tree, and the second one to want it should get this and not a
+// second renderer that agrees with this one on the cases somebody thought to
+// test.
+package adf
+
+import (
+	"encoding/json"
+	"strconv"
+	"strings"
+	"time"
+)
 
 // node is one element of an Atlassian document.
 type node struct {
@@ -50,14 +59,16 @@ type mark struct {
 // be a truncated description rather than a crashed indexer.
 const maxDepth = 32
 
-// text renders an Atlassian document as Markdown.
+// Render turns an Atlassian document into Markdown.
 //
 // Anything that will not parse comes back empty rather than as an error. A
-// description this adapter cannot read is a ticket with a summary, a reporter,
-// a status and a comment thread, all of which are worth indexing, and refusing
-// the whole issue over the shape of one field would be losing more than it
-// saves.
-func text(raw json.RawMessage) string {
+// description this cannot read is a ticket with a summary, a reporter, a status
+// and a comment thread, all of which are worth indexing, and refusing the whole
+// issue over the shape of one field would be losing more than it saves.
+//
+// A plain string is accepted as well as a tree, because a site on the older API
+// and a field somebody set through a script both send one.
+func Render(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
@@ -171,6 +182,10 @@ func block(b *strings.Builder, n node, depth int, prefix string) {
 	case "expand", "nestedExpand":
 		if title, ok := str(n.Attrs, "title"); ok && title != "" {
 			line(b, prefix, "**"+title+"**")
+			// With no blank line after it the title and the first line under it
+			// are one paragraph in Markdown, which is the opposite of what an
+			// expander is: a label and the thing it was hiding.
+			line(b, strings.TrimRight(prefix, " "), "")
 		}
 		blocks(b, children(n), depth+1, prefix)
 
@@ -391,6 +406,12 @@ func collapse(s string) string {
 func str(attrs map[string]any, name string) (string, bool) {
 	v, ok := attrs[name].(string)
 	return v, ok
+}
+
+// stampMillis renders a date node's timestamp, which arrives as milliseconds
+// since the epoch and is a date rather than an instant.
+func stampMillis(ms int64) string {
+	return time.UnixMilli(ms).UTC().Format("2006-01-02")
 }
 
 // number reads a numeric attribute. JSON numbers decode as float64, and a
