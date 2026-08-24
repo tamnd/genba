@@ -74,7 +74,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	// it and throws away whatever the request claimed. One without believes the
 	// groups it is given, which is right on a laptop and behind a proxy that is
 	// doing the resolution itself, and is not right for a company.
-	fs.StringVar(&cfg.Directory, "directory", cfg.Directory, "file of subjects and groups to resolve group membership from, empty to believe the request")
+	//
+	// More than one is a company that acquired another company. The group sets
+	// are unioned, and a file that cannot be read refuses the request rather
+	// than serving half of somebody's groups.
+	directories := fs.String("directory", strings.Join(cfg.Directories, ","), "files of subjects and groups to resolve group membership from, comma separated, empty to believe the request")
 	fs.DurationVar(&cfg.DirectoryTTL, "directory-ttl", cfg.DirectoryTTL, "how long a resolved group set is held, which is the longest a membership change takes to have any effect")
 	fs.DurationVar(&cfg.DirectoryRefresh, "directory-refresh", cfg.DirectoryRefresh, "how often the directory file is read again, zero for never")
 	// A string rather than a repeated flag, because it is a list of a handful of
@@ -127,7 +131,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		fmt.Fprintf(stdout, "genbad %s (%s, built %s)\n", genba.Version, genba.Commit, genba.Date)
 		return nil
 	}
-	cfg.Admins = subjects(*admins)
+	cfg.Admins = commas(*admins)
+	cfg.Directories = commas(*directories)
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
@@ -270,7 +275,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		"store", cfg.Store,
 		"interface", web.Enabled(),
 		"cache", cfg.Cache,
-		"directory", cfg.Directory != "",
+		"directories", len(cfg.Directories),
 	)
 
 	errc := make(chan error, len(servers))
@@ -360,13 +365,13 @@ func searchOptions(cfg config.Config) []index.Option {
 	}
 }
 
-// subjects splits a comma separated list of names, dropping the empties.
+// commas splits a comma separated flag, dropping the empties.
 //
 // The empties matter. A flag left at its default is an empty string, and a
 // naive split of that is a list holding one name that is nothing at all, which
 // would make an unauthenticated request an administrator on any deployment
 // where the subject is also empty.
-func subjects(v string) []string {
+func commas(v string) []string {
 	var out []string
 	for _, s := range strings.Split(v, ",") {
 		if s = strings.TrimSpace(s); s != "" {

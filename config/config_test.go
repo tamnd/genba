@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +48,24 @@ func TestLoadAppliesTheEnvironment(t *testing.T) {
 	}
 	if c.WriteTimeout != config.Default().WriteTimeout {
 		t.Errorf("an unset variable overwrote the default: WriteTimeout = %v", c.WriteTimeout)
+	}
+}
+
+// One variable holding several paths, because a company that acquired another
+// company has a file per side and one unit file.
+func TestSeveralDirectoriesComeFromOneVariable(t *testing.T) {
+	c, err := config.Load(env(map[string]string{
+		"GENBA_DIRECTORY": "/etc/genba/acme.json, /etc/genba/beta.json",
+	}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"/etc/genba/acme.json", "/etc/genba/beta.json"}
+	if !slices.Equal(c.Directories, want) {
+		t.Errorf("Directories = %v, want %v", c.Directories, want)
+	}
+	if len(config.Default().Directories) != 0 {
+		t.Error("the default resolves groups from a directory nobody configured")
 	}
 }
 

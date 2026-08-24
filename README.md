@@ -210,7 +210,7 @@ The environment variable is the flag in upper case with a `GENBA_` prefix, and a
 | `GENBA_TENANT` | empty | tenant served by a single tenant deployment |
 | `GENBA_ADMINS` | empty | subjects that hold the administrator role, comma separated |
 | `GENBA_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
-| `GENBA_DIRECTORY` | empty | file of subjects and groups to resolve group membership from, empty to believe the request |
+| `GENBA_DIRECTORY` | empty | files of subjects and groups to resolve group membership from, comma separated, empty to believe the request |
 | `GENBA_DIRECTORY_TTL` | `1m` | how long a resolved group set is held |
 | `GENBA_DIRECTORY_REFRESH` | `30s` | how often the file is read again, zero for never |
 | `GENBA_READ_TIMEOUT` | `30s` | request read timeout |
@@ -335,6 +335,10 @@ Renaming the directory is refused rather than applied, because every group key c
 `-directory-ttl` is the longest a membership change can take to have any effect, and it is one number rather than a property that emerges from a stack of caches.
 [docs/identity.md](docs/identity.md) says why there is exactly one layer.
 
+`-directory` takes more than one file, comma separated, and the group sets are unioned.
+That is a company that acquired another company: two sets of people, two files, one search box, and nothing collides because every group key carries the name of the directory it came from.
+A directory that cannot answer refuses the request rather than serving half of somebody's groups, and two files under the same name refuse at startup, since a rule naming one company's `engineering` would otherwise match the other's.
+
 This is the deployment with forty people and six groups in it.
 Adapters for Okta, Entra ID and Google Workspace are the next piece, and they answer the same two lookups the file does.
 
@@ -418,7 +422,7 @@ func main() {
 | Package | What lives there |
 | --- | --- |
 | `acl` | principals, groups, permission descriptors, visibility bitmaps |
-| `directory` | a person resolved into the groups they are in, with cycle detection, a version and one cache layer, [docs/identity.md](docs/identity.md) |
+| `directory` | a person resolved into the groups they are in, with cycle detection, a version, a union over several providers and one cache layer, [docs/identity.md](docs/identity.md) |
 | `directory/directorytest` | the conformance suite that defines what a directory adapter is |
 | `doc` | the canonical document model every connector normalises into |
 | `store` | the storage interface, plus `storetest`, the conformance suite |

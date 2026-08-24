@@ -159,6 +159,29 @@ A change to the directory's own name is refused outright: every group key carrie
 A file that does not parse at startup is a different matter and the process exits.
 Nothing is loaded, so there is nothing to keep, and coming up resolving nobody would be a server that answers every request with a refusal.
 
+## More than one directory
+
+`directory.Multi` unions several of them into one group set, and `genbad -directory` takes a list of files.
+
+The shape it exists for is a company that acquired another company.
+There are two identity providers, nobody is going to merge them this quarter, and there is one search box.
+Half the people are in one directory, half are in the other, and a few are in both because they were given an account on the other side during the integration.
+Nothing collides, because a group key already carries the name of the directory it came from, and `engineering` at one company and `engineering` at the other are two different groups here for the same reason they are two different groups in real life.
+Two directories under one name are refused when the union is built, since that is the one arrangement where a rule naming one of them would match the other.
+
+If any directory fails, the expansion fails.
+This is the same rule the walk inside one directory follows and it matters more here, not less.
+With several providers there are several things that can be having a bad day, and a person whose second directory timed out looks exactly like a person who is only in the first one.
+Serving them the groups that did answer would take away half of what they can read with nothing anywhere to say why.
+
+A directory that does not hold the subject at all is not a failure, because most people are in one directory of several, and a subject every directory refuses is `ErrNoSubject`.
+A subject one directory holds and has deactivated refuses the whole expansion even where another directory still has them active, because deactivating an account is a statement somebody made on purpose.
+During a migration, take the old directory out of the list rather than leaving deactivated accounts in it.
+
+The cache goes above the union rather than under it.
+One cache over a `Multi` is one entry per person and one lifetime to reason about.
+One cache per directory is the same staleness bound, several times the entries, and an expansion that is a hit only when every part of it is.
+
 ## Remembering the answer
 
 Expanding on every request is not affordable.

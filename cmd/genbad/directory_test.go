@@ -27,6 +27,19 @@ const smallCompany = `{
   ]
 }`
 
+// The company acme acquired. Mei was given an account on both sides during the
+// integration, which is the case worth having a test for.
+const otherCompany = `{
+  "name": "beta",
+  "groups": [
+    {"id": "payroll"}
+  ],
+  "subjects": [
+    {"id": "mei", "email": "mei@beta.example", "member_of": ["payroll"]},
+    {"id": "jo", "member_of": ["payroll"]}
+  ]
+}`
+
 // write puts a directory in a temporary file and hands back the path.
 func write(t *testing.T, body string) string {
 	t.Helper()
@@ -216,6 +229,48 @@ func TestRenamingTheDirectoryIsRefusedRatherThanApplied(t *testing.T) {
 	}
 	if held.Name() != "acme" {
 		t.Errorf("the directory is now named %q", held.Name())
+	}
+}
+
+// Two files is a company that acquired another company. Nothing collides,
+// because every group key carries the name of the directory it came from.
+func TestTwoDirectoriesAreUnionedIntoOneSession(t *testing.T) {
+	base := serving(t, "-directory", write(t, smallCompany)+","+write(t, otherCompany))
+
+	got := groupsOf(t, base)
+	want := []string{"acme:engineering", "acme:everyone", "beta:payroll"}
+	if !slices.Equal(got, want) {
+		t.Errorf("the session carries %v, want %v", got, want)
+	}
+}
+
+// Two directories under one name would put both companies' groups under the
+// same key, so a rule naming one of them would match the other.
+func TestTwoDirectoriesWithTheSameNameStopTheServerStarting(t *testing.T) {
+	paths := write(t, smallCompany) + "," + write(t, smallCompany)
+
+	var out, errOut bytes.Buffer
+	err := run(t.Context(), []string{"-addr", freeAddr(t), "-directory", paths, "-log-level", "error"}, env(nil), &out, &errOut)
+	if err == nil {
+		t.Fatal("the server started with two directories under one name")
+	}
+	if !strings.Contains(err.Error(), `"acme"`) {
+		t.Errorf("the error is %q and does not say which name is used twice", err)
+	}
+}
+
+// One of two files being unreadable refuses the request rather than serving
+// half of somebody's groups, and the same rule applies at startup.
+func TestOneBadFileOfTwoStopsTheServerStarting(t *testing.T) {
+	paths := write(t, smallCompany) + "," + filepath.Join(t.TempDir(), "absent.json")
+
+	var out, errOut bytes.Buffer
+	err := run(t.Context(), []string{"-addr", freeAddr(t), "-directory", paths, "-log-level", "error"}, env(nil), &out, &errOut)
+	if err == nil {
+		t.Fatal("the server started with one of its two directories missing")
+	}
+	if !strings.Contains(err.Error(), "absent.json") {
+		t.Errorf("the error is %q and does not name the file", err)
 	}
 }
 

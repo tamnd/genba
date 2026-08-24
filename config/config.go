@@ -78,12 +78,18 @@ type Config struct {
 	// which is the property that makes a cache safe to have in the first place.
 	Cache bool
 
-	// Directory is the path to a directory of subjects and groups, and it is
-	// empty by default. A deployment with one resolves the groups on every
-	// request out of it and throws away whatever the request claimed. A
-	// deployment without one believes the groups it is given, which is right for
-	// a laptop and behind a proxy that is doing the resolution itself.
-	Directory string
+	// Directories are the files of subjects and groups to resolve group
+	// membership from, and it is empty by default. A deployment with one
+	// resolves the groups on every request out of it and throws away whatever
+	// the request claimed. A deployment without one believes the groups it is
+	// given, which is right for a laptop and behind a proxy that is doing the
+	// resolution itself.
+	//
+	// More than one is a company that acquired another company: the group sets
+	// are unioned, nothing collides because every group key carries the name of
+	// the directory it came from, and a file that cannot be read refuses the
+	// request rather than serving half of somebody's groups.
+	Directories []string
 
 	// DirectoryTTL is how long a resolved group set is held for, and therefore
 	// the longest a membership change can take to have any effect.
@@ -143,7 +149,9 @@ func Load(getenv func(string) string) (Config, error) {
 	str(getenv, "GENBA_DSN", &c.DSN)
 	str(getenv, "GENBA_TENANT", &c.Tenant)
 	str(getenv, "GENBA_LOG_LEVEL", &c.LogLevel)
-	str(getenv, "GENBA_DIRECTORY", &c.Directory)
+	if v := getenv("GENBA_DIRECTORY"); v != "" {
+		c.Directories = list(v)
+	}
 	if v := getenv("GENBA_ADMINS"); v != "" {
 		c.Admins = list(v)
 	}
