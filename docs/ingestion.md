@@ -260,6 +260,12 @@ genbad \
 `-corpus-acl owners` reads the OWNERS files in the tree, which is a real access control list maintained by real people.
 The other two are `tenant`, where everybody in the tenant may read everything, and `os`, which reads the mode bits and needs `-corpus-identity` to say which directory the account names belong to.
 
+`-corpus-rate` puts a ceiling on files a second, and it is about the first read rather than the refreshes.
+The server opens its listener before the corpus has been read and says on every screen that the answers are partial until it has, and the point of that is that the minutes in between are usable.
+A read going as fast as the disk allows is the one thing competing with those queries for the same disk, and a rate is the only lever, because the work cannot be made smaller: every file has to be read once.
+It is applied to the content read and not to the walk, so the count of how much there is to do still arrives immediately and the progress on screen still has both of its numbers.
+The default is zero, meaning no ceiling, which is the opposite of what the same number means for a bucket: a remote service that is asked for too much revokes the token, and a local disk refuses nobody.
+
 A bucket, listed every thirty seconds, scoped to one prefix:
 
 ```

@@ -208,6 +208,7 @@ type Source struct {
 	includeIf func(name string) bool
 	skipped   func(path string, reason error)
 	watcher   *Watcher
+	pacing    func(context.Context) error
 
 	counters counters
 }
@@ -307,6 +308,32 @@ func WithInclude(f func(name string) bool) Option {
 // which is what [WithWatchSkipDir] is for.
 func WithWatcher(w *Watcher) Option {
 	return func(s *Source) { s.watcher = w }
+}
+
+// WithPace makes the source wait before it reads each file's content.
+//
+// A first read of a large tree is the one moment this connector competes with
+// the server it is feeding. The walk is stat calls and the reads are the disk,
+// and a process doing both flat out is a process whose queries are answered off
+// a disk that is busy with something else. Slowing the read down is the only
+// lever that helps, because the work itself cannot be made smaller: every file
+// has to be read once.
+//
+// It is a function rather than a number so that what the pace is stays with
+// whoever chose it. A token bucket, a semaphore shared with something else and
+// a plain sleep are all the same shape from here, and the connector has no
+// opinion about which of them a deployment wants.
+//
+//	l := limit.NewLimiter(limit.Limits{Rate: 200, Burst: 1}, nil)
+//	src, err := fssource.New(root, "docs", policy, fssource.WithPace(l.Wait))
+//
+// The error it returns stops the sync rather than skipping the file, because
+// the only thing that makes a pace fail is the context being done, and a sync
+// that carried on from there would spend a shutdown reading the rest of the
+// tree. A nil function is what passing no option means: read as fast as the
+// disk allows.
+func WithPace(wait func(context.Context) error) Option {
+	return func(s *Source) { s.pacing = wait }
 }
 
 // New returns a source reading root, naming itself name, and asking policy who
@@ -421,6 +448,10 @@ func (s *Source) Sync(ctx context.Context, from connector.Cursor, emit func(cont
 		// reports it.
 		if at, err := s.changedAt(ctx, rel, info); err == nil && at.After(highest) {
 			highest = at
+		}
+
+		if err := s.pace(ctx); err != nil {
+			return err
 		}
 
 		full := filepath.Join(s.root, filepath.FromSlash(rel))
@@ -572,6 +603,10 @@ func (s *Source) syncWatched(ctx context.Context, from connector.Cursor, since t
 			highest = at
 		}
 
+		if err := s.pace(ctx); err != nil {
+			return connector.Cursor{}, err
+		}
+
 		document, err := s.read(ctx, full, rel, info)
 		if err != nil {
 			s.skipped(full, err)
@@ -677,6 +712,20 @@ func (s *Source) limitFor(name string) int64 {
 	default:
 		return s.maxSize
 	}
+}
+
+// pace waits for whatever [WithPace] installed, and for nothing when a source
+// was built without one.
+//
+// It sits in front of the content read and not in front of the walk, because
+// the walk is the cheap half. Pacing the stat calls would put the second number
+// in the progress report behind the same wall as the first and leave a first
+// read that says nothing about how much there is to do.
+func (s *Source) pace(ctx context.Context) error {
+	if s.pacing == nil {
+		return ctx.Err()
+	}
+	return s.pacing(ctx)
 }
 
 // read turns one file into a document.

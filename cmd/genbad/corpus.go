@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tamnd/genba/connector/fssource"
+	"github.com/tamnd/genba/connector/limit"
 	"github.com/tamnd/genba/store"
 )
 
@@ -51,6 +52,22 @@ type corpusOptions struct {
 	// that walks, which is what it would have done anyway.
 	Watch bool
 
+	// Rate is how many files a second the read may take, and zero is as fast as
+	// the disk allows.
+	//
+	// Zero means unlimited here, which is the opposite of what the same number
+	// means for a bucket, and the difference is who is on the other end. A remote
+	// service that is asked for too much revokes the token, so there the absence
+	// of a ceiling is the bug. A local disk refuses nobody: the only thing a fast
+	// read costs is the queries this server is answering out of the same disk
+	// while it happens, and on most trees it does not cost them enough to be
+	// worth slowing anything down for.
+	//
+	// It is worth setting on the trees where it does. A first read of a large
+	// corpus is minutes of a disk at full tilt, and the whole reason the server
+	// answers during it is that those minutes are meant to be usable.
+	Rate float64
+
 	// Reconcile is how often to sweep the index against the tree. Zero sweeps
 	// after every sync.
 	//
@@ -93,6 +110,9 @@ func (o corpusOptions) validate() error {
 	}
 	if o.Reconcile < 0 {
 		return errors.New("corpus reconcile interval is negative")
+	}
+	if o.Rate < 0 {
+		return errors.New("corpus rate is negative")
 	}
 	if o.Watch && o.Refresh <= 0 {
 		// A watcher records what changes between one sync and the next, and with
@@ -191,7 +211,17 @@ func corpusFeed(cfg corpusOptions, tenant string, track *indexing, ops *operatio
 		}
 	}
 
-	src, err := fssource.New(cfg.Dir, cfg.Name, policy, fssource.WithWatcher(watcher))
+	opts := []fssource.Option{fssource.WithWatcher(watcher)}
+	if cfg.Rate > 0 {
+		// Burst of one, so the number is a pace rather than a ceiling averaged
+		// over a window. A burst is worth having against a service that counts
+		// requests per minute and does not care how they were spaced inside it,
+		// and it is worth nothing against a disk, where ten reads back to back is
+		// exactly the spike the rate was set to avoid.
+		opts = append(opts, fssource.WithPace(limit.NewLimiter(limit.Limits{Rate: cfg.Rate, Burst: 1}, nil).Wait))
+	}
+
+	src, err := fssource.New(cfg.Dir, cfg.Name, policy, opts...)
 	if err != nil {
 		if watcher != nil {
 			_ = watcher.Close()

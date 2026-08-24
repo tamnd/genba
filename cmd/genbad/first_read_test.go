@@ -22,10 +22,14 @@ import (
 // that the first answers come out of an index that is still filling. So it says
 // so, on every screen, until it is done.
 
-// bigTree writes enough files that reading them takes long enough to watch. The
-// count is not arbitrary: the whole point of the test is to look at the server
-// while a first read is in flight, and a tree of eight files is read faster than
-// a request can be sent.
+// bigTree writes a corpus with more files in it than a test wants to wait for.
+//
+// How many is not what keeps the read in flight, and it used to be. A tree of
+// two thousand small files is under a second on a warm page cache, so the test
+// below made four requests and hoped the fourth landed before the read was
+// over, which is a race it lost on a fast runner and won everywhere it was
+// looked at. What holds the read open now is -corpus-rate, so the count only
+// has to be more than the read can get through while the test is looking.
 func bigTree(t *testing.T, files int) string {
 	t.Helper()
 	root := t.TempDir()
@@ -44,21 +48,23 @@ func bigTree(t *testing.T, files int) string {
 
 // startCorpus starts a server on a directory and returns its address and a
 // function that shuts it down. It deliberately does not wait for the index.
-func startCorpus(t *testing.T, root string) (addr string, stop func()) {
+func startCorpus(t *testing.T, root string, extra ...string) (addr string, stop func()) {
 	t.Helper()
 	addr = freeAddr(t)
+
+	args := append([]string{
+		"-addr", addr,
+		"-tenant", "acme",
+		"-corpus", root,
+		"-corpus-name", "handbook",
+		"-log-level", "error",
+	}, extra...)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
 		var out, errOut bytes.Buffer
-		done <- run(ctx, []string{
-			"-addr", addr,
-			"-tenant", "acme",
-			"-corpus", root,
-			"-corpus-name", "handbook",
-			"-log-level", "error",
-		}, env(nil), &out, &errOut)
+		done <- run(ctx, args, env(nil), &out, &errOut)
 	}()
 	return addr, func() {
 		cancel()
@@ -70,8 +76,23 @@ func startCorpus(t *testing.T, root string) (addr string, stop func()) {
 	}
 }
 
+// The read is paced so that the assertions below are exact rather than likely.
+//
+// Two hundred files at four a second is fifty seconds of reading, and every
+// request this test makes is answered in milliseconds, so the read is still
+// running when each of them lands however fast the machine is. The count that
+// fills in the second number is not paced, because it is a walk rather than a
+// read, so the test can say what the total should be as well.
+//
+// Shutting down does not wait for the fifty seconds. Pacing waits on the
+// context, so cancelling it ends the sync at whichever file it was holding.
+const (
+	corpusFiles = 200
+	corpusRate  = "4"
+)
+
 func TestTheServerAnswersBeforeTheCorpusIsReadAndSaysSo(t *testing.T) {
-	addr, stop := startCorpus(t, bigTree(t, 2000))
+	addr, stop := startCorpus(t, bigTree(t, corpusFiles), "-corpus-rate", corpusRate)
 	defer stop()
 
 	// This is the assertion. The health check answering at all, on a corpus that
@@ -113,8 +134,17 @@ func TestTheServerAnswersBeforeTheCorpusIsReadAndSaysSo(t *testing.T) {
 	if stats.Indexing.Source != "handbook" {
 		t.Errorf("indexing names %q, want the source from -corpus-name", stats.Indexing.Source)
 	}
-	if stats.Indexing.Done > stats.Indexing.Total && stats.Indexing.Total != 0 {
-		t.Errorf("indexing = %+v, more read than there is to read", *stats.Indexing)
+	if stats.Indexing.Done >= corpusFiles {
+		t.Errorf("indexing = %+v, a read that is still running has read the whole corpus", *stats.Indexing)
+	}
+
+	// The second number is the one the banner needs before it can draw a bar,
+	// and it arrives on its own schedule: the count runs before the sync does,
+	// so a request that lands between the two is told a read is running and not
+	// yet told how much of one. That window is microseconds and this waits it
+	// out rather than asserting into the middle of it.
+	if got := waitForTotal(t, addr); got != corpusFiles {
+		t.Errorf("indexing counted %d documents, want the %d in the tree", got, corpusFiles)
 	}
 }
 
@@ -138,6 +168,30 @@ func TestNothingIsReportedOnceTheCorpusIsRead(t *testing.T) {
 	// would arrive.
 	if res := searchAs(t, addr, "alice", "deploying"); res.Total == 0 {
 		t.Error("the first read finished and the corpus is not searchable")
+	}
+}
+
+// waitForTotal returns how much there is to read once the count has come back,
+// and fails the test if the read finishes or the count never arrives.
+//
+// The first of those is the one worth being loud about. A total that stays at
+// zero because the sync is already over is exactly the bug the pace was added
+// to rule out, and reporting it as "the count never arrived" would send the
+// next person to read this looking in the wrong place.
+func waitForTotal(t *testing.T, addr string) int {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		s := statsAs(t, addr, "alice")
+		switch {
+		case s.Indexing == nil:
+			t.Fatal("the first read finished while the test was watching it, so the pace is not holding it open")
+		case s.Indexing.Total > 0:
+			return s.Indexing.Total
+		case time.Now().After(deadline):
+			t.Fatal("the count of what there is to read never came back")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

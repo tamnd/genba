@@ -227,6 +227,7 @@ The one exception is the object storage credentials, which are read from the env
 | `-corpus-refresh` | `0` | how often to sync again, zero for once at startup |
 | `-corpus-watch` | `false` | ask the operating system what changed instead of walking the tree, needs `-corpus-refresh` |
 | `-corpus-reconcile` | `0` | how often to sweep the index against the tree, zero for after every sync |
+| `-corpus-rate` | `0` | files a second the read keeps itself under, zero for as fast as the disk allows |
 
 `-corpus-watch` is what makes a short refresh interval affordable on a large tree.
 Without it every refresh walks, which is a stat of every file to find the four that moved, and with it the cost of a refresh is a function of how much changed rather than of how large the corpus is.
@@ -234,6 +235,11 @@ A machine that cannot give out that many watches logs a line and carries on walk
 
 `-corpus-reconcile` exists because of it.
 The sweep that finds deleted files walks the tree, so on a watched server it is the whole remaining cost of a refresh, and separating the two lets a change be noticed in a second while both sides are still counted every few minutes.
+
+`-corpus-rate` is for the first read of a large tree, and most servers do not want it.
+The server answers from the first second and says on screen that what it is answering from is not all of it yet, and the point of that is that those first minutes are usable.
+A read going flat out is the one thing on the machine competing with them for the same disk, and a ceiling on files a second is the only lever that helps, because the work cannot be made smaller: every file has to be read once.
+Zero means no ceiling, which is the opposite of what the same number means for a bucket, and the difference is that a local disk refuses nobody.
 
 ```
 genbad -tenant acme -corpus ~/src/handbook -corpus-refresh 1s -corpus-watch -corpus-reconcile 5m
