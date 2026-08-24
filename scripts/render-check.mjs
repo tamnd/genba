@@ -197,26 +197,48 @@ async function run(session) {
   // neither of them is the file: a photograph off a phone is four megabytes and
   // the box it goes in is fifty six pixels across, so a list of twenty of them
   // downloaded as they are is eighty megabytes to draw a page.
+  //
+  // The only check here that watches something happen rather than reading what
+  // a renderer returned, and the two ways that goes wrong are both handled in
+  // the expression instead of by the retry above it. The request is issued from
+  // an intersection callback, which is a frame away on an idle machine and
+  // further than that on a loaded one, so it is waited for rather than slept
+  // through. And the module holds one fetch per id and size for as long as the
+  // page lives, so an id reused on a retry is answered out of that cache and
+  // the retry sees no request at all, which turns a slow first attempt into a
+  // failure nothing can recover from. Each attempt asks about a picture nobody
+  // has asked about yet.
   await check(
     session,
     "a picture in a row and a picture in a grid cell are thumbnails of two sizes, not the file",
     expr(`
       const { tile, cover, TILE, CELL } = await import('genba/content.js');
-      const { api } = await import('genba/api.js');
-      const hit = { id: 'repo:shot.png', media_type: 'image/png', kind: 'image', title: 'shot.png', modified_at: '7' };
+      const n = (window.__thumbnails = (window.__thumbnails || 0) + 1);
+      const hit = {
+        id: 'repo:shot-' + n + '.png',
+        media_type: 'image/png',
+        kind: 'image',
+        title: 'shot.png',
+        modified_at: '7',
+      };
       const asked = [];
       const sent = window.fetch;
       window.fetch = function (input) { asked.push(String((input && input.url) || input)); return sent.apply(this, arguments); };
+      const boxes = [tile(hit), cover(hit)];
+      const thumbs = () => asked.filter((u) => u.includes('/thumbnail?size='));
       try {
-        document.body.append(tile(hit), cover(hit));
-        await new Promise((done) => setTimeout(done, 400));
+        document.body.append(boxes[0], boxes[1]);
+        const until = Date.now() + 5000;
+        while (thumbs().length < 2 && Date.now() < until) {
+          await new Promise((done) => setTimeout(done, 50));
+        }
       } finally {
         window.fetch = sent;
+        for (const box of boxes) box.remove();
       }
-      const thumbs = asked.filter((u) => u.includes('/thumbnail?size='));
-      return thumbs.some((u) => u.includes('size=' + TILE)) &&
-        thumbs.some((u) => u.includes('size=' + CELL)) &&
-        thumbs.every((u) => u.includes('v=7')) &&
+      return thumbs().some((u) => u.includes('size=' + TILE)) &&
+        thumbs().some((u) => u.includes('size=' + CELL)) &&
+        thumbs().every((u) => u.includes('v=7')) &&
         !asked.some((u) => /\\/documents\\/[^/]+\\/content/.test(u)) &&
         TILE < CELL;
     `),

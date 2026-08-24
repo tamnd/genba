@@ -66,6 +66,18 @@ if ! command -v node >/dev/null 2>&1; then
 	exit 0
 fi
 
+# The driver every check below is built on, tested before anything is started.
+#
+# It runs first and fails hard rather than setting status, because a driver that
+# cannot report a wedged browser makes every result underneath it a maybe. It
+# needs no browser and no server, so it costs a second and can run before either
+# exists.
+echo "ui-gate: driver"
+if ! node --test scripts/chrome_test.mjs; then
+	echo "ui-gate: the browser driver is broken, so nothing below it would mean anything" >&2
+	exit 1
+fi
+
 if [ ! -x "$BIN" ]; then
 	echo "ui-gate: $BIN is not there, run make build first" >&2
 	exit 1
@@ -269,7 +281,7 @@ if [ -n "${CHROMEDRIVER:-}" ]; then
 	DRIVER="--chromedriver-path $CHROMEDRIVER"
 fi
 
-# Thirteen screens, and they are states rather than layouts. Three of them, the
+# Fourteen screens, and they are states rather than layouts. Three of them, the
 # empty index, the query that matched nothing and the filter that matched
 # nothing, produce markup no other screen produces, and that markup is where an
 # accessibility bug survives longest: nobody looks at an empty page twice.
