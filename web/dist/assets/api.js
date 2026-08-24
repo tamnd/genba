@@ -307,8 +307,13 @@ export const api = {
   // second is held to the same rule as verifying, which is why they are two
   // calls rather than one toggle. Reporting answers with the count, because how
   // many other people had already said the same thing is on the server.
+  // Withdrawing is the third, and it is the reader's own row rather than a
+  // gentler resolve: it answers with what is left standing, because taking one
+  // report off a document that four people complained about changes the count
+  // and not the mark.
   report: (id, said) => send("POST", stalePath(id), said),
   resolve: (id) => send("DELETE", stalePath(id)),
+  withdraw: (id) => send("DELETE", `${stalePath(id)}/mine`),
   // The owner's side of the same feature: the documents this person owns or
   // wrote that somebody has complained about. A deployment whose driver cannot
   // remember a report answers with an empty list rather than a refusal, so the

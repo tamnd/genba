@@ -12,6 +12,13 @@
 // thing that would happen to an inconvenient one is that somebody would clear
 // it.
 //
+// Taking back your own report sits on the reporting side of that line rather
+// than the clearing side. It removes one sentence, the one this reader wrote,
+// and it is offered on exactly the documents they have already reported.
+// Reporting something in ten seconds is the point, and a mistake made in ten
+// seconds that then needs a conversation with an owner to undo is a feature
+// people stop using.
+//
 // The mark is drawn on a preview and on a document page and not on a result
 // row. A row already carries a source, a kind, a folder, an author, a date and
 // a verification badge, and the search path has ten milliseconds to answer in,
@@ -106,23 +113,51 @@ export function report(d, opts = {}) {
   return replace(box, closed(d, box, opts));
 }
 
-/** closed is the resting state: the button, and the way out when there is one. */
+/**
+ * closed is the resting state: the button, and the ways out when there are any.
+ *
+ * The first button reads differently to somebody who has already reported the
+ * document, because to them it is not a report, it is a correction of the one
+ * they made. Whether this is that reader is the server's answer and not a guess
+ * from the name on the mark: the mark carries the most recent person to have
+ * complained, who is usually not the person reading the page.
+ *
+ * The two ways out are two because they are two claims. Withdrawing is taking
+ * back your own sentence and needs no permission at all. Clearing is somebody
+ * accountable saying the document has been dealt with, and it takes the whole
+ * pile of complaints with it, which is why it is offered to fewer people.
+ */
 function closed(d, box, opts) {
   const reported = Boolean(d.stale && d.stale.at);
+  const mine = Boolean(d.stale && d.stale.mine);
   return [
     h(
       "button",
       {
         class: "button button--ghost button--report",
         type: "button",
-        title: reported
-          ? "Say what else is out of date about this document"
-          : "Tell whoever owns this document that it is out of date",
+        title: mine
+          ? "Replace what you said was out of date about this document"
+          : reported
+            ? "Say what else is out of date about this document"
+            : "Tell whoever owns this document that it is out of date",
         onClick: () => open(d, box, opts),
       },
       svg(icon("flag"), 16),
-      reported ? "Report as well" : "Report as out of date",
+      mine ? "Change what I said" : reported ? "Report as well" : "Report as out of date",
     ),
+    mine &&
+      h(
+        "button",
+        {
+          class: "button button--ghost",
+          type: "button",
+          title: "Take back the report you made on this document",
+          onClick: (e) =>
+            act(e.currentTarget, d, box, () => api.withdraw(d.id), opts, "Report withdrawn"),
+        },
+        "Withdraw my report",
+      ),
     reported &&
       d.can_resolve &&
       h(

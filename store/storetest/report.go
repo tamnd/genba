@@ -222,6 +222,128 @@ func testResolve(t *testing.T, s store.Store) {
 	}
 }
 
+// Withdrawing is taking back your own sentence, which is a different thing from
+// clearing what everybody said. The reporter here is a reader with no permission
+// on the document, so the row their key wrote is the only row they can touch: a
+// withdraw that took the document with it would be handing every reader the
+// owner's button under another name.
+func testWithdraw(t *testing.T, s store.Store) {
+	r := reporter(t, s)
+	mustPut(t, s, hers("d1"))
+
+	theirs := complaint("d1", 10)
+	theirs.By = sam
+	theirs.Note = "the addresses in the appendix are the old ones"
+	report(t, r, reader(), complaint("d1", 0))
+	report(t, r, colleague(), theirs)
+
+	if err := r.Withdraw(t.Context(), reader(), "d1"); err != nil {
+		t.Fatalf("Withdraw: %v", err)
+	}
+	got, ok := said(t, r, reader(), "d1")["d1"]
+	if !ok {
+		t.Fatalf("one of two reports was withdrawn and now the document has nothing said about it")
+	}
+	if got.Count != 1 || got.Last.Note != theirs.Note {
+		t.Errorf("what is left is %d reports saying %q", got.Count, got.Last.Note)
+	}
+	if got.Mine {
+		t.Errorf("the reader took their report back and is still counted as one of the people who made one")
+	}
+
+	// Again, because a second click on a button that has already done its work is
+	// something that happens on a slow connection.
+	if err := r.Withdraw(t.Context(), reader(), "d1"); err != nil {
+		t.Errorf("withdrawing a report that is no longer there: %v", err)
+	}
+}
+
+// The last one out leaves the document unreported, the same way a resolve does,
+// because a mark with nothing behind it is a warning nobody can act on and an
+// inbox row with nothing behind it is worse.
+func testWithdrawLast(t *testing.T, s store.Store) {
+	r := reporter(t, s)
+	mustPut(t, s, hers("d1"))
+	report(t, r, reader(), complaint("d1", 0))
+
+	if err := r.Withdraw(t.Context(), reader(), "d1"); err != nil {
+		t.Fatalf("Withdraw: %v", err)
+	}
+	if got := said(t, r, reader(), "d1"); len(got) != 0 {
+		t.Errorf("the only report was withdrawn and the document is still marked: %+v", got)
+	}
+	if got := inbox(t, r, reader(), 10); len(got) != 0 {
+		t.Errorf("the withdrawn report is still in front of the person who owns the document: %+v", got)
+	}
+	if err := r.Withdraw(t.Context(), reader(), "missing"); err != nil {
+		t.Errorf("withdrawing from a document that is not there: %v", err)
+	}
+}
+
+// The visibility predicate does not move for this call either. It cannot matter
+// today, because a key only ever matches the row it wrote, but a driver that
+// left it out would answer a question about which documents exist the first time
+// somebody counted the rows it deleted.
+func testWithdrawPermissions(t *testing.T, s store.Store) {
+	r := reporter(t, s)
+	mustPut(t, s, hers("d1"))
+	report(t, r, reader(), complaint("d1", 0))
+
+	if err := r.Withdraw(t.Context(), stranger(), "d1"); err != nil {
+		t.Fatalf("withdrawing from something you cannot see is a write that does not happen: %v", err)
+	}
+	if got := said(t, r, reader(), "d1"); len(got) != 1 {
+		t.Errorf("a reader who cannot see the document withdrew a report on it: %+v", got)
+	}
+}
+
+// Whether the person asking is one of the people who complained, which is the
+// question an interface has to answer before it can offer to take a report back.
+//
+// It is asked here with somebody else complaining most recently, because that is
+// the case a caller comparing the name on the standing report against their own
+// gets wrong, and it is the usual case: the mark carries the last thing said and
+// the reader asking is rarely the last person to have said it.
+func testReportMine(t *testing.T, s store.Store) {
+	r := reporter(t, s)
+	mustPut(t, s, hers("d1"), hers("d2"))
+
+	later := complaint("d1", 10)
+	later.By = sam
+	report(t, r, reader(), complaint("d1", 0))
+	report(t, r, colleague(), later)
+	report(t, r, colleague(), complaint("d2", 15))
+
+	got := said(t, r, reader(), "d1", "d2")
+	if !got["d1"].Mine {
+		t.Errorf("the reader reported it and what came back says somebody else did")
+	}
+	if got["d2"].Mine {
+		t.Errorf("a document the reader never reported came back as theirs")
+	}
+	if !said(t, r, colleague(), "d1")["d1"].Mine {
+		t.Errorf("the colleague reported it and what came back says somebody else did")
+	}
+
+	// The inbox answers it too, because the owner of a document is allowed to be
+	// one of the people who reported it and the panel offers the same way out.
+	for _, f := range inbox(t, r, reader(), 10) {
+		if want := f.Document.ID == "d1"; f.Stale.Mine != want {
+			t.Errorf("the panel says the owner reported %s is %v", f.Document.ID, f.Stale.Mine)
+		}
+	}
+
+	if err := r.Withdraw(t.Context(), colleague(), "d1"); err != nil {
+		t.Fatalf("Withdraw: %v", err)
+	}
+	if said(t, r, colleague(), "d1")["d1"].Mine {
+		t.Errorf("the colleague took their report back and is still counted as one of the people who made one")
+	}
+	if !said(t, r, reader(), "d1")["d1"].Mine {
+		t.Errorf("one person withdrawing took somebody else's report with it")
+	}
+}
+
 func testReportDelete(t *testing.T, s store.Store) {
 	r := reporter(t, s)
 	mustPut(t, s, hers("d1"))

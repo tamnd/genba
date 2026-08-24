@@ -78,6 +78,15 @@ type Staleness struct {
 
 	// Last is the most recent of them, with the name and the sentence on it.
 	Last Report
+
+	// Mine is whether one of those people is the principal who asked.
+	//
+	// It is here rather than worked out from Last, because Last is the most
+	// recent report and the person asking is usually not the most recent person
+	// to have complained. Without it an interface has to say the same thing to
+	// somebody who has already reported the document and somebody who has not,
+	// which is how a reader files a second report meaning to correct their first.
+	Mine bool
 }
 
 // Zero reports whether nobody has said anything about this document.
@@ -161,6 +170,23 @@ type Reporter interface {
 	// reported is not an error, so that the same call can be made after a
 	// verification without asking first.
 	Resolve(ctx context.Context, p *acl.Principal, id string) error
+
+	// Withdraw removes the report this principal wrote about one document, and
+	// only that one. Withdrawing where there is nothing to withdraw is not an
+	// error, for the same reason resolving an unreported document is not.
+	//
+	// It is a different operation from Resolve rather than a relaxation of it.
+	// Resolve is somebody accountable saying the document has been dealt with, so
+	// it clears the lot and is held to [MayResolve]. Withdraw is a reader taking
+	// back their own sentence, and it needs no rule beyond [ReportKey] matching
+	// the key the row was written under, because that comparison can only ever
+	// match the row they wrote themselves.
+	//
+	// Without it, reporting is a one way door. Somebody who reports the wrong
+	// document has to go and ask its owner to clear a report that never meant
+	// anything, and until they do the owner's panel keeps the mistake in front of
+	// them.
+	Withdraw(ctx context.Context, p *acl.Principal, id string) error
 
 	// Reports returns what has been said about each of the given documents that
 	// has anything said about it and that the principal may read. A document

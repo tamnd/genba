@@ -137,6 +137,7 @@ Everything the interface does is an HTTP call, and there is nothing it can reach
 | `DELETE /api/v1/documents/{id}/owner` | puts back the owner the source reports |
 | `POST /api/v1/documents/{id}/stale` | records that the caller says a document is out of date, with an optional note |
 | `DELETE /api/v1/documents/{id}/stale` | clears the reports, which the owner or the author may do |
+| `DELETE /api/v1/documents/{id}/stale/mine` | takes back the caller's own report and leaves everybody else's standing |
 | `GET /api/v1/reported` | the documents the caller owns or wrote that somebody has reported, most recent first |
 | `GET /api/v1/me` | the caller, and the sources and kinds that caller can actually see |
 | `GET /api/v1/stats` | how much is indexed and how much is quarantined |

@@ -41,6 +41,16 @@ type staleness struct {
 	// Note is what is wrong in their words, and is the reason this is worth more
 	// than a flag. It is usually there and it is not required.
 	Note string `json:"note,omitempty"`
+
+	// Mine is whether the caller is one of those people, which is the question
+	// the interface has to answer before it can offer to take a report back.
+	//
+	// It cannot be worked out from By, because By is the most recent of them and
+	// the person asking is usually not the most recent person to have complained.
+	// Without it the button says the same thing to somebody who has already
+	// reported the document and somebody who has not, which is how a reader files
+	// a second report meaning to correct their first.
+	Mine bool `json:"mine,omitempty"`
 }
 
 // reportRequest is a report as it arrives from the interface.
@@ -74,6 +84,7 @@ func staleOf(s store.Staleness) *staleness {
 		Email: s.Last.By.Email,
 		At:    s.Last.At,
 		Note:  s.Last.Note,
+		Mine:  s.Mine,
 	}
 }
 
@@ -170,6 +181,45 @@ func (s *Server) handleResolve(w http.ResponseWriter, r *http.Request, p *acl.Pr
 	// Nothing is left to describe, unlike clearing a correction, so this is the
 	// one write in the pair that says so with no content.
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleWithdraw takes back the report the caller made.
+//
+// It sits under the same path as clearing with an extra word on it, and it is
+// the other endpoint on that path rather than a relaxation of it. Clearing is
+// somebody accountable saying the document has been dealt with, so it takes what
+// verifying takes. Withdrawing is a reader taking back their own sentence, so it
+// takes what reporting takes, which is nothing beyond being able to read the
+// page it is on.
+//
+// Without it, reporting is a one way door. Somebody who reports the wrong
+// document has to go and ask its owner to clear a report that never meant
+// anything, and until they do the owner's panel keeps the mistake in front of
+// them.
+func (s *Server) handleWithdraw(w http.ResponseWriter, r *http.Request, p *acl.Principal) {
+	rep, ok := s.reporter()
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "unsupported", "this deployment cannot record that a document is out of date")
+		return
+	}
+	d, ok := s.readable(w, r, p)
+	if !ok {
+		return
+	}
+	s.log.Info("report withdrawn", "subject", p.Subject, "tenant", p.Tenant, "document", d.ID)
+	if err := rep.Withdraw(r.Context(), p, d.ID); err != nil {
+		s.log.Error("withdraw failed", "error", err, "document", d.ID)
+		writeError(w, http.StatusInternalServerError, "internal", "the report could not be withdrawn")
+		return
+	}
+	// What stands afterwards, the same shape reporting answers with, because the
+	// count has changed and so has what the button should say. Clearing answers
+	// with no content because it leaves nothing behind by definition, and this
+	// usually leaves other people's reports where they were.
+	writeJSON(w, http.StatusOK, flag{
+		Stale:      staleOf(s.reported(r, p, d.ID)),
+		CanResolve: store.MayResolve(p, d),
+	})
 }
 
 // resolveAfterVerify clears the reports on a document somebody has just vouched
