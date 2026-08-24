@@ -19,6 +19,18 @@ import { join } from "node:path";
 const DEADLINE = 20_000;
 const PATIENCE = 5_000;
 
+// How long a single DevTools command may go unanswered before the gate says the
+// browser is wedged.
+//
+// Longer than DEADLINE on purpose. Every wait in this file spends its time
+// inside an await on a command, so a command with no deadline of its own turns
+// every deadline above it into a suggestion: the clock is read between polls and
+// the loop never comes back round to read it. This number is not the budget for
+// a slow page, which is what DEADLINE is. It is the point past which the answer
+// is never coming, and it is generous because the cost of guessing low is a run
+// that fails for a reason that is not the reason it exists.
+const WEDGED = 45_000;
+
 const CHROMES = [
   process.env.CHROME_PATH,
   process.env.CHROME_BIN,
@@ -168,16 +180,59 @@ async function endpoint(port, exited, said) {
  */
 async function attach(url) {
   const socket = new WebSocket(url);
-  const pending = new Map();
-  const listeners = new Map();
-  let next = 0;
 
   await new Promise((resolve, reject) => {
     socket.addEventListener("open", resolve, { once: true });
     socket.addEventListener("error", () => reject(new Error("could not open a DevTools connection")), {
       once: true,
     });
+    socket.addEventListener("close", () => reject(new Error("the DevTools connection closed before it opened")), {
+      once: true,
+    });
   });
+
+  const { send, on } = wire(socket);
+
+  const { targetId } = await send("Target.createTarget", { url: "about:blank" });
+  const { sessionId } = await send("Target.attachToTarget", { targetId, flatten: true });
+  await send("Page.bringToFront", {}, sessionId);
+  const session = (method, params) => send(method, params, sessionId);
+  session.on = on;
+  return session;
+}
+
+/**
+ * wire is the message pump over an open socket.
+ *
+ * It is its own function rather than four closures inside attach so that the
+ * part with the failure modes in it can be driven by a test without a browser.
+ * What it owns is the bookkeeping: which command each reply belongs to, which
+ * events go to which handler, and what happens to a command that is never
+ * answered.
+ *
+ * Every promise it hands out settles. A command that goes unanswered for WEDGED
+ * is rejected with the method in the message, because a hung gate today prints
+ * the line before the one that hung and leaves whoever reads it guessing. A
+ * connection that closes or errors takes every outstanding command with it, for
+ * the same reason a Chrome that has exited is never going to answer, and a
+ * command sent after that is refused rather than queued into a socket nobody is
+ * reading.
+ */
+export function wire(socket, deadline = WEDGED) {
+  const pending = new Map();
+  const listeners = new Map();
+  let next = 0;
+  let gone = "";
+
+  const abandon = (why) => {
+    if (gone) return;
+    gone = why;
+    for (const waiting of pending.values()) {
+      clearTimeout(waiting.timer);
+      waiting.reject(new Error(`${waiting.method} was outstanding when ${why}`));
+    }
+    pending.clear();
+  };
 
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(event.data);
@@ -189,25 +244,40 @@ async function attach(url) {
     const waiting = pending.get(message.id);
     if (!waiting) return;
     pending.delete(message.id);
+    clearTimeout(waiting.timer);
     if (message.error) waiting.reject(new Error(message.error.message));
     else waiting.resolve(message.result);
   });
 
+  socket.addEventListener("close", () => abandon("the DevTools connection closed"));
+  socket.addEventListener("error", () => abandon("the DevTools connection failed"));
+
   const send = (method, params, sessionId) =>
     new Promise((resolve, reject) => {
+      if (gone) {
+        reject(new Error(`${method} was not sent because ${gone}`));
+        return;
+      }
       const id = ++next;
-      pending.set(id, { resolve, reject });
+      const where = sessionId ? ` on session ${sessionId}` : "";
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error(`${method}${where} went unanswered for ${deadline}ms, so the browser is wedged`));
+      }, deadline);
+      // Deliberately not unref'd. An unreferenced timer lets node decide the
+      // loop has nothing left to do and shut down with this promise still
+      // pending, which is the silent version of the hang being fixed here. Every
+      // script that uses this exits explicitly when it is done, so a timer that
+      // holds the loop for at most WEDGED holds nothing anybody is waiting on.
+      pending.set(id, { method, resolve, reject, timer });
       socket.send(JSON.stringify({ id, method, params: params || {}, sessionId }));
     });
 
-  const { targetId } = await send("Target.createTarget", { url: "about:blank" });
-  const { sessionId } = await send("Target.attachToTarget", { targetId, flatten: true });
-  await send("Page.bringToFront", {}, sessionId);
-  const session = (method, params) => send(method, params, sessionId);
-  session.on = (method, handler) => {
+  const on = (method, handler) => {
     listeners.set(method, (listeners.get(method) || []).concat(handler));
   };
-  return session;
+
+  return { send, on };
 }
 
 /** narrow tells the page it is on a small screen, media queries and all. */

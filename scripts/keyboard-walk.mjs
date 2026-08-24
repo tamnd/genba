@@ -274,15 +274,28 @@ async function walk(session) {
 
   // One ahead, so the next press paints from memory rather than from the
   // network. The cache is the app's own, reached the way the app reaches it.
-  await check(
-    session,
-    "the result under the one on screen has already been fetched",
-    `import('genba/cache.js').then(({ cache }) => {
-      const rows = [...document.querySelectorAll('.result__title')];
-      const next = rows[2].getAttribute('href').replace('/d/', '').split('?')[0];
-      return cache.read(cache.key('document', { id: decodeURIComponent(next) })).state !== 'miss';
-    })`,
-  );
+  //
+  // Waited for rather than sampled. What the prefetch leaves behind is a request
+  // in flight, and check gives an assertion five seconds because that is how
+  // long a paint after a fetch is allowed to take. Five seconds is a budget for
+  // slowness, and slowness is not what this line is about: the claim is that the
+  // prefetch happens at all. So it settles on the entry leaving the miss state
+  // first, with the deadline that means broken rather than the one that means
+  // busy, and only then reports. A run on a loaded machine now takes longer to
+  // say ok instead of saying FAIL for a reason that was never the interface.
+  const prefetched = `import('genba/cache.js').then(({ cache }) => {
+    const rows = [...document.querySelectorAll('.result__title')];
+    const next = rows[2].getAttribute('href').replace('/d/', '').split('?')[0];
+    return cache.read(cache.key('document', { id: decodeURIComponent(next) })).state !== 'miss';
+  })`;
+  try {
+    await settle(session, prefetched);
+  } catch {
+    // Reported by the check below, which is where a failure belongs. Throwing
+    // here would end the walk on this one line and lose the twenty checks after
+    // it, and a prefetch that never lands is worth exactly one FAIL.
+  }
+  await check(session, "the result under the one on screen has already been fetched", prefetched);
 
   await press(session, "k", "KeyK", 75);
   await check(
