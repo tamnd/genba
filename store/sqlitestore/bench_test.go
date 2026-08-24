@@ -70,6 +70,31 @@ func BenchmarkRankFilterOnly(b *testing.B) {
 	}
 }
 
+// BenchmarkReachable is the filter rail, counted rather than sampled.
+//
+// It is the one read here whose cost follows the corpus rather than the page,
+// deliberately: a rail that reports the first thousand documents the planner
+// happened to reach reports proportions of nothing, which was #142. So the
+// number this prints is meant to be looked at rather than assumed, and it is
+// why the layer above reads it through a cache with an expiry of its own
+// instead of on every session bootstrap. Making it cheap enough not to need
+// that cache is #149.
+func BenchmarkReachable(b *testing.B) {
+	st, spec := benchcorpus.Fixture(b)
+	p := spec.Principal()
+
+	b.ReportAllocs()
+	for b.Loop() {
+		got, err := st.Reachable(b.Context(), p)
+		if err != nil {
+			b.Fatalf("Reachable: %v", err)
+		}
+		if len(got.Sources) == 0 || len(got.Kinds) == 0 {
+			b.Fatalf("the corpus counted %d sources and %d kinds", len(got.Sources), len(got.Kinds))
+		}
+	}
+}
+
 // BenchmarkStatistics is the second query of every search. It is separate
 // because it is the one that would quietly become a scan over every document
 // carrying a common term.

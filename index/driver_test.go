@@ -155,10 +155,15 @@ func TestDriversAgree(t *testing.T) {
 // rail a search would have drawn.
 //
 // It used to be drawn from a search with a limit of one, which is where the
-// counts came from and is why they were right. Now it is drawn from a selection
-// that asks for the counts and no candidates, so the thing worth asserting is
-// that nothing moved: the values, the counts and the order are what the search
-// reports, on the driver that counts in SQL and on the one that counts in Go.
+// counts came from and is why they were right. Now it is counted by the driver
+// under the same permission rule, so the thing worth asserting is that nothing
+// moved: the values, the counts and the order are what the search reports, on
+// the driver that counts in SQL and on the one that counts in Go.
+//
+// Over a corpus this size the two are the same numbers arrived at two ways. The
+// case where they differ is a corpus larger than the facet bound, where the
+// search reports a sample and the rail reports the count, and that one is
+// TestTheRailCountsPastTheBoundASearchStopsAt.
 func TestFiltersMatchWhatASearchWouldHaveCounted(t *testing.T) {
 	scanning, retrieving := searchers(t)
 
@@ -175,10 +180,20 @@ func TestFiltersMatchWhatASearchWouldHaveCounted(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s Filters: %v", name, err)
 			}
-			for _, field := range []string{"source", "kind", "container", "author"} {
+			// The two the rail draws. The container and author counts a search
+			// reports are counted over a match set, where narrowing to one of
+			// them is a question somebody might have; over a whole corpus the
+			// answer is every author in the company and the rail does not ask.
+			for _, field := range []string{"source", "kind"} {
 				if !slices.Equal(got[field], res.Facets[field]) {
 					t.Errorf("%s %s filters for %s = %v, a search counted %v",
 						name, field, who.Subject, got[field], res.Facets[field])
+				}
+			}
+			for _, field := range []string{"container", "author"} {
+				if len(got[field]) != 0 {
+					t.Errorf("%s counted %s for the rail: %v, and the rail does not draw it",
+						name, field, got[field])
 				}
 			}
 		}

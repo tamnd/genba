@@ -201,6 +201,11 @@ func BenchmarkAPISearchCurated(b *testing.B) {
 // BenchmarkAPIMe and BenchmarkAPIStats are the two calls the interface makes
 // before it can draw anything, so they are on the path to first paint even
 // though neither of them searches for anything.
+//
+// This measures the second session of the morning rather than the first. The
+// filter rail is counted over every document the reader may open and held for a
+// minute, so what is on this path almost always is the cache lookup, and the
+// count behind it is measured where it happens, in BenchmarkReachable.
 func BenchmarkAPIMe(b *testing.B) {
 	h, hdr := handler(b)
 	get(b, h, "/api/v1/me", hdr)

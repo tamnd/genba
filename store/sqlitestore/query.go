@@ -87,6 +87,11 @@ func visible(p *acl.Principal) *clause {
 // unresolved is already excluded by queryable, then a deny denies, then the
 // owner is allowed, then the mode decides.
 //
+// The documents that survive the rule are materialised as two columns and
+// grouped twice, rather than the rule being run once per grouping. Two counts
+// of the same rows is one pass over the corpus and two passes over a temporary
+// table of two short strings, and the pass over the corpus is all of the cost.
+//
 // It is a second expression of the rule and that is the thing to be careful
 // about, so it is held to the first by storetest.RunReachable, which walks the
 // order clause by clause against every driver.
@@ -106,17 +111,21 @@ func reachable(p *acl.Principal) (query string, args []any) {
 			UNION
 			SELECT doc_id, effect FROM document_ref
 			WHERE scope = 1 AND key IN (SELECT value FROM json_each(?))
+		),
+		mine(source, kind) AS MATERIALIZED (
+			SELECT d.source, d.kind FROM document d
+			WHERE d.queryable = 1
+			  AND d.tenant = ?
+			  AND d.id NOT IN (SELECT doc_id FROM named WHERE effect = 1)
+			  AND (
+			    (d.owner_key <> '' AND d.owner_key IN (SELECT value FROM json_each(?)))
+			    OR d.mode = ?
+			    OR (d.mode = ? AND d.id IN (SELECT doc_id FROM named WHERE effect = 0))
+			  )
 		)
-		SELECT d.source, count(*) FROM document d
-		WHERE d.queryable = 1
-		  AND d.tenant = ?
-		  AND d.id NOT IN (SELECT doc_id FROM named WHERE effect = 1)
-		  AND (
-		    (d.owner_key <> '' AND d.owner_key IN (SELECT value FROM json_each(?)))
-		    OR d.mode = ?
-		    OR (d.mode = ? AND d.id IN (SELECT doc_id FROM named WHERE effect = 0))
-		  )
-		GROUP BY d.source`
+		SELECT 'source' AS field, source AS value, count(*) AS n FROM mine GROUP BY source
+		UNION ALL
+		SELECT 'kind', kind, count(*) FROM mine GROUP BY kind`
 
 	return q, []any{
 		string(users), string(groups),
