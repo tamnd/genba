@@ -115,10 +115,11 @@ type Counters struct {
 
 // Resolver expands subjects against one directory.
 //
-// It holds no cache. That is deliberate and it is not an oversight: caching a
-// group membership correctly is a harder problem than expanding one, it needs
-// the version this package produces in order to be invalidated, and putting the
-// two in the same type is how the cache ends up with a timeout instead.
+// It holds no cache of its own. That is deliberate and it is not an oversight:
+// caching a group membership correctly is a harder problem than expanding one,
+// it needs the version this produces in order to be invalidated, and putting
+// the two in the same type is how the cache ends up with a timeout instead.
+// [Cache] is the layer, it wraps this, and everything above takes either.
 //
 // A Resolver is safe for concurrent use.
 type Resolver struct {

@@ -369,7 +369,7 @@ func main() {
 | Package | What lives there |
 | --- | --- |
 | `acl` | principals, groups, permission descriptors, visibility bitmaps |
-| `directory` | a person resolved into the groups they are in, with cycle detection and a version, [docs/identity.md](docs/identity.md) |
+| `directory` | a person resolved into the groups they are in, with cycle detection, a version and one cache layer, [docs/identity.md](docs/identity.md) |
 | `directory/directorytest` | the conformance suite that defines what a directory adapter is |
 | `doc` | the canonical document model every connector normalises into |
 | `store` | the storage interface, plus `storetest`, the conformance suite |
@@ -499,6 +499,8 @@ A provider adapter answers two lookups, what one subject is directly a member of
 Those are the parts that are easy to get subtly wrong and impossible to notice from the outside, and a group that ended up inside itself during a reorganisation hangs a walk in production rather than in a test.
 The group set is stamped with a version derived from the answer, so a membership change invalidates everything cached from it the moment it lands, and a change that does not touch this person's closure does not invalidate this person.
 A directory that cannot be reached refuses the request rather than resolving somebody to no groups, because an empty group set is a valid answer that everything above is built to trust.
+Expanding on every request is not affordable, so there is a cache, and there is exactly one layer of it: caching the group edges as well would mean an answer built out of edges that were themselves already old, and a worst case age that is the sum of two lifetimes is a number nobody can state without drawing a diagram.
+One layer means the maximum staleness of any group set is the lifetime, which is configured in one place and published as a metric.
 [docs/identity.md](docs/identity.md) is the whole of it.
 
 A connector hands the pipeline a body, and for the PDF attached to a ticket or the deck a quarter was reviewed from, the bytes are not it.

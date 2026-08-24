@@ -41,6 +41,11 @@ groups:
 # A document whose permissions did not resolve is held back rather than served, which is the safe outcome, so a growing count is a bug report and not a page.
 # It belongs on the dashboard next to the document count.
 #
+# Directory staleness.
+# genba_directory_staleness_seconds is a constant, so there is nothing in it to alert on.
+# It is published because it is the answer to "how long after I remove somebody from a group does it take effect", and that question gets asked during an incident by somebody who cannot read the deployment's configuration.
+# The layer next to it, genba_cache_hits_total{layer="directory"}, is the one to look at when sign in has become slow.
+#
 # Request duration per endpoint.
 # It is the first thing to look at during an incident and it is too easy to page on: one slow endpoint that nobody uses would fire this every deploy.
 # Search has its own alert above because search is the one endpoint that being slow means the product is down.

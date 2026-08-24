@@ -2,14 +2,18 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/tamnd/genba/acl"
 	"github.com/tamnd/genba/api"
+	"github.com/tamnd/genba/cache"
 	"github.com/tamnd/genba/directory"
 	"github.com/tamnd/genba/index"
 	"github.com/tamnd/genba/store/memstore"
@@ -210,5 +214,118 @@ func TestAWrapperWithNothingToWrapRefuses(t *testing.T) {
 	}
 	if _, err := (api.Resolving{Auth: api.HeaderAuth{Tenant: "acme"}}).Authenticate(asking("mei")); !errors.Is(err, api.ErrUnauthenticated) {
 		t.Errorf("a wrapper with no directory gave %v", err)
+	}
+}
+
+// caching wraps the site directory in a cache, which is how a deployment
+// resolves once the traffic is real.
+func caching(t *testing.T, opts ...directory.CacheOption) *directory.Cache {
+	t.Helper()
+	c, err := directory.NewCache(site(t), opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// Nothing at the edge of the API can tell a cache from a resolver, which is the
+// point of the interface being two methods.
+func TestACachedDirectoryAnswersTheSame(t *testing.T) {
+	auth := api.Resolving{Auth: api.HeaderAuth{Tenant: "acme"}, Resolver: caching(t)}
+
+	first, err := auth.Authenticate(asking("mei"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := auth.Authenticate(asking("mei"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"acme:engineering", "acme:everyone"}
+	if !slices.Equal(second.Groups.Members, want) {
+		t.Errorf("the cached answer is %v, want %v", second.Groups.Members, want)
+	}
+	if first.Groups.Version != second.Groups.Version {
+		t.Error("two requests for the same person got different versions")
+	}
+}
+
+// A cache layer nobody can see the hit rate of is a cache layer nobody can tell
+// is broken, and this one decides how hard the directory is being hit.
+func TestTheDirectoryLayerIsOnTheStatsEndpoint(t *testing.T) {
+	st := memstore.New()
+	t.Cleanup(func() { _ = st.Close() })
+	s := api.New(st, index.New(st), api.Resolving{
+		Auth:     api.HeaderAuth{Tenant: "acme", Admins: []string{"mei"}},
+		Resolver: caching(t),
+	})
+	h := s.Handler()
+
+	for range 2 {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, asking("mei"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("a search answered %d: %s", rec.Code, rec.Body.String())
+		}
+	}
+
+	stats := asking("mei")
+	stats.URL.Path = "/api/v1/stats"
+	stats.URL.RawQuery = ""
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, stats)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the stats endpoint answered %d", rec.Code)
+	}
+	var body struct {
+		Cache map[string]cache.Stats `json:"cache"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := body.Cache["directory"]
+	if !ok {
+		t.Fatalf("no directory layer in %v", body.Cache)
+	}
+	if got.Hits == 0 {
+		t.Errorf("the second request did not hit the directory cache: %+v", got)
+	}
+}
+
+// The bound is a promise the deployment is making about its permissions, and a
+// promise that only exists in a configuration file is one nobody is checking.
+func TestTheStalenessBoundIsPublished(t *testing.T) {
+	st := memstore.New()
+	t.Cleanup(func() { _ = st.Close() })
+	s := api.New(st, index.New(st), api.Resolving{
+		Auth:     api.HeaderAuth{Tenant: "acme"},
+		Resolver: caching(t, directory.WithTTL(30*time.Second)),
+	})
+
+	rec := httptest.NewRecorder()
+	s.Metrics().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/metrics", http.NoBody))
+	if !strings.Contains(rec.Body.String(), "\n"+api.MetricGroupStaleness+" 30\n") {
+		t.Errorf("the staleness bound is not published:\n%s", rec.Body.String())
+	}
+}
+
+// A hit rate of zero and no cache at all look the same on a dashboard and mean
+// opposite things, so a deployment that resolves without one publishes neither.
+func TestADeploymentWithoutADirectoryCachePublishesNoLayer(t *testing.T) {
+	st := memstore.New()
+	t.Cleanup(func() { _ = st.Close() })
+	s := api.New(st, index.New(st), api.Resolving{
+		Auth:     api.HeaderAuth{Tenant: "acme"},
+		Resolver: site(t),
+	})
+
+	rec := httptest.NewRecorder()
+	s.Metrics().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/metrics", http.NoBody))
+	body := rec.Body.String()
+	if strings.Contains(body, `genba_cache_hits_total{layer="directory"}`) {
+		t.Error("a deployment with no directory cache published a directory layer")
+	}
+	if strings.Contains(body, "\n"+api.MetricGroupStaleness+" ") {
+		t.Error("a deployment with no directory cache published a staleness bound")
 	}
 }

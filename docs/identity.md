@@ -140,10 +140,45 @@ func TestConformance(t *testing.T) {
 `directory.Static` is the reference implementation the suite runs against, and it is also the directory a small deployment actually uses.
 A company with forty people and six groups has the whole thing in its configuration file, and making them stand up an identity provider to try a search engine is how a search engine does not get tried.
 
+## Remembering the answer
+
+Expanding on every request is not affordable.
+A person in three hundred groups costs three hundred lookups against a service everybody else is also using, and a search box that feels instant cannot start by doing that.
+
+So `directory.Cache` wraps a resolver and holds what it produced, keyed by the subject, for a configured lifetime.
+Concurrent requests for the same person do one expansion between them, which matters here more than in most caches: everybody arrives at nine o'clock, and a cold cache and a thousand people is a thousand walks over the same directory.
+
+There is exactly one layer and that is the interesting decision.
+The obvious second one, remembering what each group is a member of, would help, because real directories converge and the same dozen groups sit above everybody.
+It would also mean an answer could be built out of edges that were themselves already a minute old, so the worst case age of a group set would be the sum of two lifetimes rather than one.
+That is a staleness bound nobody can state without drawing a diagram, and a bound nobody can state is one nobody is holding anyone to.
+One layer, the whole expansion, and the maximum age of any group set is the lifetime.
+`Cache.Staleness` returns it and the metrics publish it, because a promise that only exists in a configuration file is one nobody is checking.
+
+The lifetime and the version are two mechanisms doing two different jobs and they are easy to confuse.
+
+The lifetime bounds how long it takes to notice a membership change.
+Nothing else can, because a directory does not call to say somebody was removed from a group, so noticing means asking again.
+A minute is the default, and it is a minute rather than five because this is a permission input and the hit rate barely moves between the two.
+The traffic that matters is one person making forty requests while they are looking at something.
+
+The version bounds how long anything built on top of a group set outlives it.
+Every bitmap, every filter and every cached result keyed by the group set carries the version, so the moment a refreshed expansion produces a different closure, all of it stops matching at once.
+Without that, a minute of staleness here would be an unbounded amount of staleness in every layer above, and the person removed from a group would keep its documents until something unrelated happened to expire.
+
+`Cache.Forget` drops one person, and it exists because there are moments when waiting for the lifetime is the wrong answer and they are the moments that matter.
+Somebody is taken out of a group during an incident, an account is closed, a provider sends a webhook.
+Those are about one person, and flushing everybody to deal with one person means a sign in storm against the directory at exactly the time nobody wants one.
+
+Errors are never held.
+A directory that was unreachable for a moment is not a fact about a subject, and remembering it would turn a blip into a minute of refusals.
+A refusal the directory meant, a subject it does not hold or has deactivated, still refuses on every request, because that one is an answer rather than a failure.
+
 ## What is not here yet
 
-Caching.
-The resolver holds none, deliberately: caching a group membership correctly is a harder problem than expanding one, it needs the version this package produces in order to be invalidated, and putting the two in the same type is how the cache ends up with a timeout instead.
+Serving a stale answer through a directory outage.
+The cache refuses once an entry has expired and the directory cannot be reached, which is the same direction the resolver fails in, and an operator who would rather serve a slightly old group set than refuse a sign in has no way to say so yet.
+It is a real choice with a real cost on the other side, so it should be a configured window with its own metric rather than a default.
 
 Adapters for the hosted providers.
 The interface is two methods and the suite is what they have to pass, so each is a small amount of code and a fake, in the shape the connectors already use.

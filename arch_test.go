@@ -28,13 +28,13 @@ var allowed = map[string][]string{
 	"doc": {"acl"},
 
 	// directory sits under the permission model rather than beside it. It
-	// resolves a person into groups and hands acl the strings it compares, and
-	// the one thing it imports is acl, for the identity and group set types
-	// that are the shape of its answer. It has never heard of a document, a
-	// store or a query, and it must not: a directory that could see what it was
-	// resolving somebody for is a directory that could be asked leading
-	// questions.
-	"directory":               {"acl"},
+	// resolves a person into groups and hands acl the strings it compares, so
+	// it imports acl for the identity and group set types that are the shape of
+	// its answer, and cache for the one layer that holds those answers. It has
+	// never heard of a document, a store or a query, and it must not: a
+	// directory that could see what it was resolving somebody for is a
+	// directory that could be asked leading questions.
+	"directory":               {"acl", "cache"},
 	"directory/directorytest": {"acl", "directory"},
 
 	// cache is a map with a lock on it and imports nothing of ours, which is
