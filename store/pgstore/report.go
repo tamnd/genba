@@ -23,9 +23,17 @@ var _ store.Reporter = (*Store)(nil)
 // nanosecond are possible on a test clock and only just impossible on a real
 // one, and a query that picks either of them picks a different one on the next
 // call, which is a screen that changes when nothing did.
+//
+// The third window is whether the person asking is one of the people who
+// complained, which is a question about a row the other two throw away: the one
+// they keep is the most recent, and the person asking is usually not the most
+// recent person to have complained. Asking it here costs the partition that is
+// already being walked rather than a second visit to the table, and it takes the
+// key as a parameter, so both callers bind one.
 const latest = `
 	SELECT doc_id, reporter, reported_at, note,
 	       count(*)     OVER (PARTITION BY doc_id) AS n,
+	       bool_or(by_key = ?) OVER (PARTITION BY doc_id) AS mine,
 	       row_number() OVER (PARTITION BY doc_id ORDER BY reported_at DESC, by_key) AS rn
 	FROM document_report`
 
@@ -106,6 +114,42 @@ func (s *Store) Resolve(ctx context.Context, p *acl.Principal, id string) error 
 	return nil
 }
 
+// Withdraw removes the report this principal wrote, and only that one.
+//
+// The delete is Resolve's with by_key on it, so the visibility predicate stays
+// where it is and the two cannot disagree about which documents can be touched.
+// What it adds is the whole difference between the two calls: a key that can
+// only ever match the row this principal wrote, which is why taking your own
+// report back needs no permission and clearing everybody's needs the same one as
+// verifying.
+func (s *Store) Withdraw(ctx context.Context, p *acl.Principal, id string) error {
+	if err := s.ready(ctx); err != nil {
+		return err
+	}
+	if p == nil {
+		return genba.ErrNoPrincipal
+	}
+	key := store.ReportKey(p)
+	if key == "" {
+		return fmt.Errorf("pgstore: withdraw: %w", store.ErrNoReporter)
+	}
+
+	c := visible(p)
+	args := append([]any{key, id}, c.args...)
+	err := s.retry(ctx, func(ctx context.Context) error {
+		s.counters.statements.Add(1)
+		_, err := s.pool.Exec(ctx, rebind(`
+			DELETE FROM document_report r
+			WHERE r.by_key = ?
+			  AND r.doc_id IN (SELECT d.id FROM document d WHERE d.id = ? AND `+c.where()+`)`), args...)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("pgstore: withdraw: %w", err)
+	}
+	return nil
+}
+
 // Reports returns what has been said about the documents the principal may read.
 //
 // One statement for the whole page, with the ids bound as a text array, exactly
@@ -127,13 +171,13 @@ func (s *Store) Reports(ctx context.Context, p *acl.Principal, ids []string) (ma
 	}
 
 	c := visible(p)
-	args := append([]any{ids}, c.args...)
+	args := append([]any{store.ReportKey(p), ids}, c.args...)
 
 	var out map[string]store.Staleness
 	err := s.retry(ctx, func(ctx context.Context) error {
 		out = nil
 		rows, err := s.query(ctx, `
-			SELECT r.doc_id, r.reporter, r.reported_at, r.note, r.n
+			SELECT r.doc_id, r.reporter, r.reported_at, r.note, r.n, r.mine
 			FROM (`+latest+` WHERE doc_id = ANY(?)) r
 			JOIN document d ON d.id = r.doc_id
 			WHERE r.rn = 1 AND `+c.where(), args...)
@@ -180,14 +224,14 @@ func (s *Store) Reported(ctx context.Context, p *acl.Principal, limit int) ([]st
 
 	keys := nonEmpty(store.PrincipalKeys(p))
 	c := visible(p)
-	args := append([]any{keys, keys}, c.args...)
+	args := append([]any{store.ReportKey(p), keys, keys}, c.args...)
 	args = append(args, limit)
 
 	var out []store.Flagged
 	err := s.retry(ctx, func(ctx context.Context) error {
 		out = nil
 		rows, err := s.query(ctx, `
-			SELECT r.doc_id, r.reporter, r.reported_at, r.note, r.n, x.data
+			SELECT r.doc_id, r.reporter, r.reported_at, r.note, r.n, r.mine, x.data
 			FROM (`+latest+`) r
 			JOIN document d ON d.id = r.doc_id
 			JOIN document_data x ON x.doc_id = d.id
@@ -222,15 +266,15 @@ func (s *Store) Reported(ctx context.Context, p *acl.Principal, limit int) ([]st
 	return out, nil
 }
 
-// scanStaleness reads the five columns both read paths select, and whatever
-// else the caller put after them.
+// scanStaleness reads the six columns both read paths select, and whatever else
+// the caller put after them.
 func scanStaleness(rows scanner, rest ...any) (store.Staleness, error) {
 	var (
 		said     store.Staleness
 		reporter string
 		at       int64
 	)
-	dest := append([]any{&said.Doc, &reporter, &at, &said.Last.Note, &said.Count}, rest...)
+	dest := append([]any{&said.Doc, &reporter, &at, &said.Last.Note, &said.Count, &said.Mine}, rest...)
 	if err := rows.Scan(dest...); err != nil {
 		return store.Staleness{}, err
 	}

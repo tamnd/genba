@@ -27,6 +27,7 @@ type staleBody struct {
 	Email string    `json:"email"`
 	At    time.Time `json:"at"`
 	Note  string    `json:"note"`
+	Mine  bool      `json:"mine"`
 }
 
 // documentStale is the preview as far as this file is concerned.
@@ -61,6 +62,16 @@ func colleague() map[string]string {
 		api.HeaderSubject:    "u_ren",
 		api.HeaderGroups:     "gdrive:eng@acme.com",
 		api.HeaderIdentities: "gdrive:ren@acme.com",
+	}
+}
+
+// teammate is a second reader in the same group, for the cases that need two
+// people to have complained about the same document.
+func teammate() map[string]string {
+	return map[string]string{
+		api.HeaderSubject:    "u_ade",
+		api.HeaderGroups:     "gdrive:eng@acme.com",
+		api.HeaderIdentities: "gdrive:ade@acme.com",
 	}
 }
 
@@ -181,6 +192,96 @@ func TestVerifyingClearsTheReports(t *testing.T) {
 	}
 	if got.Verified == nil || got.Verified.State != "fresh" {
 		t.Errorf("the verification did not stand: %+v", got.Verified)
+	}
+}
+
+// Reporting the wrong document is a mistake somebody makes in the ten seconds
+// this feature is built to cost, and the way out of it is not asking the owner
+// to clear a report that never meant anything.
+func TestAReaderCanTakeBackTheirOwnReport(t *testing.T) {
+	h := newReportServer(t)
+	if w := post(t, h, http.MethodPost, "/api/v1/documents/hers/stale", `{"note":"wrong document"}`, colleague()); w.Code != http.StatusOK {
+		t.Fatalf("report: %d %s", w.Code, w.Body.String())
+	}
+
+	w := post(t, h, http.MethodDelete, "/api/v1/documents/hers/stale/mine", "", colleague())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	// What stands afterwards, because the count has changed and so has what the
+	// button should say.
+	if said := decode[documentStale](t, w).Stale; said != nil {
+		t.Errorf("the only report was withdrawn and the answer still carries %+v", said)
+	}
+	if got := panelOf(t, h, "hers", owner()); got.Stale != nil {
+		t.Errorf("the owner's panel still carries a report that was taken back: %+v", got.Stale)
+	}
+
+	// Again, because a second click on a button that has already done its work is
+	// something that happens on a slow connection.
+	if again := post(t, h, http.MethodDelete, "/api/v1/documents/hers/stale/mine", "", colleague()); again.Code != http.StatusOK {
+		t.Errorf("withdrawing a report that is no longer there: %d %s", again.Code, again.Body.String())
+	}
+}
+
+// Taking back your own sentence is not clearing everybody's, which is the whole
+// reason this is a second endpoint rather than a permission somebody relaxed.
+func TestWithdrawingLeavesEverybodyElsesReportStanding(t *testing.T) {
+	h := newReportServer(t)
+	for _, who := range []map[string]string{colleague(), teammate()} {
+		if w := post(t, h, http.MethodPost, "/api/v1/documents/hers/stale", `{"note":"out of date"}`, who); w.Code != http.StatusOK {
+			t.Fatalf("report: %d %s", w.Code, w.Body.String())
+		}
+	}
+
+	w := post(t, h, http.MethodDelete, "/api/v1/documents/hers/stale/mine", "", colleague())
+	said := decode[documentStale](t, w).Stale
+	if said == nil || said.Count != 1 {
+		t.Fatalf("one of two reports was withdrawn and what is left says %+v", said)
+	}
+	if said.Mine {
+		t.Errorf("the reader took their report back and the answer still says it is theirs")
+	}
+	if got := panelOf(t, h, "hers", teammate()); got.Stale == nil || !got.Stale.Mine {
+		t.Errorf("one person withdrawing took somebody else's report with it: %+v", got.Stale)
+	}
+}
+
+// The button cannot read as a way out until the server says whether there is
+// anything to get out of, and it cannot be worked out from the name on the mark:
+// that is the most recent person to have complained, who is usually not the
+// person reading the page.
+func TestThePanelSaysWhetherTheReaderIsOneOfThePeopleWhoReportedIt(t *testing.T) {
+	h := newReportServer(t)
+	if w := post(t, h, http.MethodPost, "/api/v1/documents/hers/stale", `{"note":"out of date"}`, colleague()); w.Code != http.StatusOK {
+		t.Fatalf("report: %d %s", w.Code, w.Body.String())
+	}
+	if w := post(t, h, http.MethodPost, "/api/v1/documents/hers/stale", `{"note":"and the diagram"}`, teammate()); w.Code != http.StatusOK {
+		t.Fatalf("report: %d %s", w.Code, w.Body.String())
+	}
+
+	if got := panelOf(t, h, "hers", colleague()); got.Stale == nil || !got.Stale.Mine {
+		t.Errorf("the reader reported it and their panel says somebody else did: %+v", got.Stale)
+	}
+	if got := panelOf(t, h, "hers", owner()); got.Stale == nil || got.Stale.Mine {
+		t.Errorf("the owner never reported it and their panel says they did: %+v", got.Stale)
+	}
+}
+
+// Same silence as reporting. Anything else is a way to ask whether an id is
+// real by trying to take back a report nobody made.
+func TestWithdrawingSomethingYouCannotSeeIsANotFound(t *testing.T) {
+	h := newReportServer(t)
+
+	seen := post(t, h, http.MethodDelete, "/api/v1/documents/hers/stale/mine", "", salesperson())
+	missing := post(t, h, http.MethodDelete, "/api/v1/documents/nothing/stale/mine", "", salesperson())
+	if seen.Code != http.StatusNotFound || missing.Code != http.StatusNotFound {
+		t.Fatalf("a hidden document answered %d and a missing one answered %d, and both should be 404",
+			seen.Code, missing.Code)
+	}
+	if seen.Body.String() != missing.Body.String() {
+		t.Errorf("the two answers differ, which is enough to tell that hers exists:\n%s\n%s",
+			seen.Body.String(), missing.Body.String())
 	}
 }
 

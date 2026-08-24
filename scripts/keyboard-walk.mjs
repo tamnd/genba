@@ -539,6 +539,45 @@ async function walk(session) {
       'the section about the old cluster is wrong'`,
   );
 
+  // The way back out, and the button beside it saying something different to
+  // somebody who has already used it. Reporting costs ten seconds, which is the
+  // point of it, and a mistake made in ten seconds that then needs a
+  // conversation with an owner to undo is a feature people stop using.
+  await check(
+    session,
+    "somebody who has reported a document is offered a way to take it back",
+    `Boolean(${foot("Withdraw my report")}) && Boolean(${foot("Change what I said")}) &&
+      !${foot("Report as out of date")}`,
+  );
+
+  await evaluate(session, foot("Withdraw my report") + ".click()");
+  await check(
+    session,
+    "withdrawing takes the mark off and puts the plain report button back",
+    `!document.querySelector('.page__meta .stale') && !document.querySelector('.stale__note') &&
+      Boolean(${foot("Report as out of date")}) && !${foot("Withdraw my report")} &&
+      Boolean(document.querySelector('.page__body [data-walk="kept"]'))`,
+  );
+
+  // Said again, because the rest of this walk is about what an owner does with a
+  // report and there is nothing to do with one that has been taken back.
+  await evaluate(
+    session,
+    `(() => {
+      document.querySelector('.button--report').click();
+      const field = document.querySelector('.stale__field');
+      field.value = 'the section about the old cluster is wrong';
+      field.form.requestSubmit();
+      return true;
+    })()`,
+  );
+  await check(
+    session,
+    "reporting it again after taking it back stands as a report",
+    `Boolean(document.querySelector('.page__meta .stale')) &&
+      Boolean(${foot("Withdraw my report")})`,
+  );
+
   // The owner's side of the same report, which is the half that decides whether
   // any of this was worth typing. Nothing a file connector indexes has an owner,
   // so one is named first: the panel exists for the person accountable for a

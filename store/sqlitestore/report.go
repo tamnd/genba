@@ -28,9 +28,17 @@ var _ store.Reporter = (*Store)(nil)
 // nanosecond are possible on a test clock and only just impossible on a real
 // one, and a query that picks either of them picks a different one on the next
 // call, which is a screen that changes when nothing did.
+//
+// The third window is whether the person asking is one of the people who
+// complained, which is a question about a row the other two throw away: the one
+// they keep is the most recent, and the person asking is usually not the most
+// recent person to have complained. Asking it here costs the partition that is
+// already being walked rather than a second visit to the table, and it takes the
+// key as a parameter, so both callers bind one.
 const latest = `
 	SELECT doc_id, reporter, reported_at, note,
 	       COUNT(*)     OVER (PARTITION BY doc_id) AS n,
+	       MAX(by_key = ?) OVER (PARTITION BY doc_id) AS mine,
 	       ROW_NUMBER() OVER (PARTITION BY doc_id ORDER BY reported_at DESC, by_key) AS rn
 	FROM document_report`
 
@@ -101,6 +109,39 @@ func (s *Store) Resolve(ctx context.Context, p *acl.Principal, id string) error 
 	return nil
 }
 
+// Withdraw removes the report this principal wrote, and only that one.
+//
+// The delete is Resolve's with by_key on it, so the visibility predicate stays
+// where it is and the two cannot disagree about which documents can be touched.
+// What it adds is the whole difference between the two calls: a key that can
+// only ever match the row this principal wrote, which is why taking your own
+// report back needs no permission and clearing everybody's needs the same one as
+// verifying.
+func (s *Store) Withdraw(ctx context.Context, p *acl.Principal, id string) error {
+	if err := s.ready(ctx); err != nil {
+		return err
+	}
+	if p == nil {
+		return genba.ErrNoPrincipal
+	}
+	key := store.ReportKey(p)
+	if key == "" {
+		return fmt.Errorf("sqlitestore: withdraw: %w", store.ErrNoReporter)
+	}
+
+	c := visible(p)
+	args := append([]any{key, id}, c.args...)
+	s.counters.statements.Add(1)
+	if _, err := s.db.ExecContext(ctx, `
+		DELETE FROM document_report
+		WHERE by_key = ?
+		  AND doc_id IN (SELECT d.id FROM document d WHERE d.id = ? AND `+c.where()+`)`,
+		args...); err != nil {
+		return fmt.Errorf("sqlitestore: withdraw: %w", err)
+	}
+	return nil
+}
+
 // Reports returns what has been said about the documents the principal may read.
 //
 // The join order is pinned for the reason written out over Verifications, and
@@ -125,12 +166,13 @@ func (s *Store) Reports(ctx context.Context, p *acl.Principal, ids []string) (ma
 	}
 
 	c := visible(p)
-	args := append([]any{jsonList(ids)}, c.args...)
+	args := append([]any{store.ReportKey(p), jsonList(ids)}, c.args...)
 	rows, err := s.query(ctx, `
-		SELECT r.doc_id, r.reporter, r.reported_at, r.note, r.n
+		SELECT r.doc_id, r.reporter, r.reported_at, r.note, r.n, r.mine
 		FROM (
 			SELECT r.doc_id, r.reporter, r.reported_at, r.note,
 			       COUNT(*)     OVER (PARTITION BY r.doc_id) AS n,
+			       MAX(r.by_key = ?) OVER (PARTITION BY r.doc_id) AS mine,
 			       ROW_NUMBER() OVER (PARTITION BY r.doc_id ORDER BY r.reported_at DESC, r.by_key) AS rn
 			FROM json_each(?) j
 			CROSS JOIN document_report r ON r.doc_id = j.value
@@ -187,10 +229,10 @@ func (s *Store) Reported(ctx context.Context, p *acl.Principal, limit int) ([]st
 
 	keys := jsonKeys(store.PrincipalKeys(p))
 	c := visible(p)
-	args := append([]any{keys, keys}, c.args...)
+	args := append([]any{store.ReportKey(p), keys, keys}, c.args...)
 	args = append(args, limit)
 	rows, err := s.query(ctx, `
-		SELECT r.doc_id, r.reporter, r.reported_at, r.note, r.n, x.data
+		SELECT r.doc_id, r.reporter, r.reported_at, r.note, r.n, r.mine, x.data
 		FROM (`+latest+`) r
 		CROSS JOIN document d ON d.id = r.doc_id
 		CROSS JOIN document_data x ON x.doc_id = d.id
@@ -230,18 +272,23 @@ func (s *Store) Reported(ctx context.Context, p *acl.Principal, limit int) ([]st
 	return out, nil
 }
 
-// scanStaleness reads the five columns both read paths select, and whatever
-// else the caller put after them.
+// scanStaleness reads the six columns both read paths select, and whatever else
+// the caller put after them.
+//
+// Mine arrives as the nought or one a comparison in SQL is rather than as a
+// boolean, so it is read as a number and turned into one here.
 func scanStaleness(rows scanner, rest ...any) (store.Staleness, error) {
 	var (
 		said     store.Staleness
 		reporter string
 		at       int64
+		mine     int64
 	)
-	dest := append([]any{&said.Doc, &reporter, &at, &said.Last.Note, &said.Count}, rest...)
+	dest := append([]any{&said.Doc, &reporter, &at, &said.Last.Note, &said.Count, &mine}, rest...)
 	if err := rows.Scan(dest...); err != nil {
 		return store.Staleness{}, err
 	}
+	said.Mine = mine != 0
 	who, err := unmarshalPerson(reporter)
 	if err != nil {
 		return store.Staleness{}, err
