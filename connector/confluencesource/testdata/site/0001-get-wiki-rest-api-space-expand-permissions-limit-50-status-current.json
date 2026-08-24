@@ -1,0 +1,130 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://acme.atlassian.net/wiki/rest/api/space?expand=permissions\u0026limit=50\u0026status=current",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "limit": 2,
+        "results": [
+          {
+            "id": 100,
+            "key": "OPS",
+            "name": "Line two operations",
+            "permissions": [
+              {
+                "operation": {
+                  "operation": "create",
+                  "targetType": "page"
+                },
+                "subjects": {
+                  "group": {
+                    "results": [
+                      {
+                        "id": "g-engineering",
+                        "name": "engineering",
+                        "type": "group"
+                      }
+                    ],
+                    "size": 1
+                  },
+                  "user": {
+                    "results": [
+                      {
+                        "accountId": "acc-mei",
+                        "displayName": "Mei Tanaka",
+                        "email": "mei@acme.com",
+                        "publicName": "Mei Tanaka",
+                        "type": "known"
+                      }
+                    ],
+                    "size": 1
+                  }
+                }
+              },
+              {
+                "operation": {
+                  "operation": "read",
+                  "targetType": "space"
+                },
+                "subjects": {
+                  "group": {
+                    "results": [
+                      {
+                        "id": "g-engineering",
+                        "name": "engineering",
+                        "type": "group"
+                      }
+                    ],
+                    "size": 1
+                  },
+                  "user": {
+                    "results": [
+                      {
+                        "accountId": "acc-mei",
+                        "displayName": "Mei Tanaka",
+                        "email": "mei@acme.com",
+                        "publicName": "Mei Tanaka",
+                        "type": "known"
+                      }
+                    ],
+                    "size": 1
+                  }
+                }
+              }
+            ],
+            "status": "current",
+            "type": "global"
+          },
+          {
+            "id": 101,
+            "key": "ENG",
+            "name": "Engineering",
+            "permissions": [
+              {
+                "operation": {
+                  "operation": "create",
+                  "targetType": "page"
+                },
+                "subjects": {
+                  "group": {
+                    "results": [],
+                    "size": 0
+                  },
+                  "user": {
+                    "results": [],
+                    "size": 0
+                  }
+                }
+              },
+              {
+                "anonymousAccess": true,
+                "operation": {
+                  "operation": "read",
+                  "targetType": "space"
+                },
+                "subjects": {}
+              }
+            ],
+            "status": "current",
+            "type": "global"
+          }
+        ],
+        "size": 2,
+        "start": 0
+      }
+    }
+  }
+}

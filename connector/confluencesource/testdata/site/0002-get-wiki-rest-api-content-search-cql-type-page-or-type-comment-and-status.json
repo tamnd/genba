@@ -1,0 +1,101 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://acme.atlassian.net/wiki/rest/api/content/search?cql=%28type+%3D+page+or+type+%3D+comment%29+and+status+%3D+current+and+space+%3D+%22ENG%22+order+by+lastModified+asc\u0026expand=body.atlas_doc_format%2Cversion%2Chistory%2Cspace%2Ccontainer%2Cancestors%2Cmetadata.labels%2Crestrictions.read.restrictions.user%2Crestrictions.read.restrictions.group%2Cchildren.comment.body.atlas_doc_format%2Cchildren.comment.version%2Cchildren.comment.history\u0026limit=50",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "cqlQuery": "(type = page or type = comment) and status = current and space = \"ENG\" order by lastModified asc",
+        "limit": 2,
+        "results": [
+          {
+            "_links": {
+              "webui": "/spaces/ENG/pages/100005/Line%20two%20specification"
+            },
+            "ancestors": null,
+            "body": {
+              "atlas_doc_format": {
+                "representation": "atlas_doc_format",
+                "value": "{\"content\":[{\"content\":[{\"text\":\"Line two runs at 1450 rpm under load.\",\"type\":\"text\"}],\"type\":\"paragraph\"}],\"type\":\"doc\",\"version\":1}"
+              }
+            },
+            "children": {
+              "comment": {
+                "limit": 2,
+                "results": [],
+                "size": 0,
+                "start": 0
+              }
+            },
+            "history": {
+              "createdBy": {
+                "accountId": "acc-mei",
+                "displayName": "Mei Tanaka",
+                "email": "mei@acme.com",
+                "publicName": "Mei Tanaka",
+                "type": "known"
+              },
+              "createdDate": "2026-04-06T09:09:00.000+00:00"
+            },
+            "id": "100005",
+            "metadata": {
+              "labels": {
+                "results": []
+              }
+            },
+            "restrictions": {
+              "read": {
+                "operation": "read",
+                "restrictions": {
+                  "group": {
+                    "results": [],
+                    "size": 0
+                  },
+                  "user": {
+                    "results": [],
+                    "size": 0
+                  }
+                }
+              }
+            },
+            "space": {
+              "id": 101,
+              "key": "ENG",
+              "name": "Engineering"
+            },
+            "status": "current",
+            "title": "Line two specification",
+            "type": "page",
+            "version": {
+              "by": {
+                "accountId": "acc-mei",
+                "displayName": "Mei Tanaka",
+                "email": "mei@acme.com",
+                "publicName": "Mei Tanaka",
+                "type": "known"
+              },
+              "number": 1,
+              "when": "2026-04-06T09:09:00.000+00:00"
+            }
+          }
+        ],
+        "searchDurati": 1,
+        "size": 1,
+        "start": 0,
+        "totalSize": 1
+      }
+    }
+  }
+}

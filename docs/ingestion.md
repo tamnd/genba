@@ -548,6 +548,42 @@ Throwing the structure away is worse, because a ticket's description is very oft
 So it renders Markdown: headings stay headings, code blocks keep their fences and their language, lists stay lists and tables stay tables.
 A description that will not parse comes back empty rather than as an error, because a ticket with a summary, a reporter, a status and a comment thread is still worth indexing.
 
+### Confluence, and a product that changed its mind
+
+`connector/confluencesource` is the third adapter on that interface and the one where the four methods carry the least new weight, which is the result the shared crawl was built for.
+A wiki is a container of conversations the same way a workspace and a project are: a space holds pages, a page holds comments, and a page with its comments underneath it is one document rather than a document and a pile of fragments.
+The page says the deploy runs at nine and the third comment says it moved to eleven eighteen months ago, so a page indexed without its comments answers with the wrong time.
+
+The change feed is real and it is CQL.
+A page carries a version, an edit moves it, and CQL will filter and order by the time of the last change, so a sync is one query per space and there is no reply window and nothing to guess at.
+It has the same wrinkle Jira has, that CQL compares times to the minute and rejects anything finer, and it is handled the same way: ask for the minute the cursor is in and drop what arrived from the first half of it.
+
+The gap is comments.
+Confluence dates the comment and leaves the page alone, so a page that was answered and never edited again is one that a query about pages reports as unchanged for ever.
+So the query asks for comments as well, and a comment that comes back is resolved to the page it is on and the page is what gets emitted, because a comment is a sentence in a document rather than a document.
+That means a page with two new comments is emitted twice in one sync, with the later time on the second, and that is deliberate: the time on a comment is what moves the cursor past it, so an adapter that deduplicated within the sync would read the same comments again on the next one.
+
+Permissions are decided in two places and both of them are here.
+A space's read permission is granted to accounts and to groups, and it may be granted to anonymous users, which is a space that is open rather than a space with an empty rule.
+A page restriction is the second, and it is the concrete case `Thread.Access` exists for: a page with a read restriction is readable by the people named in it and by nobody else, whatever the space says.
+Restrictions inherit, so a page with no restriction of its own under a parent that has one is restricted, and the ancestors have to be consulted rather than assumed.
+A chain carrying a restriction at more than one level is quarantined rather than resolved, because Confluence means the intersection of the two and an intersection of a list of accounts with a list of groups is not something that can be worked out from outside the identity provider.
+Publishing the wider of the two would publish exactly the pages somebody went out of their way to restrict.
+
+The ancestor walk is cached, and the lifetime of that cache is the one thing in this adapter worth reading twice.
+A restricted subtree costs one request per ancestor rather than one per page, which is a saving worth having inside a crawl and a bug across them.
+A restriction put on a parent page is a revocation, and a revocation the index only heard about when the process next restarted is not one.
+So the cache is emptied at the top of every crawl, which is the call that lists the spaces, and there is a test that fails if it is not.
+
+The last part is the body, and it is where Confluence differs from the other two.
+The current editor stores a page as an Atlassian document, which is `connector/adf`'s job and already written for tickets.
+Pages written before that editor changed have no Atlassian document at all and a body in storage format instead, which is XHTML with two undeclared namespace prefixes in it, and there are a lot of those pages on any site old enough to be worth indexing.
+So the adapter asks for the structured body on every page, notices when it came back empty, and pays a second request for the old one only for the pages that need it.
+Rendering it is `storage()` in the same package, and it renders Markdown for the same reason the ticket adapter does: a runbook is mostly a heading, a code block and a table, and a search result that shows the reader a flattened version of the thing they were looking for has answered the query and failed the person.
+One detail in there is worth knowing because it cost an afternoon.
+Go's XML decoder auto closes the HTML tags that never have an end tag, `link` among them, and a fragment that declares no namespaces hands it `ac:link` as a local name of `link`, so the default list ends a Confluence link before its label and takes the rest of the sentence with it.
+The list is written out here with that one entry removed.
+
 ### The conformance suite is the definition
 
 `connector/connectortest` is what a connector has to pass, and it rather than the interface is the definition of one.
@@ -639,4 +675,6 @@ Two of its rules are worth copying: the repeated requests are dropped, since a c
 Leaving those in makes every refresh a diff on every file with the real change somewhere inside it.
 
 `connector/jirasource/testdata/site` is the same thing for tickets, ten files refreshed the same way, and it is worth looking at as the second example because the shape held.
+`connector/confluencesource/testdata/site` is the third and it held again, ten files with one thing in them the other two do not have: a page written in the old editor, whose body arrives as storage format rather than as an Atlassian document.
+That is the file that would go red the day Atlassian changed what a code macro looks like on the wire, and it is the reason committing a recording for a wiki is worth more than committing one for a chat product.
 The same fake, the same `-update` flag, the same dedupe, the same settling, and the same three tests over it: that the crawl works, that the recording answers nothing the crawl does not ask, and that no credential is in the files.
