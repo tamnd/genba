@@ -155,6 +155,7 @@ var cases = []testCase{
 	{"a document written after a sync is found by the next one", testNewDocument},
 	{"a deleted document stops being part of the source", testDeleted},
 	{"a permission change arrives without the content", testPermissionChange},
+	{"a permission change leaves a document's own rule alone", testPermissionChangeKeepsOverrides},
 	{"enumerate lists what a sync found", testEnumerate},
 	{"enumerate stops when the callback says so", testEnumerateEarlyStop},
 	{"fetch returns the document a sync would have", testFetch},

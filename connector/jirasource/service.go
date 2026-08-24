@@ -62,14 +62,31 @@ func (s *Service) Threads(ctx context.Context, c threadsource.Container, since t
 	})
 }
 
+// listFields is what a listing asks for, which is two fields rather than one.
+//
+// The updated time is the version the sweep compares. The security level is what
+// keeps a scheduled permission refresh from writing the project's rule over an
+// issue that was restricted out of the project, and it is asked for here because
+// here is the one place it can be had without reading anything: a refresh that
+// had to read an issue to find out whether it overrides its project is a
+// recrawl, which is what the refresh exists instead of.
+const listFields = "updated,security"
+
 // List reports every issue the project currently holds, with the version the
-// sweep compares.
+// sweep compares and the rule the issue has of its own.
 //
 // Nothing in JQL reports an issue that was deleted or moved to another project,
 // so this is the only thing that ever takes one out of the index.
-func (s *Service) List(ctx context.Context, c threadsource.Container, fn func(connector.Item) bool) error {
-	err := s.search(ctx, c, "project = "+quote(c.ID)+" ORDER BY key ASC", "updated", func(_ context.Context, is issue) error {
-		if !fn(connector.Item{ID: is.Key, Version: is.Fields.Updated}) {
+func (s *Service) List(ctx context.Context, c threadsource.Container, fn func(threadsource.Item) bool) error {
+	err := s.search(ctx, c, "project = "+quote(c.ID)+" ORDER BY key ASC", listFields, func(ctx context.Context, is issue) error {
+		item := threadsource.Item{Item: connector.Item{ID: is.Key, Version: is.Fields.Updated}}
+		if sec := is.Fields.Security; sec != nil && sec.ID != "" {
+			// The same cache the sync resolves levels through, so a project with
+			// a security scheme on thousands of issues costs one request per
+			// level rather than one per issue.
+			item.Access = s.levels.level(ctx, sec.ID, sec.Name)
+		}
+		if !fn(item) {
 			return errStop
 		}
 		return nil

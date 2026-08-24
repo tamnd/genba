@@ -222,6 +222,57 @@ func TestMakingAChannelPrivateReachesTheIndexWithoutReadingIt(t *testing.T) {
 	}
 }
 
+// A conversation that was taken out of its container's rule is the one thing a
+// permission change must not write over. It is a ticket with a security level on
+// it or a page with a restriction on it, which is to say it is exactly the
+// document somebody went out of their way to keep, and handing it the rule of
+// the container it was kept out of publishes it.
+//
+// The refresh is where this goes wrong, because the refresh does not read the
+// conversations. What it has is the container's new rule and a listing, so the
+// listing is what has to say which conversations carry a rule of their own.
+func TestAPermissionChangeLeavesAThreadsOwnRuleAlone(t *testing.T) {
+	f := newFake()
+	f.write("r1", "gearbox", "The gearbox on line two is making a noise.")
+	f.write("r1", "incident", "The line two incident report.")
+	// One thread is readable by one person whatever the channel says, which is
+	// the shape a security level has.
+	own := acl.Permissions{
+		Mode:       acl.ModeACL,
+		Source:     source,
+		AllowUsers: []acl.Ref{{Source: source, Value: "lee"}},
+	}
+	f.restrict("r1", "incident", own)
+	src := newSource(t, f)
+
+	changes, cursor := run(t, src, connector.Cursor{})
+	if got := find(changes, "chat:incident"); got == nil {
+		t.Fatalf("a first sync emitted %v", ids(changes))
+	} else if !slices.Equal(got.Document.Permissions.AllowUsers, own.AllowUsers) {
+		t.Fatalf("the first sync gave the restricted thread %v rather than its own rule", got.Document.Permissions.AllowUsers)
+	}
+
+	f.share("r1")
+	changes, _ = run(t, src, cursor)
+
+	got := find(changes, "chat:incident")
+	if got == nil {
+		t.Fatalf("making the channel private emitted %v, want the restricted thread in it", ids(changes))
+	}
+	if !slices.Equal(got.Document.Permissions.AllowUsers, own.AllowUsers) {
+		t.Errorf("the restricted thread came back allowing users %v and groups %v, which is the channel's rule written over the rule the thread was restricted with",
+			got.Document.Permissions.AllowUsers, got.Document.Permissions.AllowGroups)
+	}
+
+	// The thread that had no rule of its own still gets the channel's, because
+	// that is what the refresh is for.
+	if plain := find(changes, "chat:gearbox"); plain == nil {
+		t.Error("the thread with no rule of its own was left out of the permission change")
+	} else if len(plain.Document.Permissions.AllowGroups) != 1 {
+		t.Errorf("the thread with no rule of its own came back with groups %v rather than the channel's", plain.Document.Permissions.AllowGroups)
+	}
+}
+
 // A full sync already emits every conversation with the rule its container has
 // right now, so emitting a permission change alongside each one would be saying
 // the same thing twice and doubling the first sync of a workspace.
@@ -593,7 +644,7 @@ func (nameless) Threads(ctx context.Context, _ threadsource.Container, _ time.Ti
 	})
 }
 
-func (nameless) List(context.Context, threadsource.Container, func(connector.Item) bool) error {
+func (nameless) List(context.Context, threadsource.Container, func(threadsource.Item) bool) error {
 	return nil
 }
 

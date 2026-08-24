@@ -354,6 +354,49 @@ func testPermissionChange(t *testing.T, f Fixture) {
 	}
 }
 
+// A document with a rule of its own keeps it when the rule above it changes.
+//
+// Access lives on the folder, the space or the project, and one document in
+// there having been taken out of that rule is not a corner case: it is what a
+// ticket's security level and a page's restriction are for, and it is the only
+// reason a connector is allowed to override a container at all. A permission
+// change that swept the container's new rule across everything inside it would
+// hand that document the rule it was deliberately excluded from.
+//
+// It is worth its own case because of when it happens. The refresh runs on a
+// schedule rather than because anybody edited anything, so this fails quietly,
+// on a source nobody touched, some hours after the connector was last looked at.
+func testPermissionChangeKeepsOverrides(t *testing.T, f Fixture) {
+	if f.Share == nil || f.Unresolvable == nil {
+		t.Skip("the fixture cannot both change who may read a container and give one document a rule of its own")
+	}
+	write(t, f, first, firstText)
+	write(t, f, second, secondText)
+	f.Unresolvable(t, second)
+
+	changes, cursor := syncFrom(t, f, connector.Cursor{})
+	was := find(changes, f.ID(second))
+	switch {
+	case was == nil:
+		t.Fatalf("a full sync emitted %v, and this case needs the document with a rule of its own in it", ids(changes))
+	case was.Document.Permissions.Mode != acl.ModeUnknown:
+		t.Fatalf("%s was given mode %v rather than being quarantined, so there is no override here to protect", f.ID(second), was.Document.Permissions.Mode)
+	}
+
+	f.Share(t, first)
+
+	changes, _ = syncFrom(t, f, cursor)
+	now := find(changes, f.ID(second))
+	if now == nil {
+		// Saying nothing about it is a correct answer. Its rule did not change,
+		// and the change to the container's rule is not its business.
+		return
+	}
+	if got := now.Document.Permissions.Mode; got != acl.ModeUnknown {
+		t.Errorf("%s had a rule of its own and the change to the rule above it replaced that with mode %v, which publishes the document somebody restricted", now.Document.ID, got)
+	}
+}
+
 // An enumeration and a sync have to agree on what is in the corpus. A sweep
 // built on a listing that says less than the sync does deletes documents that
 // are there, and one that says more refetches documents that are not.

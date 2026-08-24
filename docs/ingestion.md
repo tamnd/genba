@@ -435,7 +435,7 @@ An adapter answers four questions.
 type Service interface {
 	Containers(ctx context.Context) ([]Container, error)
 	Threads(ctx context.Context, c Container, since time.Time, fn func(context.Context, Thread) error) error
-	List(ctx context.Context, c Container, fn func(connector.Item) bool) error
+	List(ctx context.Context, c Container, fn func(Item) bool) error
 	Read(ctx context.Context, id string) (Thread, error)
 }
 ```
@@ -454,6 +454,15 @@ Making a channel private touches no message in it, so a sync that only asked wha
 An adapter reports when the rule changed, and when that is newer than the cursor the source lists the container and emits a permission change per conversation in it, carrying the new rule and no body.
 That costs one write per thread rather than a refetch of the channel, and the run after it says nothing, because the rule has not changed again.
 A full sync refreshes nothing, because every conversation it emits already carries the rule its container has right now, and emitting a permission change alongside each one would double the first sync of a workspace to say the same thing twice.
+
+The conversations that override their container are why a listing reports a rule and not only an id and a version.
+A `threadsource.Item` is a `connector.Item` with room for the conversation's own rule beside it, and the refresh uses that rule where there is one and the container's where there is not.
+It has to come off the listing, because reading the conversations is the thing the refresh exists to avoid: a refresh that had to read a container to find out which conversations in it override the container is a recrawl, and a recrawl is what the whole mechanism is instead of.
+An adapter for a product where a conversation cannot carry its own rule leaves the field alone and nothing changes.
+An adapter for one where it can has to fill it in, and it costs one more field name on a request that is being made anyway.
+`connector/jirasource` asks for `updated,security` rather than `updated` for exactly this reason.
+The alternative is a scheduled refresh handing a restricted conversation the rule of the container it was restricted out of, which publishes the documents somebody went out of their way to keep, once per refresh interval, without anybody having done anything.
+The conformance suite in `connector/connectortest` holds every connector to it.
 
 The cursor is a time plus an edge set, and the edge set is what makes it correct.
 Two conversations that changed in the same instant is the case a bare timestamp gets wrong in both directions: asking for what changed strictly after the cursor loses the second one for ever, and asking for what changed at or after it emits both again on every run until something else happens.
@@ -511,6 +520,7 @@ Rounding the query down rather than up is deliberate: the direction that costs a
 The sweep is still there, and it is only for deletion.
 Nothing in JQL reports an issue that was deleted, or one that was moved to a project this token cannot see, and both of those leave the index holding a ticket that no longer exists.
 So `List` walks the project by key and reports the `updated` field as the version, which is the same string `Threads` puts in `Revision`, because a listing and a read that disagree on the version make every sweep refetch the whole project.
+It asks for the security level alongside it, so an issue that was restricted out of its project keeps that restriction when the project's rule is reapplied on the schedule.
 
 Permissions are where the work is.
 Browse comes from the project's permission scheme, which grants it to some mixture of groups, named accounts, project roles and, on a site with a service desk, everybody with a licence.

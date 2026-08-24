@@ -236,7 +236,7 @@ func (f *fake) Threads(ctx context.Context, c threadsource.Container, since time
 	return nil
 }
 
-func (f *fake) List(_ context.Context, c threadsource.Container, fn func(connector.Item) bool) error {
+func (f *fake) List(_ context.Context, c threadsource.Container, fn func(threadsource.Item) bool) error {
 	f.mu.Lock()
 	if f.failList != nil {
 		err := f.failList
@@ -244,13 +244,16 @@ func (f *fake) List(_ context.Context, c threadsource.Container, fn func(connect
 		return err
 	}
 	f.listed = append(f.listed, c.ID)
-	var items []connector.Item
+	var items []threadsource.Item
 	for _, cv := range f.rooms[c.ID].convs {
-		items = append(items, connector.Item{ID: cv.id, Version: cv.updated.UTC().Format(time.RFC3339Nano)})
+		items = append(items, threadsource.Item{
+			Item:   connector.Item{ID: cv.id, Version: cv.updated.UTC().Format(time.RFC3339Nano)},
+			Access: cv.access,
+		})
 	}
 	f.mu.Unlock()
 
-	slices.SortFunc(items, func(a, b connector.Item) int { return strings.Compare(a.ID, b.ID) })
+	slices.SortFunc(items, func(a, b threadsource.Item) int { return strings.Compare(a.ID, b.ID) })
 	for _, item := range items {
 		if !fn(item) {
 			return nil
