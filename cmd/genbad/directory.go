@@ -27,34 +27,56 @@ import (
 // is a fact about the company that changes without anybody signing in again,
 // and a header carrying it is a copy of an answer somebody else cached.
 //
-// The reload loop, if there is one, runs until the context is done.
+// With more than one, the group sets are unioned. That is a company that
+// acquired another company: two sets of people, two files, one search box, and
+// no collisions because every group key carries the name of the directory it
+// came from.
+//
+// There is one cache and it sits above the union, so the staleness bound is the
+// number in the configuration rather than something that emerges from a stack.
+//
+// The reload loops, if there are any, run until the context is done.
 func authenticator(ctx context.Context, cfg config.Config, log *slog.Logger) (api.Authenticator, error) {
 	header := api.HeaderAuth{Tenant: cfg.Tenant, Admins: cfg.Admins}
-	if cfg.Directory == "" {
+	if len(cfg.Directories) == 0 {
 		return header, nil
 	}
 
-	held := &swap{path: cfg.Directory}
-	if err := held.read(); err != nil {
-		return nil, err
+	var (
+		files = make([]*swap, 0, len(cfg.Directories))
+		parts = make([]directory.Expander, 0, len(cfg.Directories))
+	)
+	for _, path := range cfg.Directories {
+		held := &swap{path: path}
+		if err := held.read(); err != nil {
+			return nil, err
+		}
+		res, err := directory.New(held)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, held)
+		parts = append(parts, res)
 	}
-	res, err := directory.New(held)
+	union, err := directory.NewMulti(parts...)
 	if err != nil {
 		return nil, err
 	}
-	cached, err := directory.NewCache(res, directory.WithTTL(cfg.DirectoryTTL))
+	cached, err := directory.NewCache(union, directory.WithTTL(cfg.DirectoryTTL))
 	if err != nil {
 		return nil, err
 	}
 
 	log.Info("resolving groups from a directory",
-		"path", cfg.Directory,
-		"source", cached.Name(),
+		"paths", cfg.Directories,
+		"sources", union.Directories(),
 		"staleness", cached.Staleness(),
 		"refresh", cfg.DirectoryRefresh,
 	)
 	if cfg.DirectoryRefresh > 0 {
-		go held.reload(ctx, cfg.DirectoryRefresh, cached, log)
+		for _, held := range files {
+			go held.reload(ctx, cfg.DirectoryRefresh, cached, log)
+		}
 	}
 	return api.Resolving{Auth: header, Resolver: cached}, nil
 }
