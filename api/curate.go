@@ -121,7 +121,19 @@ type answerRequest struct {
 
 type answersResponse struct {
 	Answers []curatedRecord `json:"answers"`
-	At      time.Time       `json:"at"`
+
+	// Writable says this deployment can remember an answer at all.
+	//
+	// It is here because an empty list means two very different things and the
+	// screen that draws one has to say which. A tenant that has not written an
+	// answer yet is offered the form. A deployment whose storage driver cannot
+	// keep one is told so, rather than offered a form whose answers disappear at
+	// the next restart. The caller's own permission is not on here: this list is
+	// behind the administrator guard already, and everybody who can read it can
+	// write one.
+	Writable bool `json:"writable"`
+
+	At time.Time `json:"at"`
 }
 
 // identity is the response without the timestamp, so that a list nobody has
@@ -254,7 +266,7 @@ func (s *Server) handleAnswers(w http.ResponseWriter, r *http.Request, p *acl.Pr
 	}
 
 	now := s.now()
-	out := answersResponse{Answers: make([]curatedRecord, 0, len(all)), At: now}
+	out := answersResponse{Answers: make([]curatedRecord, 0, len(all)), Writable: true, At: now}
 	for _, a := range all {
 		out.Answers = append(out.Answers, curatedRecord{
 			ID:       a.ID,

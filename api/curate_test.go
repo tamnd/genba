@@ -64,6 +64,7 @@ type answerList struct {
 		By       string   `json:"by"`
 		State    string   `json:"state"`
 	} `json:"answers"`
+	Writable bool `json:"writable"`
 }
 
 // newAnswerServer holds two documents the engineer can read and one they cannot,
@@ -312,6 +313,46 @@ func TestTheAnswerListIsWhatAnEditorNeeds(t *testing.T) {
 		t.Fatalf("the sources came back as %v, want all three ids including the one this reader cannot open", a.Sources)
 	case a.State != string(store.Fresh):
 		t.Fatalf("the state came back as %q", a.State)
+	}
+}
+
+// forgetful is a deployment whose storage driver cannot keep a written answer.
+//
+// Embedding the plain interface is the whole trick: the driver underneath can
+// curate perfectly well, and wrapping it hides the capability the way a driver
+// that never had it would. That is a real deployment rather than a made up one,
+// because curating is optional and a driver without it still serves search.
+type forgetful struct{ store.Store }
+
+// An empty list means two very different things and the screen that draws one
+// has to say which, so the list carries whether an answer can be kept at all. A
+// tenant that has not written one yet is offered the form. A deployment that
+// cannot keep one is told so, rather than offered a form whose answers vanish
+// at the next restart.
+func TestTheAnswerListSaysWhetherAnAnswerCanBeKept(t *testing.T) {
+	h := newAnswerServer(t)
+
+	w := request(t, h, http.MethodGet, "/api/v1/admin/answers", curator())
+	got := decode[answerList](t, w)
+	if len(got.Answers) != 0 {
+		t.Fatalf("the list holds %d answers before anything was written", len(got.Answers))
+	}
+	if !got.Writable {
+		t.Fatal("a driver that is about to accept an answer says it cannot keep one")
+	}
+
+	st := memstore.New()
+	t.Cleanup(func() { _ = st.Close() })
+	plain := forgetful{st}
+	s := api.New(plain, index.New(plain), api.HeaderAuth{Tenant: "acme"}, api.WithClock(clock))
+	blank := s.Handler()
+
+	w = request(t, blank, http.MethodGet, "/api/v1/admin/answers", curator())
+	if w.Code != http.StatusOK {
+		t.Fatalf("listing on a driver that cannot curate: %d %s", w.Code, w.Body.String())
+	}
+	if got := decode[answerList](t, w); got.Writable {
+		t.Fatal("a driver with nowhere to put an answer offers the form anyway")
 	}
 }
 

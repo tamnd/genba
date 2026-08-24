@@ -2,12 +2,12 @@
 # The browser half of the performance gate.
 #
 # It starts the real binary over a real corpus, which is this repository, and
-# audits thirteen screens: the home page, the home page over an index holding
+# audits fourteen screens: the home page, the home page over an index holding
 # nothing, a results page, a results page with an answer quoted above it, a
 # results page with a written answer above it, a results page with the document
 # drawer open, a search that matched nothing, a filter that matched nothing, a
 # grid of pictures, a document on a page of its own, the recent screen, the
-# settings screen and administration. They are
+# settings screen, administration and the answers screen. They are
 # states rather than layouts, because a layout is looked at every day and a
 # state is looked at once. Auditing a static fixture would audit the fixture,
 # and every accessibility bug this is meant to catch lives in the markup the
@@ -294,6 +294,10 @@ fi
 # looks perfect to everybody else. It is also the only screen that repaints
 # itself on a timer, so it is the one place a focus ring can be quietly taken
 # away from somebody five seconds after they put it there.
+#
+# The answers screen is the one place in the product where somebody writes
+# rather than reads, so it is the one screen where a field with no label costs
+# more than a sentence nobody hears.
 for url in \
 	"$BASE/" \
 	"$EMPTY/" \
@@ -307,7 +311,8 @@ for url in \
 	"$BASE/d/$ID" \
 	"$BASE/recent" \
 	"$BASE/settings" \
-	"$BASE/admin"; do
+	"$BASE/admin" \
+	"$BASE/answers"; do
 	echo "ui-gate: axe $url"
 	# The interface renders after a fetch, so the audit waits for the first
 	# paint to have happened. Auditing an empty document passes and proves

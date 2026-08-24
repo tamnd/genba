@@ -3714,6 +3714,369 @@ ol.prose__list {
   color: var(--text-inverse);
 }
 
+/* Answers ---------------------------------------------------------------- */
+
+/* The screen for the prose somebody here wrote. Same page shape as settings and
+   administration, because a third shape for a third screen of this kind is a
+   third thing to keep in step. */
+.answers {
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: var(--space-16) var(--gutter) var(--space-24);
+}
+
+.answers__head {
+  margin-bottom: var(--space-12);
+}
+
+.answers__title {
+  font-size: var(--text-display);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-display);
+  letter-spacing: var(--display-tracking);
+}
+
+/* The heading takes focus when the screen opens so that a screen reader starts
+   at the top of it. It is not a control, so it does not draw a ring. */
+.answers__title:focus {
+  outline: none;
+}
+
+.answers__lead {
+  max-width: var(--measure);
+  margin-top: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--text-lead);
+  line-height: var(--leading-lead);
+}
+
+.answers .panel {
+  margin-bottom: var(--space-16);
+}
+
+/* The button that opens the form sits at the end of the heading rather than
+   above the list, so that the list starts where every other list on this screen
+   starts. */
+.answers__new {
+  margin-left: auto;
+}
+
+.answers__stale {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-8);
+  color: var(--warning-700);
+  font-size: var(--text-small);
+  line-height: var(--leading-small);
+}
+
+/* What the last write did, above both panels. It is the one node on this screen
+   that does not move when an answer is saved or taken down, which is what makes
+   it the place to say that one was. */
+.answers__output {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-8);
+  font-size: var(--text-small);
+  line-height: var(--leading-small);
+}
+
+.answers__output:empty {
+  display: none;
+}
+
+.answers__output:focus {
+  outline: none;
+}
+
+.answers__output--good {
+  color: var(--success-700);
+}
+
+.answers__output--bad {
+  color: var(--danger-700);
+}
+
+.answers__output--busy {
+  color: var(--text-muted);
+}
+
+.answers__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.answers__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.answers__label {
+  color: var(--text-secondary);
+  font-size: var(--text-small);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-small);
+}
+
+.answers__input {
+  height: 40px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  font-size: var(--text-body);
+}
+
+.answers__input:hover {
+  border-color: var(--border-strong);
+}
+
+/* The answer itself is written in a monospaced field, because it is markdown
+   and the two characters that matter most in markdown are the ones that line
+   up: a list marker and an indent. */
+.answers__area {
+  padding: var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  line-height: var(--leading-body);
+  resize: vertical;
+}
+
+.answers__area:hover {
+  border-color: var(--border-strong);
+}
+
+.answers__hint {
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--leading-small);
+  overflow-wrap: anywhere;
+}
+
+/* The words and what they will look like, side by side, because the whole point
+   of a preview is that the eye moves between the two without scrolling. They
+   stack on a narrow screen, where side by side would be two columns too thin to
+   read either. */
+.answers__writing {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--space-6) var(--space-8);
+  align-items: start;
+}
+
+.answers__side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.answers__preview {
+  min-height: 120px;
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.answers__block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.answers__chosen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+}
+
+/* A cited document reads as a row rather than as a chip, because it is the same
+   thing a result is and a reader recognises it from the search. */
+.answers__source {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-body);
+}
+
+.answers__source-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.answers__source-where {
+  margin-right: auto;
+  color: var(--text-muted);
+  font-size: var(--text-small);
+}
+
+.answers__full,
+.answers__blank {
+  color: var(--text-muted);
+  font-size: var(--text-small);
+  line-height: var(--leading-small);
+}
+
+.answers__found {
+  display: flex;
+  flex-direction: column;
+}
+
+/* One result of the picker. Borderless and full width, so that the list reads
+   as a set of choices rather than as a row of controls. */
+.answers__result {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text);
+  font-size: var(--text-body);
+  text-align: left;
+}
+
+.answers__result:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.answers__result:disabled {
+  color: var(--text-muted);
+}
+
+.answers__result-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.answers__result-where,
+.answers__result-note {
+  color: var(--text-muted);
+  font-size: var(--text-small);
+}
+
+.answers__result-note {
+  margin-left: auto;
+}
+
+/* The sentence that says saving is also confirming. It sits above the buttons
+   rather than beside one of them, because it is true of the whole form. */
+.answers__rule {
+  max-width: var(--measure);
+  color: var(--text-secondary);
+  font-size: var(--text-small);
+  line-height: var(--leading-small);
+}
+
+.answers__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.answers__note {
+  max-width: var(--measure);
+}
+
+.answers__note-title {
+  font-size: var(--text-body);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-body);
+}
+
+.answers__note-body {
+  margin-top: var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--text-small);
+  line-height: var(--leading-small);
+}
+
+/* One answer in the list. The rule goes between rows rather than around each of
+   them, which is the same argument every other list on this screen makes. */
+.answer-row {
+  padding: var(--space-8) 0;
+  border-top: 1px solid var(--border);
+}
+
+.answer-row:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+/* The row whose answer is in the form above, marked so that somebody who
+   scrolled down to the list can see which one they are editing. */
+.answer-row--editing .answer-row__question {
+  color: var(--text-link);
+}
+
+.answer-row__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  margin-bottom: var(--space-2);
+}
+
+.answer-row__question {
+  font-size: var(--text-title);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-title);
+}
+
+.answer-row__excerpt {
+  max-width: var(--measure);
+  color: var(--text-secondary);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+}
+
+/* Who wrote it and what it carries, as one line of small print. The separator
+   is drawn rather than typed, so a row with nothing to say after the byline
+   does not end in a stray bullet. */
+.answer-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-small);
+  line-height: var(--leading-small);
+}
+
+.answer-row__meta > span + span::before {
+  content: "\00b7";
+  margin-right: var(--space-3);
+}
+
+.answer-row__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+.answer-row__warn {
+  flex-basis: 100%;
+  max-width: var(--measure);
+  color: var(--text-secondary);
+  font-size: var(--text-small);
+  line-height: var(--leading-small);
+}
+
 /* Responsive ------------------------------------------------------------- */
 
 /*

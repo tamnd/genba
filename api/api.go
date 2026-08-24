@@ -222,6 +222,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/me", s.authenticated(s.handleMe))
 	mux.Handle("GET /api/v1/search", s.authenticated(s.handleSearch))
 	mux.Handle("GET /api/v1/suggest", s.authenticated(s.handleSuggest))
+	mux.Handle("GET /api/v1/documents", s.authenticated(s.handleDocuments))
 	mux.Handle("GET /api/v1/documents/{id}", s.authenticated(s.handleDocument))
 	mux.Handle("POST /api/v1/documents/{id}/verify", s.authenticated(s.handleVerify))
 	mux.Handle("DELETE /api/v1/documents/{id}/verify", s.authenticated(s.handleUnverify))
