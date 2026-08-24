@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/tamnd/genba/acl"
+	"github.com/tamnd/genba/cache"
 	"github.com/tamnd/genba/directory"
 )
 
@@ -32,8 +34,10 @@ type Resolving struct {
 	// it is whatever a deployment authenticates with.
 	Auth Authenticator
 
-	// Resolver is the directory the groups come from.
-	Resolver *directory.Resolver
+	// Resolver is the directory the groups come from. It is a
+	// [directory.Resolver] on its own, or one wrapped in a
+	// [directory.Cache], and nothing here can tell the difference.
+	Resolver directory.Expander
 
 	// Lookup says how the principal is named in the directory, and it is
 	// optional. The default is the identity the principal carries for the
@@ -86,6 +90,31 @@ func (rs Resolving) Authenticate(r *http.Request) (*acl.Principal, error) {
 	p.Groups = acl.GroupSet{}
 	got.Apply(p)
 	return p, nil
+}
+
+// CacheStats reports the directory layer under the name the stats endpoint and
+// the metrics file it under, and nothing at all when the deployment resolves
+// without a cache.
+//
+// Publishing a layer that is not there as a row of zeros would be worse than
+// leaving it out, because a hit rate of zero and no cache look the same on a
+// dashboard and mean opposite things.
+func (rs Resolving) CacheStats() map[string]cache.Stats {
+	reporter, ok := rs.Resolver.(interface{ Stats() cache.Stats })
+	if !ok {
+		return nil
+	}
+	return map[string]cache.Stats{"directory": reporter.Stats()}
+}
+
+// staleness is the directory cache's bound in seconds, and false when there is
+// no cache to have one.
+func (rs Resolving) staleness() (float64, bool) {
+	bounded, ok := rs.Resolver.(interface{ Staleness() time.Duration })
+	if !ok {
+		return 0, false
+	}
+	return bounded.Staleness().Seconds(), true
 }
 
 // name is who to look up.

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -1101,6 +1102,11 @@ func (s *Server) cacheStats() map[string]cache.Stats {
 		out = make(map[string]cache.Stats, 1)
 	}
 	out["thumbnail"] = s.thumbs.Stats()
+	if reporter, ok := s.auth.(interface {
+		CacheStats() map[string]cache.Stats
+	}); ok {
+		maps.Copy(out, reporter.CacheStats())
+	}
 	return out
 }
 

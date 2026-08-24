@@ -21,6 +21,7 @@ const (
 	MetricCacheMisses     = "genba_cache_misses_total"
 	MetricCacheEvictions  = "genba_cache_evictions_total"
 	MetricCacheEntries    = "genba_cache_entries"
+	MetricGroupStaleness  = "genba_directory_staleness_seconds"
 	MetricStoreRows       = "genba_store_rows_total"
 	MetricStoreStatements = "genba_store_statements_total"
 	MetricStoreDecodes    = "genba_store_decodes_total"
@@ -68,7 +69,7 @@ func newMetrics(s *Server) *metrics {
 	cacheStat := func(pick func(hits, misses, evictions, entries int64) int64) func() map[string]float64 {
 		return func() map[string]float64 {
 			out := map[string]float64{}
-			for layer, st := range s.searcher.CacheStats() {
+			for layer, st := range s.cacheStats() {
 				out[layer] = float64(pick(st.Hits, st.Misses, st.Evictions, int64(st.Entries)))
 			}
 			return out
@@ -82,6 +83,25 @@ func newMetrics(s *Server) *metrics {
 		cacheStat(func(_, _, evictions, _ int64) int64 { return evictions }))
 	r.Counters(MetricCacheEntries, "Entries currently held, per layer.", "layer", "gauge",
 		cacheStat(func(_, _, _, entries int64) int64 { return entries }))
+
+	// How long a membership change can take to be noticed. It is published
+	// because it is a promise the deployment is making about its permissions,
+	// and a promise that only exists in a configuration file is one nobody is
+	// checking. A deployment that resolves without a cache publishes nothing
+	// here, which is the truth: there is no staleness to bound.
+	r.Counters(MetricGroupStaleness,
+		"The most out of date a resolved group set can be, which is the directory cache lifetime.",
+		"", "gauge", func() map[string]float64 {
+			bounded, ok := s.auth.(interface{ staleness() (float64, bool) })
+			if !ok {
+				return nil
+			}
+			seconds, ok := bounded.staleness()
+			if !ok {
+				return nil
+			}
+			return map[string]float64{"": seconds}
+		})
 
 	// A driver is not obliged to be measurable. One that is publishes the same
 	// numbers the CI gate asserts on, so a slow deployment can be compared with
