@@ -295,14 +295,16 @@ func TestAnOwnersEditIsAPermissionChangeAndNotARecrawl(t *testing.T) {
 	}
 	after := s.Counters()
 
-	// One edit at the root, well into the future so the change is unambiguous
-	// on a filesystem with a coarse timestamp.
+	// One edit at the root, dated half a minute ago. It is well clear of the
+	// tree below it, which was written a minute before that, and it is far
+	// enough in the past that a sync will hand back a cursor sitting exactly on
+	// it rather than one that stops short of a change made this second.
 	owners := filepath.Join(root, fssource.OwnersFile)
 	if err := os.WriteFile(owners, []byte("approvers:\n  - alice\n  - bob\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	later := time.Now().Add(2 * time.Second)
-	if err := os.Chtimes(owners, later, later); err != nil {
+	edited := time.Now().Add(-30 * time.Second)
+	if err := os.Chtimes(owners, edited, edited); err != nil {
 		t.Fatal(err)
 	}
 

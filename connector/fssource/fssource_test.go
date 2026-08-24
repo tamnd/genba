@@ -20,15 +20,26 @@ import (
 )
 
 // tree writes a directory tree from a map of relative path to contents.
+//
+// The files are dated a minute ago. A corpus that was written in the same
+// millisecond as the sync reading it is not a corpus, and it is not what these
+// tests are about either: a sync will not claim to have covered a moment it is
+// still inside of, so a tree written now leaves a cursor that deliberately sits
+// behind it and the file is read once more on the next sync. Dating the fixture
+// is how the tests ask their own question instead of that one.
 func tree(t *testing.T, files map[string]string) string {
 	t.Helper()
 	root := t.TempDir()
+	ago := time.Now().Add(-time.Minute)
 	for rel, body := range files {
 		full := filepath.Join(root, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(full, ago, ago); err != nil {
 			t.Fatal(err)
 		}
 	}

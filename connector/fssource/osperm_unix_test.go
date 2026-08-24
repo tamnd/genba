@@ -243,6 +243,14 @@ func TestAChmodIsAPermissionChangeAndNotARecrawl(t *testing.T) {
 	}
 	defer s.Close()
 
+	// A second between writing the tree and reading it, which the rest of these
+	// tests get by dating the files they write. This one cannot: the time that
+	// matters here is the inode change time, which is set when the file is made
+	// and cannot be set to anything else afterwards. Without the wait the first
+	// sync hands back a cursor that stops short of a tree made this second, and
+	// every file in it looks like a rule that just moved.
+	time.Sleep(1100 * time.Millisecond)
+
 	first, cursor := collect(t, s, connector.Cursor{})
 	if len(first) != 3 {
 		t.Fatalf("the first sync read %v, want three documents", ids(first))
@@ -255,10 +263,13 @@ func TestAChmodIsAPermissionChangeAndNotARecrawl(t *testing.T) {
 	}
 	after := s.Counters()
 
-	// The clock again, so that the change time lands unambiguously past a
-	// cursor taken a moment ago.
-	time.Sleep(10 * time.Millisecond)
 	chmod(t, filepath.Join(root, "a.md"), 0o600)
+
+	// The same second again. The chmod has to be unambiguously past the cursor
+	// on a filesystem with a coarse timestamp, and it has to be far enough back
+	// for the sync that finds it to hand back a cursor sitting on it, because
+	// the two syncs below are there to say the change is reported once.
+	time.Sleep(1100 * time.Millisecond)
 
 	var changes []connector.Change
 	next, err := s.Sync(t.Context(), cursor, func(_ context.Context, ch connector.Change) error {

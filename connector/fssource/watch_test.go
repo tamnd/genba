@@ -153,6 +153,31 @@ func put(t *testing.T, root, rel, body string) {
 	}
 }
 
+// place writes a file outside the tree, gives it a modification time, and moves
+// it in.
+//
+// Two steps rather than a write followed by a utimes, because those are two
+// events on a watcher, and a sync landing between them reads the file with a
+// time it is about to lose. A rename is one event and the file arrives holding
+// the time it is going to keep.
+func place(t *testing.T, root, rel, body string, at time.Time) {
+	t.Helper()
+	staged := filepath.Join(t.TempDir(), "staged")
+	if err := os.WriteFile(staged, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(staged, at, at); err != nil {
+		t.Fatal(err)
+	}
+	full := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(staged, full); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTheFirstWatchedSyncWalksTheWholeTree(t *testing.T) {
 	root := tree(t, map[string]string{
 		"README.md":       "# top\n",
@@ -407,6 +432,40 @@ func TestALostRecordMakesTheNextSyncWalk(t *testing.T) {
 	}
 	if stats := w.Stats(); stats.Walks < 2 {
 		t.Fatalf("the watcher walked %d times, want the first one and at least one more for the overflow", stats.Walks)
+	}
+}
+
+func TestAFileWrittenInTheSameTickAsOneThatWasReadSurvivesALostRecord(t *testing.T) {
+	root := tree(t, map[string]string{"README.md": "# top\n"})
+	w := watch(t, root)
+	s := watched(t, root, w)
+	_, cursor := changes(t, s, connector.Cursor{})
+
+	// One modification time for two files, which is not a contrivance. A file
+	// is stamped from a clock that ticks every few milliseconds rather than
+	// from the one that runs, so anything written in a burst shares a time to
+	// the nanosecond. Setting it rather than racing for it is what makes this
+	// say the same thing on every filesystem. It is ahead of now so that it is
+	// the highest time in the tree whatever the README happens to carry.
+	tick := time.Now().Add(time.Minute)
+	place(t, root, "docs/b.md", "# b\n", tick)
+
+	_, cursor = until(t, s, cursor, func(all []connector.Change) bool {
+		return wasRead(all, "repo:docs/b.md")
+	})
+
+	// The other half of the burst, whose event never reached the record.
+	// Closing the watcher arrives where an overflow arrives and arrives there
+	// on purpose: the next sync has to walk, and a walk has nothing to go on
+	// but the cursor the sync before it handed back.
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	place(t, root, "docs/a.md", "# a\n", tick)
+
+	got, _ := changes(t, s, cursor)
+	if !wasRead(got, "repo:docs/a.md") {
+		t.Fatalf("the walk read %v, so docs/a.md is lost for good: it is not newer than a cursor that landed on its own timestamp", read(got))
 	}
 }
 
