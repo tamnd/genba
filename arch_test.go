@@ -27,6 +27,16 @@ var allowed = map[string][]string{
 	"acl": nil,
 	"doc": {"acl"},
 
+	// directory sits under the permission model rather than beside it. It
+	// resolves a person into groups and hands acl the strings it compares, and
+	// the one thing it imports is acl, for the identity and group set types
+	// that are the shape of its answer. It has never heard of a document, a
+	// store or a query, and it must not: a directory that could see what it was
+	// resolving somebody for is a directory that could be asked leading
+	// questions.
+	"directory":               {"acl"},
+	"directory/directorytest": {"acl", "directory"},
+
 	// cache is a map with a lock on it and imports nothing of ours, which is
 	// what lets index depend on it without the dependency meaning anything. A
 	// cache that knew about principals would be a second copy of the permission
@@ -104,7 +114,7 @@ var allowed = map[string][]string{
 	"index":             {"acl", "cache", "doc", "store"},
 	"config":            nil,
 	"web":               nil,
-	"api":               {"", "acl", "cache", "doc", "index", "metric", "store", "thumb"},
+	"api":               {"", "acl", "cache", "directory", "doc", "index", "metric", "store", "thumb"},
 
 	// thumb imports nothing of ours. It is handed bytes and a size and hands
 	// back a smaller picture, which means the package that decodes files a

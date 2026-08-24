@@ -258,7 +258,17 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) authenticated(h func(http.ResponseWriter, *http.Request, *acl.Principal)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, err := s.auth.Authenticate(r)
-		if err != nil || p == nil {
+		switch {
+		case errors.Is(err, ErrDirectoryUnavailable):
+			// The credential was fine and the request is refused anyway,
+			// because the groups behind it could not be resolved. Saying so is
+			// worth the extra case: an operator watching a wall of 401s during
+			// a directory outage goes looking at the wrong system, and a client
+			// that sees a 503 knows to come back rather than to sign in again.
+			s.log.Error("the directory could not resolve a principal", "path", r.URL.Path, "error", err)
+			writeError(w, http.StatusServiceUnavailable, "unavailable", "the directory could not be reached, so this request cannot be answered")
+			return
+		case err != nil, p == nil:
 			writeError(w, http.StatusUnauthorized, "unauthenticated", "this request needs a credential")
 			return
 		}
