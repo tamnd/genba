@@ -21,6 +21,7 @@ import { Page } from "genba/page.js";
 import { Home } from "genba/home.js";
 import { Recent } from "genba/recent.js";
 import { Admin } from "genba/admin.js";
+import { Answers } from "genba/answers.js";
 import { Settings } from "genba/settings.js";
 import { forget, remember } from "genba/queries.js";
 import { failed } from "genba/states.js";
@@ -133,6 +134,10 @@ class App {
       onSay: (text) => this.say(text),
     });
     this.admin = new Admin({ onBack: () => this.backFromAdmin() });
+    this.answers = new Answers({
+      onBack: () => this.backFromSettings(),
+      onSay: (text) => this.say(text),
+    });
 
     this.main = h("main", {
       class: "main",
@@ -384,8 +389,9 @@ class App {
     // Where the settings screen was opened from, taken before the address
     // moves. No other screen needs this: the rest either carry their own state
     // in the address or have a list behind them to go back to.
-    const aside = path === urlState.SETTINGS || path === urlState.ADMIN;
-    if (aside && !["settings", "admin"].includes(urlState.route().name)) {
+    const aside =
+      path === urlState.SETTINGS || path === urlState.ADMIN || path === urlState.ANSWERS;
+    if (aside && !["settings", "admin", "answers"].includes(urlState.route().name)) {
       this.lastScreen = location.pathname + location.search;
     }
     if (location.pathname !== path || location.search) history.pushState(null, "", path);
@@ -435,8 +441,8 @@ class App {
   }
 
   /**
-   * renderAdmin puts the administration entry on the rail, for the people who
-   * can reach it.
+   * renderAdmin puts the two administrator entries on the rail, for the people
+   * who can reach them.
    *
    * The role is the server's answer rather than this browser's, because it is
    * the server that decides and a client that guessed would either hide a
@@ -462,6 +468,18 @@ class App {
         },
         svg(icon("slider"), 20),
         h("span", { class: "rail__label" }, "Admin"),
+      ),
+      h(
+        "a",
+        {
+          class: "rail__link",
+          href: urlState.ANSWERS,
+          title: "Answers written for this company",
+          dataset: { route: "answers" },
+          onClick: (e) => this.follow(e, urlState.ANSWERS),
+        },
+        svg(icon("star"), 20),
+        h("span", { class: "rail__label" }, "Answers"),
       ),
     );
   }
@@ -592,6 +610,10 @@ class App {
       this.showAdmin();
       return;
     }
+    if (route.name === "answers") {
+      this.showAnswers();
+      return;
+    }
 
     document.title = "genba";
     this.omnibox.value = this.query.q;
@@ -691,6 +713,24 @@ class App {
     await this.admin.render();
   }
 
+  /**
+   * showAnswers renders the answers this company has written down.
+   *
+   * It does not poll, unlike the screen beside it on the rail, because half of
+   * it is a form and the other half changes only when somebody on this screen
+   * changes it. The endpoint refuses anybody without the role, so somebody who
+   * typed the address rather than following the rail entry lands on the error
+   * the server gave rather than on a screen that pretends.
+   */
+  async showAnswers() {
+    this.currentKey = this.answers.key();
+    this.drawer.currentId = null;
+    if (this.drawer.open) this.drawer.close({ notify: false, focus: false });
+    document.title = "Answers · genba";
+    if (this.main.firstChild !== this.answers.el) replace(this.main, this.answers.el);
+    await this.answers.render();
+  }
+
   /** backFromAdmin is the way out, which is the same one settings offers. */
   backFromAdmin() {
     const back = this.backFromSettings();
@@ -756,7 +796,7 @@ class App {
     const searching = Boolean(this.query.q) || urlState.count(this.query) > 0 || Boolean(this.query.sort);
     const route = urlState.route();
     const here =
-      route.name === "recent" || route.name === "settings" || route.name === "admin"
+      ["recent", "settings", "admin", "answers"].includes(route.name)
         ? route.name
         : route.name === "search" && !searching
           ? "home"

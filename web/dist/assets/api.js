@@ -152,6 +152,11 @@ function stalePath(id) {
   return `/documents/${encodeURIComponent(id)}/stale`;
 }
 
+/** answerPath is one written answer, which is saved and taken down. */
+function answerPath(id) {
+  return `/admin/answers/${encodeURIComponent(id)}`;
+}
+
 /** connector is one source's path under the administration endpoints. */
 function connector(source, action = "") {
   return `/admin/connectors/${encodeURIComponent(source)}${action}`;
@@ -264,6 +269,19 @@ export const api = {
   startConnector: (source) => send("POST", connector(source, "/start")),
   stopConnector: (source) => send("POST", connector(source, "/stop")),
   syncConnector: (source) => send("POST", connector(source, "/sync")),
+  // The written answers, and the two writes that maintain them. Saving one is
+  // the same call whether it is new or not, and it is also how an answer is
+  // confirmed: the date under it is the date somebody last stood behind the
+  // words, and there is no separate act that produces one.
+  answers: (opts) => get("/admin/answers", {}, opts),
+  curate: (id, answer) => send("PUT", answerPath(id), answer),
+  retract: (id) => send("DELETE", answerPath(id)),
+  // Titles for a handful of ids, for the one screen that holds ids and has to
+  // print something a person recognises. It resolves through the caller, so an
+  // id this person cannot read is simply not in the answer, and what comes back
+  // is for display only: the editor saves the ids it was given, because saving
+  // what came back would drop every source it happens not to have access to.
+  documents: (ids, opts) => get("/documents", { id: ids }, opts),
   search: (query, opts) => get("/search", query, opts),
   // One request for both halves of the recent screen, because the screen asks
   // both questions at once and a screen that paints in two stages paints twice.

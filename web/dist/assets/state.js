@@ -7,7 +7,7 @@
 
 const LIST_KEYS = ["source", "kind", "container", "author", "owner"];
 
-// The four screens that are a path rather than a query string.
+// The five screens that are a path rather than a query string.
 //
 // A document is the thing somebody pastes into a message, so it gets an address
 // that survives being read out loud and does not carry the state of whoever
@@ -25,6 +25,11 @@ export const RECENT = "/recent";
 export const SETTINGS = "/settings";
 export const ADMIN = "/admin";
 
+// The answers screen is a path for the same two reasons administration is, and
+// it is a path of its own rather than a tab on that screen because what it
+// maintains is part of the corpus rather than part of the process.
+export const ANSWERS = "/answers";
+
 /**
  * route says which screen the path names.
  *
@@ -35,6 +40,7 @@ export function route(pathname = location.pathname) {
   if (pathname === RECENT) return { name: "recent", id: "" };
   if (pathname === SETTINGS) return { name: "settings", id: "" };
   if (pathname === ADMIN) return { name: "admin", id: "" };
+  if (pathname === ANSWERS) return { name: "answers", id: "" };
   if (!pathname.startsWith(DOCUMENT)) return { name: "search", id: "" };
   const id = decode(pathname.slice(DOCUMENT.length));
   return id ? { name: "document", id } : { name: "search", id: "" };
