@@ -62,6 +62,18 @@ const (
 	// DefaultDocumentEntries is how many documents are held. It is the layer
 	// that turns paging back and forth through a result set into no work at all.
 	DefaultDocumentEntries = 20_000
+
+	// DefaultShapeExpiry is how long the shape of the corpus is reused.
+	//
+	// A minute, and a write does not shorten it, which makes this the one layer
+	// here whose key does not carry the tenant's generation. The reasoning is in
+	// [Cache.shapeOf] and it comes down to the rail not being a search result.
+	DefaultShapeExpiry = time.Minute
+
+	// DefaultShapeEntries is how many corpus shapes are held. One per distinct
+	// visibility rather than one per person, so a company where everybody is in
+	// the same handful of groups needs a handful of entries.
+	DefaultShapeEntries = 1_000
 )
 
 // Cache is the derived state a searcher reuses between requests.
@@ -73,6 +85,7 @@ type Cache struct {
 	results *cache.Cache[store.Ranked]
 	corpus  *cache.Cache[store.Corpus]
 	docs    *cache.Cache[doc.Document]
+	shape   *cache.Cache[store.Reach]
 
 	// blind is set when the driver does not report its writes, which turns off
 	// the two layers that have no other way to learn that they are wrong.
@@ -167,6 +180,8 @@ func NewCache(opts ...CacheOption) *Cache {
 		corpus: cache.New(cfg.corpus, cache.Forever, cache.WithClock[store.Corpus](cfg.clock)),
 		docs:   cache.New(cfg.docs, cache.Forever, cache.WithClock[doc.Document](cfg.clock)),
 
+		shape: cache.New(DefaultShapeEntries, DefaultShapeExpiry, cache.WithClock[store.Reach](cfg.clock)),
+
 		gen: make(map[string]uint64),
 	}
 }
@@ -209,6 +224,7 @@ func (c *Cache) Clear() {
 	c.results.Clear()
 	c.corpus.Clear()
 	c.docs.Clear()
+	c.shape.Clear()
 }
 
 // Stats reports each layer separately, because a hit rate averaged over three
@@ -218,6 +234,7 @@ func (c *Cache) Stats() map[string]cache.Stats {
 		"results":   c.results.Stats(),
 		"corpus":    c.corpus.Stats(),
 		"documents": c.docs.Stats(),
+		"shape":     c.shape.Stats(),
 	}
 }
 
@@ -244,6 +261,45 @@ func (c *Cache) ranked(p *acl.Principal, r store.Request, sel store.Selection, f
 	key.WriteByte('|')
 	writeRequest(&key, r, sel)
 	return c.results.Do(key.String(), fn)
+}
+
+// shapeOf returns the corpus as one principal sees it, counted by the driver.
+//
+// This is the layer that lets the filter rail print the counts of the corpus
+// rather than a sample of them. Counting them exactly is an aggregate over
+// every document the asker may read, which is tens of milliseconds on a corpus
+// of twenty thousand and more than that on a real one, and the rail is the
+// first thing every session asks for. Reading it out of a cache is what turns
+// that into an answer inside the budget.
+//
+// The key is the tenant and the asker's visibility fingerprint, and it is the
+// one key in this file that does not carry the tenant's generation. That is the
+// whole design and it deserves its own paragraph rather than a clause.
+//
+// A write drops a cached ordering because somebody who saves a document and
+// then searches for it must find it, and being told for thirty seconds that it
+// does not exist is the complaint that makes people stop trusting a search box.
+// The rail is not a search result. It is the shape of the corpus, it is read as
+// proportions rather than as numbers, and nobody has ever noticed that a
+// vertical said four hundred and ten when it had just become four hundred and
+// eleven. Keying it by the generation would mean any write anywhere in the
+// tenant makes the next session bootstrap pay the exact count again, which on a
+// corpus being ingested is every bootstrap, which is the cost this layer exists
+// to remove.
+//
+// So the bound is the clock, at [DefaultShapeExpiry]. What that admits is a
+// count up to a minute out of date. What it does not admit is a leak: the
+// fingerprint changes when somebody's groups change, so a principal never reads
+// an entry counted for a different visibility, and the entry holds counts
+// rather than ids or titles either way. A document whose permissions changed
+// without any group changing moves a number by one for up to a minute, and that
+// is the honest cost of the layer.
+func (c *Cache) shapeOf(p *acl.Principal, fn func() (store.Reach, error)) (store.Reach, error) {
+	fp := acl.Fingerprint(p)
+	if fp == "" {
+		return fn()
+	}
+	return c.shape.Do(fp, fn)
 }
 
 // corpusStats returns the cached corpus numbers for a set of terms.

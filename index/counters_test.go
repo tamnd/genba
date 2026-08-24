@@ -274,6 +274,71 @@ func TestFacetCounters(t *testing.T) {
 	}
 }
 
+// The filter rail counts the corpus and a search samples it, and the difference
+// is the whole of #142.
+//
+// A sidebar is drawn beside a match set, where the bound is the right trade: a
+// query that matched fifty thousand documents is described well enough by the
+// first thousand of them, and reading four columns of the other forty nine to
+// improve the second digit of a number nobody reads that far is not worth a
+// second of anybody's time. A rail is drawn beside no match set at all. It says
+// how much of each source and each kind there is, it is read as proportions,
+// and a rail whose every row reports the same bound has no proportions in it.
+//
+// So this asserts the two behaviours side by side on one corpus, because either
+// one alone reads like an accident.
+func TestTheRailCountsPastTheBoundASearchStopsAt(t *testing.T) {
+	if testing.Short() {
+		t.Skip("generating the corpus takes a few seconds the first time")
+	}
+	s, p, st := counters(t)
+
+	// A search with nothing in it, which is the most documents any query here
+	// can match and therefore the case the bound bites hardest.
+	res, err := s.Search(t.Context(), p, index.Query{Limit: 1})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if res.Total <= index.FacetPool {
+		t.Fatalf("the corpus holds %d readable documents and the facet pool is %d, so the bound is never reached",
+			res.Total, index.FacetPool)
+	}
+	if !res.Approximate {
+		t.Errorf("a search over %d documents counted its facets over %d and did not say so",
+			res.Total, index.FacetPool)
+	}
+	if got := sum(res.Facets["source"]); got != index.FacetPool {
+		t.Errorf("the search sidebar adds up to %d, want the bound of %d", got, index.FacetPool)
+	}
+
+	st.ResetCounters()
+	rail, err := s.Filters(t.Context(), p)
+	if err != nil {
+		t.Fatalf("Filters: %v", err)
+	}
+	for _, field := range []string{"source", "kind"} {
+		if got := sum(rail[field]); got != res.Total {
+			t.Errorf("the rail adds up to %d by %s, want the %d documents this reader can open",
+				got, field, res.Total)
+		}
+	}
+
+	// One statement for both groupings. Counting the corpus twice to describe it
+	// two ways would double the one part of this that is proportional to the
+	// corpus, and it is the part that put the rail behind a cache.
+	if c := st.Counters(); c.Statements != 1 {
+		t.Errorf("the rail cost %d statements, want one", c.Statements)
+	}
+}
+
+func sum(facets []index.Facet) int {
+	var n int
+	for _, f := range facets {
+		n += f.Count
+	}
+	return n
+}
+
 // A filtered search counts more documents than it matched, on purpose. A field
 // somebody has ticked is counted a second time with its own filter lifted, so
 // that the values nobody ticked still carry the number of results choosing them

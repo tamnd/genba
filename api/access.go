@@ -165,7 +165,12 @@ func (s *Server) handleAccess(w http.ResponseWriter, r *http.Request, p *acl.Pri
 			writeError(w, http.StatusInternalServerError, "internal", "the counts are not available")
 			return
 		}
-		res.Sources = sourcesOf(reach)
+		// The kinds come back with the sources and this screen does not draw
+		// them. It asks whether somebody's access is the shape it should be,
+		// which is a question about which connectors they can see into, and a
+		// second breakdown of the same documents by document type answers a
+		// question nobody opened this screen with.
+		res.Sources = sourcesOf(reach.Sources)
 		for _, one := range res.Sources {
 			res.Documents += one.Documents
 		}
@@ -226,10 +231,10 @@ func matchedKey(d acl.Decision) string {
 // sourcesOf puts the counts on the wire, largest first so that the connector
 // somebody has most of is the one they read first, and by name within a tie so
 // that two readings of an unchanged corpus are the same list.
-func sourcesOf(in []store.Reach) []source {
+func sourcesOf(in []store.Facet) []source {
 	out := make([]source, len(in))
-	for i, r := range in {
-		out[i] = source{Source: r.Source, Documents: r.Documents}
+	for i, f := range in {
+		out[i] = source{Source: f.Value, Documents: f.Count}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Documents != out[j].Documents {

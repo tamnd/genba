@@ -406,35 +406,44 @@ func (s *Store) Quarantined(ctx context.Context, tenant string, limit int) ([]st
 	return out, nil
 }
 
-// Reachable counts what one principal may read, by source.
+// Reachable counts what one principal may read, by source and by kind.
 //
 // It is the same decision Scan makes, taken over the same map, and it is a
 // separate method because the counting is the point: Scan hands back documents
-// and this hands back four numbers, and on a driver whose documents are already
-// in memory that difference is the whole cost of the answer.
-func (s *Store) Reachable(ctx context.Context, p *acl.Principal) ([]store.Reach, error) {
+// and this hands back a handful of numbers, and on a driver whose documents are
+// already in memory that difference is the whole cost of the answer.
+func (s *Store) Reachable(ctx context.Context, p *acl.Principal) (store.Reach, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return store.Reach{}, err
 	}
 	if p == nil {
-		return nil, genba.ErrNoPrincipal
+		return store.Reach{}, genba.ErrNoPrincipal
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
-		return nil, genba.ErrClosed
+		return store.Reach{}, genba.ErrClosed
 	}
-	counts := make(map[string]int)
+	sources, kinds := map[string]int{}, map[string]int{}
 	for _, d := range s.docs {
 		if visible(p, d) {
-			counts[d.Source]++
+			sources[d.Source]++
+			kinds[string(d.Kind)]++
 		}
 	}
-	out := make([]store.Reach, 0, len(counts))
-	for source, n := range counts {
-		out = append(out, store.Reach{Source: source, Documents: n})
+	return store.Reach{Sources: facetsOf(sources), Kinds: facetsOf(kinds)}, nil
+}
+
+// facetsOf turns a tally into the counts a caller reads. The order is
+// unspecified, so it is whatever ranging over a map gave, which is the honest
+// way to say so: a caller that started depending on an order would find out
+// here rather than on the driver that changed one.
+func facetsOf(counts map[string]int) []store.Facet {
+	out := make([]store.Facet, 0, len(counts))
+	for value, n := range counts {
+		out = append(out, store.Facet{Value: value, Count: n})
 	}
-	return out, nil
+	return out
 }
 
 // Close releases the store.

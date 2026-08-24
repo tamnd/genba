@@ -33,6 +33,7 @@ type counting struct {
 	ranks   int
 	stats   int
 	fetches int
+	reaches int
 	fetched []string
 
 	// hold blocks every rank until it is closed, which is how the single flight
@@ -122,10 +123,35 @@ func (s *counting) Fetch(ctx context.Context, p *acl.Principal, ids []string) ([
 	return out, nil
 }
 
+func (s *counting) Reachable(ctx context.Context, p *acl.Principal) (store.Reach, error) {
+	s.mu.Lock()
+	s.reaches++
+	s.mu.Unlock()
+	return s.Store.Reachable(ctx, p)
+}
+
 func (s *counting) counts() (ranks, stats, fetches int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.ranks, s.stats, s.fetches
+}
+
+// reached is the aggregate the filter rail is drawn from, counted separately
+// because it is the one call here whose cost follows the corpus rather than the
+// page and the only one a write is allowed not to invalidate.
+func (s *counting) reached() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reaches
+}
+
+func filters(t *testing.T, s *index.Searcher, p *acl.Principal) map[string][]index.Facet {
+	t.Helper()
+	got, err := s.Filters(t.Context(), p)
+	if err != nil {
+		t.Fatalf("Filters: %v", err)
+	}
+	return got
 }
 
 // documents turns the shared fixtures into documents. It is the body of
@@ -453,6 +479,107 @@ func TestResultCacheExpires(t *testing.T) {
 	}
 }
 
+// The filter rail is counted once per visibility rather than once per session.
+//
+// It is the first request every browser makes and the answer is the same for
+// everybody in the same groups, so counting it per person is counting the
+// corpus once per person who opens the product in the morning.
+func TestTheRailIsCountedOncePerVisibility(t *testing.T) {
+	st := newCounting(t, corpus)
+	s, _ := cachedSearcher(t, st)
+	p := principal("gdrive:eng@acme.com")
+
+	first := filters(t, s, p)
+	second := filters(t, s, p)
+	if !slices.Equal(first["source"], second["source"]) {
+		t.Fatalf("the rail changed between two reads: %v then %v", first["source"], second["source"])
+	}
+	if got := st.reached(); got != 1 {
+		t.Errorf("the driver counted the corpus %d times for two reads of the rail, want 1", got)
+	}
+}
+
+// A write does not recount the rail, and that is the one place in this file
+// where a write leaves an entry standing.
+//
+// A search must never be answered from before a write, because somebody who
+// saves a document and cannot then find it stops trusting the search box. The
+// rail is not that. It is the shape of the corpus, it is read as proportions,
+// and it is the aggregate over every document the reader may open. Recounting
+// it on every write means recounting it on every document a connector ingests,
+// which during an ingestion is continuously.
+func TestAWriteDoesNotRecountTheRail(t *testing.T) {
+	st := newCounting(t, corpus)
+	s, _ := cachedSearcher(t, st)
+	p := principal("gdrive:eng@acme.com")
+
+	filters(t, s, p)
+	if err := st.Put(t.Context(), documents([]fixture{
+		{id: "d4", title: "Another runbook", body: "How to fail over the other queue.", perm: openTo("eng@acme.com")},
+	})...); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	filters(t, s, p)
+
+	if got := st.reached(); got != 1 {
+		t.Errorf("the driver counted the corpus %d times across a write, want 1", got)
+	}
+	// The same write does sweep the orderings, which is what makes the line
+	// above a decision about the rail rather than a cache that ignores writes.
+	res := search(t, s, p, index.Query{Text: "runbook"})
+	if !slices.Contains(ids(res), "d4") {
+		t.Errorf("a search after the write found %v, want the document that was just written", ids(res))
+	}
+}
+
+// What bounds the staleness the test above admits is the clock.
+func TestTheRailExpiresOnTheClock(t *testing.T) {
+	st := newCounting(t, corpus)
+	var now atomic.Int64
+	now.Store(epoch.UnixNano())
+	c := index.NewCache(index.WithCacheClock(func() time.Time { return time.Unix(0, now.Load()) }))
+	s := index.New(st, index.WithClock(clock), index.WithCache(c))
+	t.Cleanup(func() { _ = s.Close() })
+	p := principal("gdrive:eng@acme.com")
+
+	filters(t, s, p)
+	now.Add(int64(index.DefaultShapeExpiry) + 1)
+	filters(t, s, p)
+
+	if got := st.reached(); got != 2 {
+		t.Errorf("the driver counted the corpus %d times either side of the expiry, want 2", got)
+	}
+}
+
+// The rail says how many documents there are of each source, so an entry that
+// crossed between two people would tell one of them how much of a corpus the
+// other can read.
+func TestTheRailNeverCrossesVisibility(t *testing.T) {
+	st := newCounting(t, corpus)
+	s, _ := cachedSearcher(t, st)
+
+	engineer := filters(t, s, principal("gdrive:eng@acme.com"))
+	seller := filters(t, s, principal("gdrive:sales@acme.com"))
+
+	if got := sources(engineer); !slices.Equal(got, []string{"gdrive"}) {
+		t.Errorf("the engineer's rail draws %v, want gdrive alone", got)
+	}
+	if got := sources(seller); !slices.Equal(got, []string{"salesforce"}) {
+		t.Errorf("the seller's rail draws %v, want salesforce alone", got)
+	}
+	if got := st.reached(); got != 2 {
+		t.Errorf("two visibilities cost %d counts, want one each", got)
+	}
+}
+
+func sources(facets map[string][]index.Facet) []string {
+	out := make([]string, 0, len(facets["source"]))
+	for _, f := range facets["source"] {
+		out = append(out, f.Value)
+	}
+	return out
+}
+
 // TestSixteenReadersProduceOneQuery is the case a cache exists for: a popular
 // key goes cold and everybody misses it at once.
 func TestSixteenReadersProduceOneQuery(t *testing.T) {
@@ -510,9 +637,13 @@ func TestCacheStatsAreReportedPerLayer(t *testing.T) {
 
 	search(t, s, p, index.Query{Text: "payments"})
 	search(t, s, p, index.Query{Text: "payments"})
+	// The rail is its own layer with its own expiry, so it is read twice here
+	// like the rest of them rather than left to a search to populate.
+	filters(t, s, p)
+	filters(t, s, p)
 
 	stats := s.CacheStats()
-	for _, layer := range []string{"results", "corpus", "documents"} {
+	for _, layer := range []string{"results", "corpus", "documents", "shape"} {
 		got, ok := stats[layer]
 		if !ok {
 			t.Fatalf("the stats do not report the %s layer", layer)

@@ -10,14 +10,16 @@ import (
 	"github.com/tamnd/genba/store"
 )
 
-// RunReachable checks a driver's [store.Access] against what the screen that
-// answers "what can this person see" relies on.
+// RunReachable checks a driver's [store.Access] against what the two screens
+// built on it rely on: the one that answers "what can this person see", and the
+// filter rail, which asks the same question of the person looking at it.
 //
 // Every case here is a way of counting the wrong documents while looking
 // correct, and all of them matter more than an ordinary miscount because of
-// what the number is used for: an operator compares it against what they expect
-// somebody's access to be, and a count that is too high sends them looking for
-// a leak that is not there while a count that is too low hides one that is.
+// what the numbers are used for: an operator compares one against what they
+// expect somebody's access to be, and a count that is too high sends them
+// looking for a leak that is not there while a count that is too low hides one
+// that is.
 //
 // The case that is easy to skip is the quarantine. A held document is invisible
 // to every principal, and a driver that counts with an aggregate rather than
@@ -49,24 +51,41 @@ var reachableCases = []reachableCase{
 	{"another tenant's documents are not counted", testReachableTenant},
 	{"a principal who may see nothing gets nothing", testReachableEmpty},
 	{"the counts are per source", testReachableSources},
+	{"the counts are per kind as well", testReachableKinds},
 	{"the whole rule is applied in order", testReachableRuleOrder},
 	{"the count is the read path's own answer", testReachableAgreesWithScan},
 }
 
-// reach collects the counts as a map, because the order is unspecified and a
-// test that depended on it would pass on one driver and fail on the next.
+// reach collects the counts by source as a map, because the order is
+// unspecified and a test that depended on it would pass on one driver and fail
+// on the next.
 func reach(t *testing.T, a store.Access, p *acl.Principal) map[string]int {
 	t.Helper()
-	list, err := a.Reachable(t.Context(), p)
+	got, err := a.Reachable(t.Context(), p)
 	if err != nil {
 		t.Fatalf("Reachable: %v", err)
 	}
-	out := make(map[string]int, len(list))
-	for _, r := range list {
-		if _, seen := out[r.Source]; seen {
-			t.Fatalf("source %q is counted twice, so the driver is grouping by something else", r.Source)
+	return tally(t, "source", got.Sources)
+}
+
+// reachKinds is [reach] over the other grouping.
+func reachKinds(t *testing.T, a store.Access, p *acl.Principal) map[string]int {
+	t.Helper()
+	got, err := a.Reachable(t.Context(), p)
+	if err != nil {
+		t.Fatalf("Reachable: %v", err)
+	}
+	return tally(t, "kind", got.Kinds)
+}
+
+func tally(t *testing.T, field string, in []store.Facet) map[string]int {
+	t.Helper()
+	out := make(map[string]int, len(in))
+	for _, f := range in {
+		if _, seen := out[f.Value]; seen {
+			t.Fatalf("%s %q is counted twice, so the driver is grouping by something else", field, f.Value)
 		}
-		out[r.Source] = r.Documents
+		out[f.Value] = f.Count
 	}
 	return out
 }
@@ -75,6 +94,14 @@ func reach(t *testing.T, a store.Access, p *acl.Principal) map[string]int {
 func sourced(id, source string, perm acl.Permissions) doc.Document {
 	d := document(id, perm)
 	d.Source = source
+	return d
+}
+
+// kinded is a document of a stated type, in a source of its own so that a
+// miscount cannot be hidden by the source grouping agreeing.
+func kinded(id string, kind doc.Kind, perm acl.Permissions) doc.Document {
+	d := document(id, perm)
+	d.Kind = kind
 	return d
 }
 
@@ -208,17 +235,52 @@ func testReachableAgreesWithScan(t *testing.T, s store.Store, a store.Access) {
 	mustPut(t, s, corpus...)
 
 	for _, p := range []*acl.Principal{reader(), stranger()} {
-		counted := reach(t, a, p)
-		walked := map[string]int{}
+		sources, kinds := map[string]int{}, map[string]int{}
 		if err := s.Scan(t.Context(), p, func(d doc.Document) bool {
-			walked[d.Source]++
+			sources[d.Source]++
+			kinds[string(d.Kind)]++
 			return true
 		}); err != nil {
 			t.Fatalf("Scan: %v", err)
 		}
-		if !maps.Equal(counted, walked) {
-			t.Errorf("%s is counted %v and reads %v, so the two rules disagree", p.Subject, counted, walked)
+		if counted := reach(t, a, p); !maps.Equal(counted, sources) {
+			t.Errorf("%s is counted %v by source and reads %v, so the two rules disagree", p.Subject, counted, sources)
 		}
+		// Both groupings, because a driver that counts one of them from the
+		// rule and the other from something else would pass on the first alone.
+		if counted := reachKinds(t, a, p); !maps.Equal(counted, kinds) {
+			t.Errorf("%s is counted %v by kind and reads %v, so the two rules disagree", p.Subject, counted, kinds)
+		}
+	}
+}
+
+// testReachableKinds is the grouping the filter rail draws its verticals from.
+//
+// The corpus is deliberately lopsided against the source grouping: every
+// document is in the same source, so a driver that counted by source and
+// labelled the answer kind gets one row of three here instead of three rows.
+func testReachableKinds(t *testing.T, s store.Store, a store.Access) {
+	mustPut(t, s,
+		kinded("d1", doc.KindPage, readable()),
+		kinded("d2", doc.KindMessage, readable()),
+		kinded("d3", doc.KindMessage, readable()),
+		// Not readable by the engineer, so a kind nobody else carries has to be
+		// missing rather than present at zero.
+		kinded("d4", doc.KindTicket, acl.Permissions{
+			Mode:        acl.ModeACL,
+			Source:      "gdrive",
+			AllowGroups: []acl.Ref{{Source: "gdrive", Value: "sales@acme.com"}},
+			Version:     1,
+		}),
+	)
+
+	got := reachKinds(t, a, reader())
+	kinds := slices.Sorted(maps.Keys(got))
+	if !slices.Equal(kinds, []string{"message", "page"}) {
+		t.Fatalf("the kinds are %v, want message and page", kinds)
+	}
+	if got["page"] != 1 || got["message"] != 2 {
+		t.Fatalf("the counts are %v, want one page and two messages", got)
 	}
 }
 

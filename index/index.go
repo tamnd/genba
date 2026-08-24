@@ -481,8 +481,8 @@ func (s *Searcher) Recent(ctx context.Context, p *acl.Principal, limit int) ([]d
 	return out, nil
 }
 
-// Filters is what a filter rail is drawn from: every facet value the principal
-// can see, and how many documents carry each.
+// Filters is what a filter rail is drawn from: the sources and the kinds the
+// principal can see something in, and how many documents they can see of each.
 //
 // It is a separate method rather than a search with a tiny limit because the
 // candidate pool has a floor. Asking for one result asks the driver for five
@@ -497,15 +497,46 @@ func (s *Searcher) Recent(ctx context.Context, p *acl.Principal, limit int) ([]d
 // two together is how a limit of zero comes to mean whichever of them the reader
 // guesses.
 //
-// The counts are bounded by [FacetPool], which is the same bound a search puts
-// on its sidebar and the same one this endpoint was already getting when it went
-// through Search. Counting them exactly is a read of four columns of every
-// document the principal can see, and it was measured: on twenty thousand
-// documents the exact count costs more than the five hundred candidates removing
-// it saved, so a change made to take work off this path would have put more
-// back. What the bound costs is that the rail's numbers are lower bounds on a
-// corpus larger than the pool, which is #142.
+// The counts are exact on a driver that can count what somebody may read, which
+// is [store.Access], and the search path is the fallback for one that cannot.
+// The fallback is what this used to do on every driver, and it bounds the
+// counting at [FacetPool], so on a corpus larger than the pool it drew a rail
+// that added up to a thousand. That is #142 and the difference is worth being
+// blunt about: a rail is read as proportions, and proportions taken from a
+// sample of the first thousand documents the planner happened to reach are not
+// proportions of anything.
+//
+// The exact count is an aggregate over every document the principal may read,
+// which is more than an interactive request can afford to spend, so it is read
+// through the one cache layer here that a write does not drop. That is where
+// the staleness this endpoint admits is written down: see [Cache.shapeOf].
+//
+// Two fields rather than four. The rail draws the sources and the kinds, and
+// the container and author counts a search reports are counted over a match
+// set, where the question is which of the things this query found are worth
+// narrowing to. Over a whole corpus there is no such question: the answer is
+// every author in the company, in a list of fifty, which is not a filter.
 func (s *Searcher) Filters(ctx context.Context, p *acl.Principal) (map[string][]Facet, error) {
+	if a, ok := s.store.(store.Access); ok {
+		call := func() (store.Reach, error) { return a.Reachable(ctx, p) }
+		var (
+			reach store.Reach
+			err   error
+		)
+		if s.cache != nil {
+			reach, err = s.cache.shapeOf(p, call)
+		} else {
+			reach, err = call()
+		}
+		if err != nil {
+			return nil, err
+		}
+		return facetsFrom(map[string][]store.Facet{
+			"source": reach.Sources,
+			"kind":   reach.Kinds,
+		}), nil
+	}
+
 	found, err := s.collect(ctx, p, store.Request{}, store.Selection{Counts: true, Facets: FacetPool})
 	if err != nil {
 		return nil, err
