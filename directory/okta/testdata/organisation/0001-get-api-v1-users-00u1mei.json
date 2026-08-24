@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://acme.okta.com/api/v1/users/00u1mei",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ],
+      "Authorization": [
+        "REDACTED"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ],
+      "X-Rate-Limit-Limit": [
+        "600"
+      ],
+      "X-Rate-Limit-Remaining": [
+        "599"
+      ],
+      "X-Rate-Limit-Reset": [
+        "1767225600"
+      ]
+    },
+    "body": {
+      "json": {
+        "created": "2026-01-01T00:00:00.000Z",
+        "id": "00u1mei",
+        "lastUpdated": "2026-01-01T00:00:00.004Z",
+        "profile": {
+          "displayName": "Mei Tanaka",
+          "email": "mei@acme.test",
+          "firstName": "",
+          "lastName": "",
+          "login": "mei@acme.test",
+          "secondEmail": ""
+        },
+        "status": "ACTIVE"
+      }
+    }
+  }
+}

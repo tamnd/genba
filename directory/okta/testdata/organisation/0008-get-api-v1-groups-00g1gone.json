@@ -1,0 +1,31 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://acme.okta.com/api/v1/groups/00g1gone",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ],
+      "Authorization": [
+        "REDACTED"
+      ]
+    }
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "errorCauses": [],
+        "errorCode": "E0000007",
+        "errorId": "oaeFakeRequestId",
+        "errorLink": "E0000007",
+        "errorSummary": "Not found: Resource not found: 00g1gone (UserGroup)"
+      }
+    }
+  }
+}

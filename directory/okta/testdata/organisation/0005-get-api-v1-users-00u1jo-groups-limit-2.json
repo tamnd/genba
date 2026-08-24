@@ -1,0 +1,37 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://acme.okta.com/api/v1/users/00u1jo/groups?limit=2",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ],
+      "Authorization": [
+        "REDACTED"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ],
+      "Link": [
+        "\u003chttps://acme.okta.com/api/v1/users/00u1jo/groups?filter=type+eq+%22OKTA_GROUP%22%2C+%22APP_GROUP%22\u003e; rel=\"self\""
+      ],
+      "X-Rate-Limit-Limit": [
+        "600"
+      ],
+      "X-Rate-Limit-Remaining": [
+        "599"
+      ],
+      "X-Rate-Limit-Reset": [
+        "1767225600"
+      ]
+    },
+    "body": {
+      "json": []
+    }
+  }
+}

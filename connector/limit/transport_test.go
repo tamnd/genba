@@ -202,6 +202,9 @@ func TestTheSourcesOwnRetryTimeIsHonoured(t *testing.T) {
 		{"a reset as a delta", header("RateLimit-Reset", "12"), 12 * time.Second},
 		{"a fractional reset", header("RateLimit-Reset", "1.5"), 1500 * time.Millisecond},
 		{"a legacy reset as a timestamp", header("X-RateLimit-Reset", strconv.FormatInt(start.Add(45*time.Second).Unix(), 10)), 45 * time.Second},
+		// Okta's spelling, which is a different header name once it has been
+		// canonicalised and not a variation anything reads by accident.
+		{"a reset with the hyphen in the other place", header("X-Rate-Limit-Reset", strconv.FormatInt(start.Add(60*time.Second).Unix(), 10)), 60 * time.Second},
 		{"a date already gone by", header("Retry-After", start.Add(-time.Hour).Format(http.TimeFormat)), 0},
 		{"a reset too far off to believe", header("RateLimit-Reset", "7200"), 0},
 		{"nonsense", header("Retry-After", "soon"), 0},
@@ -340,6 +343,11 @@ func TestTheQuotaBeingSpentHoldsTheNextRequestBack(t *testing.T) {
 			"the older headers",
 			header("X-RateLimit-Remaining", "0", "X-RateLimit-Reset", strconv.FormatInt(start.Add(90*time.Second).Unix(), 10)),
 			90 * time.Second,
+		},
+		{
+			"the headers with the hyphen in the other place",
+			header("X-Rate-Limit-Remaining", "0", "X-Rate-Limit-Reset", strconv.FormatInt(start.Add(120*time.Second).Unix(), 10)),
+			120 * time.Second,
 		},
 		{"some quota left", header("RateLimit-Remaining", "4", "RateLimit-Reset", "30"), 0},
 		{"no reset to go with it", header("RateLimit-Remaining", "0"), 0},

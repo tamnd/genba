@@ -25,6 +25,15 @@
 // appear once the graph is walked. An adapter is never used without the
 // resolver, so testing it without one would leave the interesting half untested.
 //
+// # Providers without nesting
+//
+// Some providers have no group graph at all. Okta is the one this was written
+// for: a user is a member of groups, a group is a member of nothing, and there
+// is nothing to walk. A fixture that sets [Fixture.Flat] skips the cases about
+// walking a graph, and the ones that lean on a single level of nesting for
+// their arithmetic count a level fewer. Everything else still runs, because
+// nothing else about what an answer means changes.
+//
 // # Usage
 //
 //	func TestConformance(t *testing.T) {
@@ -74,6 +83,51 @@ type Fixture struct {
 	// It is optional, and a fixture that cannot do it skips the case about an
 	// inconsistent directory rather than failing it.
 	Drop func(t *testing.T, group string)
+
+	// Identity prepares a subject to carry an identity this directory is able
+	// to hold, and returns the identity the expansion is expected to answer
+	// with. It is optional.
+	//
+	// Directories differ in what they can hold. [directory.Static] holds
+	// whatever it is given, which is why the default puts a Slack id on the
+	// subject and expects that back. A hosted provider holds the identities it
+	// knows about and nothing else, so an Okta organisation answers with the
+	// person's Okta id and their email addresses, and no amount of putting a
+	// Slack id on a subject will make one come out.
+	//
+	// What the case is actually about survives either way: an identity the
+	// directory knows reaches the principal, and a rule written in that
+	// vocabulary allows the person it names.
+	Identity func(t *testing.T, s *directory.Subject) acl.Identity
+
+	// Flat says the provider's groups cannot contain groups.
+	//
+	// Okta is the example: a user is a member of groups and a group is a member
+	// of nothing, so there is no graph to walk and every expansion is one level
+	// deep. The cases about walking a graph do not apply to a provider like
+	// that, and an adapter that passed them would be one that had invented a
+	// nesting the provider does not have.
+	//
+	// The default is false, so a provider that does nest runs everything.
+	Flat bool
+}
+
+// above is the membership to give a group the cases nest, which is nothing at
+// all when the provider has no nesting to give it.
+func (f Fixture) above(groups ...string) []string {
+	if f.Flat {
+		return nil
+	}
+	return groups
+}
+
+// nesting skips a case that is about walking a group graph, on a provider that
+// does not have one.
+func (f Fixture) nesting(t *testing.T) {
+	t.Helper()
+	if f.Flat {
+		t.Skip("the provider's groups cannot contain groups, so there is no graph to walk")
+	}
 }
 
 // Factory builds a fresh fixture for one case. Every case gets its own, because
@@ -144,6 +198,7 @@ func testDirect(t *testing.T, f Fixture) {
 }
 
 func testNested(t *testing.T, f Fixture) {
+	f.nesting(t)
 	f.PutGroup(t, directory.Group{ID: "everyone"})
 	f.PutGroup(t, directory.Group{ID: "engineering", MemberOf: []string{"everyone"}})
 	f.PutGroup(t, directory.Group{ID: "storage", MemberOf: []string{"engineering"}})
@@ -164,6 +219,7 @@ func testDiamond(t *testing.T, f Fixture) {
 	// rather than a corner case, and looking the shared group up twice is how
 	// an expansion over a few hundred groups turns into a few thousand
 	// requests.
+	f.nesting(t)
 	f.PutGroup(t, directory.Group{ID: "everyone"})
 	f.PutGroup(t, directory.Group{ID: "engineering", MemberOf: []string{"everyone"}})
 	f.PutGroup(t, directory.Group{ID: "operations", MemberOf: []string{"everyone"}})
@@ -181,6 +237,7 @@ func testDiamond(t *testing.T, f Fixture) {
 }
 
 func testCycle(t *testing.T, f Fixture) {
+	f.nesting(t)
 	f.PutGroup(t, directory.Group{ID: "a", MemberOf: []string{"b"}})
 	f.PutGroup(t, directory.Group{ID: "b", MemberOf: []string{"c"}})
 	f.PutGroup(t, directory.Group{ID: "c", MemberOf: []string{"a"}})
@@ -196,6 +253,7 @@ func testCycle(t *testing.T, f Fixture) {
 }
 
 func testSelfCycle(t *testing.T, f Fixture) {
+	f.nesting(t)
 	f.PutGroup(t, directory.Group{ID: "recursive", MemberOf: []string{"recursive"}})
 	f.Put(t, directory.Subject{ID: "mei", MemberOf: []string{"recursive"}})
 
@@ -279,7 +337,7 @@ func testVersionMoves(t *testing.T, f Fixture) {
 
 func testVersionStable(t *testing.T, f Fixture) {
 	f.PutGroup(t, directory.Group{ID: "everyone"})
-	f.PutGroup(t, directory.Group{ID: "engineering", MemberOf: []string{"everyone"}})
+	f.PutGroup(t, directory.Group{ID: "engineering", MemberOf: f.above("everyone")})
 	f.Put(t, directory.Subject{ID: "mei", MemberOf: []string{"engineering"}})
 
 	first := expand(t, f, "mei").Groups.Version
@@ -309,15 +367,13 @@ func testVersionScoped(t *testing.T, f Fixture) {
 
 func testIdentities(t *testing.T, f Fixture) {
 	f.PutGroup(t, directory.Group{ID: "engineering"})
-	f.Put(t, directory.Subject{
-		ID:         "mei",
-		Identities: []acl.Identity{{Source: "slack", Value: "U04AB"}},
-		MemberOf:   []string{"engineering"},
-	})
+	sub := directory.Subject{ID: "mei", MemberOf: []string{"engineering"}}
+	want := f.identity(t, &sub)
+	f.Put(t, sub)
 
 	got := expand(t, f, "mei")
-	if !slices.Contains(got.Subject.Identities, acl.Identity{Source: "slack", Value: "U04AB"}) {
-		t.Fatalf("the identity the directory holds did not survive the expansion: %v", got.Subject.Identities)
+	if !slices.Contains(got.Subject.Identities, want) {
+		t.Fatalf("the identity %v the directory holds did not survive the expansion: %v", want, got.Subject.Identities)
 	}
 
 	// The whole point of an identity is that a rule written in one source's
@@ -326,12 +382,24 @@ func testIdentities(t *testing.T, f Fixture) {
 	got.Apply(p)
 	perm := acl.Permissions{
 		Mode:       acl.ModeACL,
-		Source:     "slack",
-		AllowUsers: []acl.Ref{{Source: "slack", Value: "U04AB"}},
+		Source:     want.Source,
+		AllowUsers: []acl.Ref{{Source: want.Source, Value: want.Value}},
 	}
 	if !perm.Allows(p) {
-		t.Error("a rule naming the subject by their Slack identity did not allow them")
+		t.Errorf("a rule naming the subject by their %s identity did not allow them", want.Source)
 	}
+}
+
+// identity is the identity the case about identities puts and expects, which is
+// a Slack id unless the fixture has something to say about it.
+func (f Fixture) identity(t *testing.T, s *directory.Subject) acl.Identity {
+	t.Helper()
+	if f.Identity != nil {
+		return f.Identity(t, s)
+	}
+	id := acl.Identity{Source: "slack", Value: "U04AB"}
+	s.Identities = append(s.Identities, id)
+	return id
 }
 
 func testBounded(t *testing.T, f Fixture) {
@@ -371,7 +439,7 @@ func testWide(t *testing.T, f Fixture) {
 	in := make([]string, 0, n)
 	for i := range n {
 		id := "g" + strconv.Itoa(i)
-		f.PutGroup(t, directory.Group{ID: id, MemberOf: []string{"everyone"}})
+		f.PutGroup(t, directory.Group{ID: id, MemberOf: f.above("everyone")})
 		in = append(in, id)
 	}
 	f.PutGroup(t, directory.Group{ID: "everyone"})
@@ -381,12 +449,17 @@ func testWide(t *testing.T, f Fixture) {
 	got := expand(t, f, "mei")
 	took := time.Since(start)
 
-	if len(got.Groups.Members) != n+1 {
-		t.Fatalf("a subject in %d groups resolved to %d", n, len(got.Groups.Members))
+	// The subject, the thousand groups, and the one they all point at, which is
+	// not there on a provider whose groups cannot contain groups.
+	members, lookups := n+1, n+2
+	if f.Flat {
+		members, lookups = n, n+1
 	}
-	// The subject, the thousand groups, and the one they all point at.
-	if got.Lookups != n+2 {
-		t.Errorf("a subject in %d groups cost %d lookups, want %d", n, got.Lookups, n+2)
+	if len(got.Groups.Members) != members {
+		t.Fatalf("a subject in %d groups resolved to %d, want %d", n, len(got.Groups.Members), members)
+	}
+	if got.Lookups != lookups {
+		t.Errorf("a subject in %d groups cost %d lookups, want %d", n, got.Lookups, lookups)
 	}
 	if took > 10*time.Second {
 		t.Errorf("a subject in %d groups took %s", n, took.Round(time.Millisecond))

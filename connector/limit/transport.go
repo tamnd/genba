@@ -385,18 +385,25 @@ func repeatable(req *http.Request) bool {
 // The headers a service uses to say how much quota is left and when it comes
 // back.
 //
-// There are three conventions and no way to tell which one a service follows
+// There are four conventions and no way to tell which one a service follows
 // except by looking. Retry-After is the standard and is what a refusal carries.
 // The unprefixed RateLimit fields are the newer draft and carry a delta in
 // seconds. The X-RateLimit fields are what most large services shipped years
 // before the draft existed, and their reset is usually a Unix timestamp rather
 // than a delta.
+//
+// The fourth is the same idea with a hyphen in a different place. Okta spells
+// it X-Rate-Limit, which canonicalises to a different header name entirely, so
+// a transport reading only the other three sees an organisation that sends its
+// numbers on every single response as one that sends none at all.
 const (
 	headerRetryAfter    = "Retry-After"
 	headerReset         = "RateLimit-Reset"
 	headerRemaining     = "RateLimit-Remaining"
 	headerLegacyReset   = "X-RateLimit-Reset"
 	headerLegacyRemains = "X-RateLimit-Remaining"
+	headerHyphenReset   = "X-Rate-Limit-Reset"
+	headerHyphenRemains = "X-Rate-Limit-Remaining"
 )
 
 // retryAfter is how long a response says to wait, and zero for one that does
@@ -415,7 +422,7 @@ func retryAfter(resp *http.Response, now time.Time) time.Duration {
 			return at.Sub(now)
 		}
 	}
-	for _, h := range [...]string{headerReset, headerLegacyReset} {
+	for _, h := range [...]string{headerReset, headerLegacyReset, headerHyphenReset} {
 		if d := resetIn(resp.Header.Get(h), now); d > 0 {
 			return d
 		}
@@ -437,6 +444,7 @@ func spent(resp *http.Response, now time.Time) time.Time {
 	for _, pair := range [...][2]string{
 		{headerRemaining, headerReset},
 		{headerLegacyRemains, headerLegacyReset},
+		{headerHyphenRemains, headerHyphenReset},
 	} {
 		v := resp.Header.Get(pair[0])
 		if v == "" {
