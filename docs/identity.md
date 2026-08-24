@@ -137,6 +137,12 @@ func TestConformance(t *testing.T) {
 }
 ```
 
+Two things about a fixture are not the same for every provider and the suite asks rather than assumes.
+
+`Flat` says the provider's groups cannot contain groups, which skips the cases about walking a graph and takes a level off the arithmetic in the two that count lookups.
+`Identity` says which identity the provider can actually be made to hold, because a directory answers in its own vocabulary and no amount of putting a Slack id on an Okta user will make one come out.
+Both default to the shape `directory.Static` has, so nothing that already passes the suite has to say anything, and what the cases are about survives either way.
+
 `directory.Static` is the reference implementation the suite runs against, and it is also the directory a small deployment actually uses.
 A company with forty people and six groups has the whole thing in a file, and making them stand up an identity provider to try a search engine is how a search engine does not get tried.
 
@@ -158,6 +164,43 @@ A change to the directory's own name is refused outright: every group key carrie
 
 A file that does not parse at startup is a different matter and the process exits.
 Nothing is loaded, so there is nothing to keep, and coming up resolving nobody would be a server that answers every request with a refusal.
+
+## Okta
+
+`directory/okta` is the first adapter for a hosted provider, and it is the shape the others take.
+
+It answers the two lookups and nothing else.
+The closure, the cycle detection, the bound on what one expansion may cost and the version an answer is stamped with are all in the shared code, because those are exactly the parts that are easy to get subtly wrong and impossible to notice from the outside.
+
+The one fact about Okta that shapes the rest is that its groups do not contain groups.
+A user is a member of groups and a group is a member of nothing, so there is no graph to walk and every expansion is one level deep.
+That is also why the conformance fixture sets `Flat`, which skips the cases about walking a graph.
+An adapter that passed those would be one that had invented a nesting the provider does not have.
+
+Flat has a cost, though.
+The walk asks about every group the person is in, and a person in three hundred groups would be three hundred requests against an organisation everybody else is signing in to at the same time.
+So the group listing that answers the subject lookup, which returns whole group objects rather than ids, fills a small buffer that the group lookups then read, and the three hundred requests become one listing.
+
+That buffer is worth being careful about, because there is meant to be exactly one cache in this system and it is not this.
+The fact being held here is "this group exists and is a member of no groups", and for a provider with no nesting that fact cannot become false in a way that changes an answer.
+A group deleted since it was buffered would move into the unresolved list if it were looked up again, and an unresolved group is still in the group set, because the directory saying somebody is a member is a statement about them.
+So the buffer changes what an expansion costs and cannot change what it returns.
+
+The version is the other decision worth writing down.
+Okta sends two revisions on a group, `lastUpdated` and `lastMembershipUpdated`, and the second one is the obvious choice and the wrong one.
+It moves whenever anybody at all joins the group, and what this version invalidates is one person's group set, which somebody else joining does not change.
+At a company of any size something moves every second, so a version derived from it would be correct and useless: nothing cached above it would survive a working day.
+This person joining or leaving is caught without it, because the group set is fingerprinted over the group ids as well as their versions, and joining or leaving is what changes the ids.
+
+Deactivation is the third.
+Okta has eight account states and only some of them are a decision somebody made about access.
+`SUSPENDED` and `DEPROVISIONED` are what an administrator reaches for when somebody leaves, and `STAGED` is an account created and never activated, so all three refuse.
+`LOCKED_OUT` and `PASSWORD_EXPIRED` do not, because both are a live account having a bad morning, and refusing on them would take somebody's search away for forgetting a password.
+
+Rate limits are the transport's job rather than the adapter's.
+`connector/limit` is the same one every connector uses, and Okta publishes its numbers on every response.
+It spells the headers `X-Rate-Limit-Remaining` and `X-Rate-Limit-Reset`, with the hyphen in a different place from everybody else, which canonicalises to a different header name entirely.
+A transport that read only the other three spellings would see an organisation sending its numbers on every single response as one sending none at all, and would find the edge of the quota by hitting it.
 
 ## More than one directory
 
@@ -222,5 +265,10 @@ Serving a stale answer through a directory outage.
 The cache refuses once an entry has expired and the directory cannot be reached, which is the same direction the resolver fails in, and an operator who would rather serve a slightly old group set than refuse a sign in has no way to say so yet.
 It is a real choice with a real cost on the other side, so it should be a configured window with its own metric rather than a default.
 
-Adapters for the hosted providers.
-The interface is two methods and the suite is what they have to pass, so each is a small amount of code and a fake, in the shape the connectors already use.
+The rest of the hosted providers.
+Okta is done, and Entra ID and Google Workspace are the two that are not.
+Entra ID expands transitively already, which the walk handles without a special case: it returns the closure it was given and the level above it is empty.
+
+A way to configure an adapter without writing Go.
+`-directory` takes files, and an organisation is not a file.
+All three providers want the same three things, an endpoint, a credential and a name, so the flag should grow one spelling that covers them rather than one per provider.

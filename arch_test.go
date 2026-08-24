@@ -37,6 +37,12 @@ var allowed = map[string][]string{
 	"directory":               {"acl", "cache"},
 	"directory/directorytest": {"acl", "directory"},
 
+	// An adapter is the one place in the tree that talks to somebody else's
+	// service, so it gets the transport that knows how to be refused politely
+	// on top of what directory itself is allowed. It is still under acl rather
+	// than beside it: an adapter answers two lookups and decides nothing.
+	"directory/okta": {"acl", "cache", "connector/limit", "directory"},
+
 	// cache is a map with a lock on it and imports nothing of ours, which is
 	// what lets index depend on it without the dependency meaning anything. A
 	// cache that knew about principals would be a second copy of the permission
