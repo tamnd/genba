@@ -1,0 +1,32 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/users/2b1c4d5e-6f70-4812-93a4-5b6c7d8e9f01?%24select=id%2CdisplayName%2Cmail%2CuserPrincipalName%2CotherMails%2CaccountEnabled",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ],
+      "Authorization": [
+        "REDACTED"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "accountEnabled": true,
+        "displayName": "Jo Okafor",
+        "id": "2b1c4d5e-6f70-4812-93a4-5b6c7d8e9f01",
+        "mail": "jo@acme.test",
+        "otherMails": [],
+        "userPrincipalName": "jo@acme.test"
+      }
+    }
+  }
+}

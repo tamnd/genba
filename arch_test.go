@@ -43,6 +43,9 @@ var allowed = map[string][]string{
 	// than beside it: an adapter answers two lookups and decides nothing.
 	"directory/okta": {"acl", "cache", "connector/limit", "directory"},
 
+	// The same place in the layering, for the same reasons.
+	"directory/entra": {"acl", "cache", "connector/limit", "directory"},
+
 	// cache is a map with a lock on it and imports nothing of ours, which is
 	// what lets index depend on it without the dependency meaning anything. A
 	// cache that knew about principals would be a second copy of the permission
