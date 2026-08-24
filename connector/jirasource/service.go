@@ -10,6 +10,7 @@ import (
 
 	"github.com/tamnd/genba/acl"
 	"github.com/tamnd/genba/connector"
+	"github.com/tamnd/genba/connector/adf"
 	"github.com/tamnd/genba/connector/thread"
 	"github.com/tamnd/genba/connector/threadsource"
 	"github.com/tamnd/genba/doc"
@@ -155,7 +156,7 @@ func (s *Service) build(ctx context.Context, is issue) (threadsource.Thread, err
 			Author: person(c.Author, s.name),
 			At:     stamp(c.Created),
 			Edited: edited(c),
-			Text:   text(c.Body),
+			Text:   adf.Render(c.Body),
 		})
 	}
 
@@ -172,7 +173,7 @@ func (s *Service) build(ctx context.Context, is issue) (threadsource.Thread, err
 			// is who a search for their tickets means.
 			Author: person(reporterOf(is), s.name),
 			At:     stamp(is.Fields.Created),
-			Text:   text(is.Fields.Description),
+			Text:   adf.Render(is.Fields.Description),
 		},
 		Replies:    replies,
 		Revision:   is.Fields.Updated,

@@ -175,7 +175,14 @@ var allowed = map[string][]string{
 	// The one thing it has that the chat adapter does not is a rule on a single
 	// document rather than on the container, which is what an issue security
 	// level is, and that is still acl and threadsource rather than anything new.
-	"connector/jirasource": {"acl", "connector", "connector/limit", "connector/thread", "connector/threadsource", "doc"},
+	"connector/jirasource": {"acl", "connector", "connector/adf", "connector/limit", "connector/thread", "connector/threadsource", "doc"},
+	// adf imports nothing of ours. It turns one JSON tree into Markdown and it
+	// has never heard of a document, a connector or a permission, which is what
+	// lets two product adapters share it without either of them being able to
+	// bend it towards their own product. It is at this level rather than beside
+	// thread because the format belongs to the editor: it is the same tree in a
+	// ticket description, a page body and a comment on either.
+	"connector/adf": nil,
 	// recorded imports nothing of ours either. It is a round tripper over a
 	// directory of files, it deals in requests and responses, and it has never
 	// heard of a document or a connector. Keeping it that way is what lets it be
