@@ -95,6 +95,18 @@ var cases = []testCase{
 	{"the inbox is most recently reported first and honours a limit", testReportedOrder},
 	{"a report by nobody is refused", testReportRejectsAnonymous},
 	{"a page of ids is one question about reports", testReportBatch},
+
+	{"an answer comes back as it was written", testCurateRoundTrip},
+	{"a question is found however it was typed", testCuratedIgnoresPunctuationAndCase},
+	{"a question nobody wrote down has no answer", testCuratedIsNotFuzzy},
+	{"writing an answer again is editing it", testCurateReplaces},
+	{"a phrasing an answer drops stops finding it", testCurateDropsAPhrasing},
+	{"a phrasing a second answer claims moves to it", testCurateMovesAPhrasing},
+	{"an answer can be retracted, twice", testRetract},
+	{"an answer belongs to one tenant", testCurateTenants},
+	{"the answers come back most recently written first", testAnswersOrder},
+	{"an answer with no question, body, author or expiry is refused", testCurateRejectsIncomplete},
+	{"a nil principal writes and reads no answers", testCurateNilPrincipal},
 }
 
 // contentStore skips a case for a driver that does not hold bytes.

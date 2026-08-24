@@ -142,6 +142,9 @@ Everything the interface does is an HTTP call, and there is nothing it can reach
 | `GET /api/v1/stats` | how much is indexed and how much is quarantined |
 | `GET /api/v1/admin/operations` | what the connectors are doing, and what is being held back and why |
 | `GET /api/v1/admin/access` | whether one named person can read one document, and why |
+| `GET /api/v1/admin/answers` | the questions this tenant has written an answer to, most recently written first |
+| `PUT /api/v1/admin/answers/{id}` | writes an answer to a question, or replaces the one that is there |
+| `DELETE /api/v1/admin/answers/{id}` | takes an answer down |
 | `POST /api/v1/admin/connectors` | adds a connector, or replaces one, and starts it |
 | `DELETE /api/v1/admin/connectors/{source}` | stops a connector and forgets how it was configured |
 | `POST /api/v1/admin/connectors/{source}/start` | switches one back on |
@@ -155,6 +158,11 @@ The snippet comes back as marked passages rather than as offsets, so a client hi
 A verification is a named claim with a date on it rather than a flag, so search results and the document itself carry who vouched for it, when, and when that stops counting.
 It lasts six months unless the verifier says otherwise, and only the owner or the author of a document can make one, because a badge anybody can apply is a badge that means somebody read the title.
 A driver that cannot record one leaves the badge off rather than failing the search behind it.
+
+A question people ask often enough is worth answering once, so an administrator can write the answer down and it stands above the results for everybody in the tenant.
+It carries the name of whoever wrote it, the date they last stood behind it and the documents they drew it from, and it takes the place of the quoted passages rather than sitting beside them, because that region is the answer to the question in the box and two answers to one question is a reader deciding which of ours to believe.
+The question is matched whole, over the phrasing it was filed under and any others its author listed, so a search that is close but not the same gets the ordinary results page it would have got before this existed.
+Its sources are resolved through the reader asking, so an answer written by somebody who can read everything never becomes a list of documents the reader in front of it cannot open.
 
 Ownership is derived from the source, and what a source derives is very often the account that ran the import, so it can be corrected.
 The correction carries the name of the person who made it and the date, it survives every crawl after it, and clearing it puts back whatever the connector reports today rather than what it reported the day somebody disagreed.

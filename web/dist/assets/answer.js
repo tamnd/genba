@@ -1,10 +1,18 @@
 // The answer above the results.
 //
-// It holds passages taken out of the documents on the page below it, word for
-// word, each one with the document it came from underneath it. Nothing in here
-// is written by the product and nothing is paraphrased, which is a smaller claim
+// There are two kinds and the region holds one of them at a time. Usually it
+// holds passages taken out of the documents on the page below it, word for word,
+// each one with the document it came from underneath it. Nothing in that kind is
+// written by the product and nothing is paraphrased, which is a smaller claim
 // than the one an assistant makes and the only one this build can keep: there is
 // no model behind it yet.
+//
+// The other kind is prose a person in this company wrote and signed, for a
+// question somebody asked often enough to be worth answering once. It takes the
+// place of the quotes rather than sitting above them, because this region is the
+// answer to the question in the box and two answers to one question is a reader
+// deciding which of the product's own answers to believe. The server decides
+// which arrives, and it never sends both.
 //
 // That is deliberate rather than a placeholder. The part of an answer surface
 // that a model does not fix is where it sits, what a citation does when somebody
@@ -25,7 +33,13 @@
 // amount of usefulness that pays for that.
 
 import { h, replace, svg } from "genba/dom.js";
-import { icon, label, sourceColor } from "genba/format.js";
+import { icon, label, sourceColor, when, exact } from "genba/format.js";
+import { render as markdown } from "genba/markdown.js";
+
+// The three states the server sends with a written answer, in the words the
+// verification badge uses, since a reader who has learnt what an amber mark on a
+// document means has learnt what it means here.
+const STATES = new Set(["fresh", "expiring", "expired"]);
 
 export class Answer {
   constructor({ onCite }) {
@@ -42,6 +56,10 @@ export class Answer {
    * second copy to disagree with the first.
    */
   render(res) {
+    if (res && res.curated) {
+      this.written(res.curated);
+      return;
+    }
     const answer = res && res.answer;
     const quotes = (answer && answer.quotes) || [];
     const hits = new Map((res.hits || []).map((hit) => [hit.id, hit]));
@@ -79,6 +97,134 @@ export class Answer {
           { class: "answer__list" },
           cited.map(({ quote, hit }) => this.renderQuote(quote, hit)),
         ),
+      ),
+    );
+  }
+
+  /**
+   * written draws the answer somebody in this company wrote down.
+   *
+   * The three things it has to carry are the words, the name and the date. The
+   * words are why a reader stops here instead of opening four documents, and the
+   * name and the date are the whole reason they are allowed to. An unsigned
+   * paragraph above a list of results is the product asserting something, and
+   * this product does not assert things about a corpus it did not write.
+   *
+   * The body is markdown, rendered by the same renderer that draws a document,
+   * so a list in an answer looks like a list in the document it came from. The
+   * source of it never came from a source outside this deployment: somebody with
+   * the administrator role typed it into this product.
+   */
+  written(a) {
+    this.el.hidden = false;
+    const state = STATES.has(a.state) ? a.state : "expired";
+    const sources = a.sources || [];
+    replace(
+      this.el,
+      h(
+        "section",
+        { class: "answer__panel answer__panel--written", "aria-labelledby": "answer-title" },
+        h(
+          "div",
+          { class: "answer__head" },
+          h("h2", { class: "answer__title", id: "answer-title" }, "Answer"),
+          // The question as it was written down, which is not always the words
+          // that were typed into the box. A reader who searched for a phrasing
+          // somebody thought of as the same question deserves to see which
+          // question they have been given the answer to.
+          h("p", { class: "answer__question" }, a.question || ""),
+        ),
+        h("div", { class: "answer__body prose" }, markdown(a.body || "")),
+        this.byline(a, state),
+        sources.length
+          ? h(
+              "div",
+              { class: "answer__sources" },
+              h("h3", { class: "answer__sources-title" }, "Sources"),
+              h(
+                "ul",
+                { class: "answer__source-list" },
+                sources.map((hit) => this.renderSource(hit)),
+              ),
+            )
+          : null,
+      ),
+    );
+  }
+
+  /**
+   * byline is who wrote it and when they last stood behind it.
+   *
+   * An answer that has run out still says so and is still drawn. Taking it down
+   * on the day it expires would leave the reader with silence, which tells them
+   * nothing, and would leave the person who wrote it with no way to find out it
+   * needs looking at.
+   */
+  byline(a, state) {
+    const stale = state !== "fresh";
+    return h(
+      "p",
+      { class: `answer__by${stale ? " answer__by--stale" : ""}` },
+      // The name and the date are one sentence, so they are one element. Two
+      // elements in the flex row below would be two things with a gap between
+      // them, and the gap is meant to separate the sentence from the mark
+      // beside it rather than a person from the day they wrote something.
+      h(
+        "span",
+        { class: "answer__wrote", title: exact(a.at) },
+        a.email
+          ? h("a", { class: "answer__author", href: `mailto:${a.email}` }, a.by || a.email)
+          : h("span", { class: "answer__author" }, a.by || "somebody"),
+        ` wrote this ${when(a.at)}`,
+      ),
+      stale
+        ? h(
+            "span",
+            {
+              class: `verified verified--${state}`,
+              title:
+                state === "expired"
+                  ? `Nobody has confirmed this since ${exact(a.until)}`
+                  : `Due to be confirmed again ${exact(a.until)}`,
+            },
+            svg(icon("alert"), 14),
+            state === "expired" ? "Not confirmed recently" : `Due for review ${when(a.until)}`,
+          )
+        : null,
+    );
+  }
+
+  /**
+   * renderSource is one of the documents the answer was drawn from.
+   *
+   * They arrive resolved through the reader asking, so a source this person
+   * cannot open is simply not in the list. It is the same link a citation under
+   * a quote is, opening the same preview, because there is one document viewer
+   * in this product.
+   */
+  renderSource(hit) {
+    return h(
+      "li",
+      { class: "answer__source" },
+      h(
+        "a",
+        {
+          class: "quote__cite",
+          href: sourceHref(hit.id),
+          "aria-label": `Open ${hit.title || hit.id}`,
+          onClick: (e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+            e.preventDefault();
+            this.onCite(hit.id, "");
+          },
+        },
+        h("span", {
+          class: "source__dot",
+          style: { background: sourceColor(hit.source) },
+        }),
+        h("span", { class: "quote__title" }, hit.title || hit.id),
+        h("span", { class: "quote__where" }, label(hit.source)),
+        svg(icon("arrow-right"), 16),
       ),
     );
   }
@@ -159,5 +305,20 @@ function citeHref(quote) {
   const params = new URLSearchParams(location.search);
   params.set("open", quote.id);
   params.set("at", quote.text);
+  return `/?${params.toString()}`;
+}
+
+/**
+ * sourceHref is the address a source of a written answer leads to.
+ *
+ * The same address without a passage, because the person who wrote the answer
+ * cited a document rather than a sentence, and jumping the reader to a
+ * highlighted line the author never pointed at would be the product inventing
+ * the part of a citation that matters most.
+ */
+function sourceHref(id) {
+  const params = new URLSearchParams(location.search);
+  params.set("open", id);
+  params.delete("at");
   return `/?${params.toString()}`;
 }

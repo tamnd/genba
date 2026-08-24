@@ -95,11 +95,19 @@ const ExpiringWindow = 14 * 24 * time.Hour
 
 // State reports where the verification is at the given time. The zero
 // [Verification] is expired, which is the safe reading of no claim at all.
-func (v Verification) State(now time.Time) State {
+func (v Verification) State(now time.Time) State { return stateAt(v.Until, now) }
+
+// stateAt is the rule itself, shared with [Answer.State].
+//
+// A verification and an answer are the same claim about two different things,
+// and a reader who learns what the amber badge on a document means has learned
+// what it means on a card. Two copies of these three comparisons would let one
+// of them start expiring a day earlier than the other.
+func stateAt(until, now time.Time) State {
 	switch {
-	case !now.Before(v.Until):
+	case !now.Before(until):
 		return Expired
-	case now.Add(ExpiringWindow).After(v.Until):
+	case now.Add(ExpiringWindow).After(until):
 		return Expiring
 	default:
 		return Fresh
