@@ -369,6 +369,8 @@ func main() {
 | Package | What lives there |
 | --- | --- |
 | `acl` | principals, groups, permission descriptors, visibility bitmaps |
+| `directory` | a person resolved into the groups they are in, with cycle detection and a version, [docs/identity.md](docs/identity.md) |
+| `directory/directorytest` | the conformance suite that defines what a directory adapter is |
 | `doc` | the canonical document model every connector normalises into |
 | `store` | the storage interface, plus `storetest`, the conformance suite |
 | `store/memstore` | the reference in memory driver |
@@ -490,6 +492,14 @@ Every system names permissions differently, and the same idea is a `reader` in o
 Mapping each of those is easy on its own, and the collection of them is where a search engine leaks, because every connector would otherwise decide on its own what a grant to a partner's domain means and what to do with a statement it does not understand.
 So a refusal beats a grant everywhere, a link share is recorded rather than inferred from the absence of a restriction, and anything that cannot be represented faithfully is quarantined and counted by reason instead of approximated.
 [docs/permissions.md](docs/permissions.md) has the mapping table for each source and the reasoning behind the awkward cases.
+
+That is one half of a permission decision, and `directory` is the other.
+Nobody grants access to a person, they grant it to `engineering`, which contains `platform`, which contains `storage`, so the question of which groups somebody is in is a transitive closure over a graph that somebody else maintains, changes without telling us, and did not design to be walked.
+A provider adapter answers two lookups, what one subject is directly a member of and what one group is directly a member of, and the closure, the cycle detection, the bound on how much one expansion may cost and the concurrency are written once above them.
+Those are the parts that are easy to get subtly wrong and impossible to notice from the outside, and a group that ended up inside itself during a reorganisation hangs a walk in production rather than in a test.
+The group set is stamped with a version derived from the answer, so a membership change invalidates everything cached from it the moment it lands, and a change that does not touch this person's closure does not invalidate this person.
+A directory that cannot be reached refuses the request rather than resolving somebody to no groups, because an empty group set is a valid answer that everything above is built to trust.
+[docs/identity.md](docs/identity.md) is the whole of it.
 
 A connector hands the pipeline a body, and for the PDF attached to a ticket or the deck a quarter was reviewed from, the bytes are not it.
 `extract` turns those into text using the standard library and nothing else: no office suite, no headless browser and nothing to install alongside the binary.
