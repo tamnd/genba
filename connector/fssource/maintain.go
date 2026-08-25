@@ -105,8 +105,15 @@ func (s *Source) id(rel string) string { return s.name + ":" + rel }
 // stripping the leading separator means a "../../etc/passwd" collapses to
 // "etc/passwd" inside the root rather than escaping it, and the stat that
 // follows simply finds nothing.
-func (s *Source) rel(id string) (string, bool) {
-	rel, ok := strings.CutPrefix(id, s.name+":")
+func (s *Source) rel(id string) (string, bool) { return relOf(s.name, id) }
+
+// relOf is [Source.rel] without a source, so that a [Checker] built over the
+// same tree reads an id exactly the way the connector that minted it does.
+//
+// Two readings of the same string is how a path that one of them stops gets
+// through the other.
+func relOf(name, id string) (rel string, ok bool) {
+	rel, ok = strings.CutPrefix(id, name+":")
 	if !ok || rel == "" {
 		return "", false
 	}

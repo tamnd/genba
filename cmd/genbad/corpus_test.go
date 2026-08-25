@@ -53,6 +53,8 @@ func TestCorpusFlagsAreChecked(t *testing.T) {
 		{"watching with nothing to watch for", corpusOptions{Dir: "/tmp", Name: "files", ACL: aclTenant, Watch: true}, "refresh"},
 		{"watching between refreshes", corpusOptions{Dir: "/tmp", Name: "files", ACL: aclTenant, Watch: true, Refresh: time.Second}, ""},
 		{"a usable set", corpusOptions{Dir: "/tmp", Name: "files", ACL: aclOwners}, ""},
+		{"a recheck with nothing to check", corpusOptions{Recheck: true}, "recheck"},
+		{"a recheck over a corpus", corpusOptions{Dir: "/tmp", Name: "files", ACL: aclOwners, Recheck: true}, ""},
 		{"the os policy with nobody to name accounts", corpusOptions{Dir: "/tmp", Name: "files", ACL: aclOS}, "identity source"},
 		{"the os policy told where the names come from", corpusOptions{Dir: "/tmp", Name: "files", ACL: aclOS, Identity: "unix"}, ""},
 	}

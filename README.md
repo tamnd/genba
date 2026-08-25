@@ -227,10 +227,17 @@ The one exception is the object storage credentials, which are read from the env
 | `-corpus-acl` | `tenant` | who may read it: `tenant` for everybody in the tenant, `owners` to read OWNERS files, `os` to read the file system's own permissions |
 | `-corpus-identity` | `unix` | identity source the account names in the tree belong to, for `-corpus-acl os` |
 | `-corpus-domain` | empty | domain the accounts on this host belong to, for `-corpus-acl os`, empty to grant nothing on the world bit |
+| `-corpus-recheck` | `false` | read the rule again on every request, so a revocation lands before the next sync does |
 | `-corpus-refresh` | `0` | how often to sync again, zero for once at startup |
 | `-corpus-watch` | `false` | ask the operating system what changed instead of walking the tree, needs `-corpus-refresh` |
 | `-corpus-reconcile` | `0` | how often to sweep the index against the tree, zero for after every sync |
 | `-corpus-rate` | `0` | files a second the read keeps itself under, zero for as fast as the disk allows |
+
+`-corpus-recheck` is for a tree with a real access control list over it.
+The permissions in the index are the ones the last sync read, so an OWNERS file edited at nine takes effect at ten on a server that syncs hourly, and the hour in between is served out of the old list.
+With it the rule is read again while the response is being written, for the handful of documents about to go on somebody's screen, and a file that has been deleted leaves the results before the sweep notices.
+It only takes rows away: somebody added to a document still waits for the sync, because the index decides which documents are candidates at all.
+[docs/permissions.md](docs/permissions.md) has what the check costs and what happens when it cannot answer.
 
 `-corpus-watch` is what makes a short refresh interval affordable on a large tree.
 Without it every refresh walks, which is a stat of every file to find the four that moved, and with it the cost of a refresh is a function of how much changed rather than of how large the corpus is.

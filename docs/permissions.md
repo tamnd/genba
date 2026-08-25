@@ -272,6 +272,10 @@ A source nobody registered a checker for is served from the index exactly as it 
 A checker is handed a principal and a list of ids and nothing else.
 It is not handed the document, because a check that could read the row it is checking would be reading the stale answer this exists to go around.
 
+It only ever takes rows away.
+Somebody added to a document since the last sync still waits for the crawler, because the index is what decides which documents are candidates for a query in the first place and it has not been told about them yet.
+A revocation does not wait, and that asymmetry is the shape of the whole feature: the direction that costs a company its private documents is the one that is closed in seconds.
+
 ### What it costs and what happens when it does not come back
 
 One question covers a whole page, the sources are asked in parallel, and they share a single deadline of 20 milliseconds.
@@ -302,6 +306,24 @@ A quote is a sentence out of a document, so an answer that kept quoting one the 
 
 A document that does not survive the check is answered the way a document that does not exist is answered, because the alternative confirms it exists.
 The access is still written to the audit trail, as a refusal.
+
+The total on a search comes down with the page.
+A count is an answer, and on a query specific enough to match one document a total of one says everything the title would have said.
+Only the page that was checked can be corrected, so what is left is a floor rather than a recount.
+
+### Turning it on for a directory
+
+`genbad` can check a corpus it is indexing, which is the one source whose permissions are cheap enough to read inside a request.
+
+```
+genbad -corpus /srv/handbook -corpus-acl owners -corpus-recheck
+```
+
+The check reads the rule again and stats the file, so an OWNERS file edited at nine takes effect at nine rather than at the next walk, and a file somebody deleted leaves the results before the sweep notices it is gone.
+It holds its own policy, deliberately not the one the sync holds: an OWNERS policy keeps its answers for the length of a walk, and a check reading that cache would be answering out of the same snapshot the index already has.
+
+It is worth having wherever the tree has a real access control list over it.
+On `-corpus-acl tenant`, where everybody in the deployment may read everything, the only thing left to notice is a file that is no longer there.
 
 Three counters say what the checks are doing, labelled by source.
 

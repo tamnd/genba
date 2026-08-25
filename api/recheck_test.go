@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -170,6 +171,39 @@ func TestADocumentTheSourceWithdrewLooksLikeOneThatIsNotThere(t *testing.T) {
 	if withdrawn != missing || body != other {
 		t.Errorf("a withdrawn document answers %d %q and a missing one answers %d %q",
 			withdrawn, body, missing, other)
+	}
+}
+
+// TestTheTotalComesDownWithThePage, because a count is an answer.
+//
+// A query specific enough to match one document says everything a title would
+// have said: there is a document about this, and you may not read it. So the
+// rows this page dropped come off the total, which leaves a floor rather than a
+// recount and is the direction to be wrong in.
+func TestTheTotalComesDownWithThePage(t *testing.T) {
+	set := recheck.New()
+	set.Add("gdrive", denying())
+
+	st := corpus(t)
+	s := New(st, index.New(st), HeaderAuth{Tenant: "acme"}, WithRecheck(set))
+	t.Cleanup(func() { _ = s.Close() })
+
+	code, body := ask(t, s.Handler(), http.MethodGet, "/api/v1/search?q=payments")
+	if code != http.StatusOK {
+		t.Fatalf("the search answered %d:\n%s", code, body)
+	}
+	var out struct {
+		Total int                   `json:"total"`
+		Hits  []struct{ ID string } `json:"hits"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Hits) != 0 {
+		t.Fatalf("the source withdrew everything and the page has %d rows:\n%s", len(out.Hits), body)
+	}
+	if out.Total != 0 {
+		t.Errorf("the page is empty and the total says %d, which says a document exists:\n%s", out.Total, body)
 	}
 }
 

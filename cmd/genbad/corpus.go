@@ -39,6 +39,21 @@ type corpusOptions struct {
 	// leaves the world bit granting nothing, which is the safe reading.
 	Domain string
 
+	// Recheck asks the tree again, while a response is being written, whether
+	// the person reading it may still read what is about to go on the screen.
+	//
+	// What it buys is the window between a revocation and the next sync. An
+	// OWNERS file is edited at nine and the crawler comes past at ten, and
+	// without this the hour in between is served out of the index, which still
+	// says the old thing. What it costs is a read of the rules governing the
+	// documents on one page, on the same machine, inside the request.
+	//
+	// It is off because it is not free and because the deployments it matters
+	// for are the ones with a real access control list over the tree. A corpus
+	// everybody in the tenant may read has nothing to recheck except whether
+	// the file is still there.
+	Recheck bool
+
 	// Refresh is how often to sync again. Zero syncs once at startup.
 	Refresh time.Duration
 
@@ -87,6 +102,12 @@ const (
 
 func (o corpusOptions) validate() error {
 	if o.Dir == "" {
+		if o.Recheck {
+			// A permission check over a corpus this server is not reading is a
+			// flag that does nothing, and the shape of that mistake is a
+			// deployment believing revocations are landing in seconds.
+			return errors.New("corpus recheck needs a corpus to check")
+		}
 		return nil
 	}
 	if o.Name == "" {
@@ -158,6 +179,24 @@ func policyFor(o corpusOptions) (fssource.Policy, error) {
 	default:
 		return nil, fmt.Errorf("unknown corpus acl %q", o.ACL)
 	}
+}
+
+// corpusChecker builds the query time permission check for the corpus.
+//
+// The policy it is given is a second one, built here and held by nobody else,
+// which is deliberate rather than wasteful. [fssource.OwnersPolicy] keeps its
+// answers for the length of a walk and drops them when the sync starts the next
+// one, and a check sharing that cache would be answering out of the same
+// snapshot the index already holds, which is the thing it exists to go around.
+// Reloading the sync's copy instead would cost the sync its cache, on a tree
+// where that cache is the difference between one read per OWNERS file and one
+// per document.
+func corpusChecker(cfg corpusOptions) (*fssource.Checker, error) {
+	policy, err := policyFor(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return fssource.NewChecker(cfg.Dir, cfg.Name, policy)
 }
 
 // ingestCorpus syncs the configured directory into the store.
