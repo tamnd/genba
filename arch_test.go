@@ -68,6 +68,13 @@ var allowed = map[string][]string{
 	// deliberately not behind the permission check.
 	"metric": nil,
 
+	// audit imports nothing of ours for the same reason again, and with more at
+	// stake. A record is plain strings, so the package that writes the trail
+	// cannot pull a document or a principal into a file that is deliberately
+	// easier to ship off the machine than the index is. Mapping a principal onto
+	// a record is the job of the package that already has one.
+	"audit": nil,
+
 	"store": {"acl", "doc"},
 
 	// segment is the on disk format and imports nothing of ours, not even doc.
