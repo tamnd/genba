@@ -46,6 +46,23 @@ const counterCorpus = 4_000
 // is the regression this number is here to catch.
 const maxStatements = 9
 
+// correctionStatements is what a search that found nothing may spend on top of
+// that, looking for a spelling that would have found something.
+//
+// One window read of the term table per word the corpus does not have, one read
+// asking which of the words that were typed this person has a document for, one
+// asking the same of every spelling that came back, and the confirmation of the
+// corrected query. The two carriage reads are one statement each however many
+// words they are about, which is what makes it affordable to be sure rather
+// than to guess from the nearest spelling.
+//
+// It is written per term rather than as one number because that is the shape of
+// the cost, and because a correction that started running a statement per
+// spelling would otherwise hide inside a round number.
+func correctionStatements(terms int) int64 {
+	return int64(terms + 3)
+}
+
 // countRows is the rows the counting returns for a request that constrains the
 // given number of facet fields: the total, then one pool per expression the
 // statement declares and one capped group of values per field it counts.
@@ -92,11 +109,19 @@ func rowBudget(pool, terms, hits, constrained int) int64 {
 	// The corpus row and one row per term of statistics.
 	rows += 1 + terms
 	// A search that found nothing looks for a spelling that would have found
-	// something, which reads four windows of the term table per word it does
-	// not recognise and then confirms the corrected query as the asker. That
-	// confirmation is a candidate cut for a single row.
+	// something, and that is four reads on top of the search.
+	//
+	// Four windows of the term table per word it does not recognise. Two
+	// carriage reads, one for the words that were typed and one for the
+	// spellings offered back, each a pool of documents and the counts for the
+	// words they hold. And the confirmation of the corrected query, which is a
+	// cut for a single row.
 	if hits == 0 {
-		rows += terms*4*sqlitestore.NearWindow + 1
+		spellings := terms * index.CorrectionOffers
+		rows += terms * 4 * sqlitestore.NearWindow
+		rows += index.CarriagePool * (1 + terms)
+		rows += index.CarriagePool * (1 + spellings)
+		rows += 1 + terms
 	}
 	// And the page that is actually returned.
 	return int64(rows + hits)
@@ -157,8 +182,12 @@ func TestSearchCounters(t *testing.T) {
 				if want := int64(len(res.Hits)); c.Decodes > want {
 					t.Errorf("Search(%q) decoded %d documents to return %d", q.Text, c.Decodes, want)
 				}
-				if c.Statements > maxStatements {
-					t.Errorf("Search(%q) ran %d statements, at most %d", q.Text, c.Statements, maxStatements)
+				statements := int64(maxStatements)
+				if len(res.Hits) == 0 {
+					statements += correctionStatements(len(query.Request().Terms))
+				}
+				if c.Statements > statements {
+					t.Errorf("Search(%q) ran %d statements, at most %d", q.Text, c.Statements, statements)
 				}
 
 				// The ranker sees the pool, never the match set, so a query

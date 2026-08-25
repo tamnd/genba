@@ -59,17 +59,6 @@ type openedHit struct {
 // is a fact about the past.
 func (r recentResponse) identity() any {
 	r.At = time.Time{}
-	opened := make([]openedHit, len(r.Opened))
-	copy(opened, r.Opened)
-	for i := range opened {
-		opened[i].Score = 0
-	}
-	changed := make([]searchHit, len(r.Changed))
-	copy(changed, r.Changed)
-	for i := range changed {
-		changed[i].Score = 0
-	}
-	r.Opened, r.Changed = opened, changed
 	return r
 }
 

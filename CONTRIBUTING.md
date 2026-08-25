@@ -12,7 +12,7 @@ make race
 make lint
 ```
 
-CI runs the same commands on Linux and macOS, plus a cross compile for Windows and FreeBSD, a build without the browser interface, `govulncheck`, a `go mod tidy` check and a license check.
+CI runs the same commands on Linux and macOS, plus a cross compile for Windows and FreeBSD, a build without the browser interface, the permission suite over a hundred corpora, `govulncheck`, a `go mod tidy` check and a license check.
 Running them locally is faster than finding out from a red badge.
 
 ## If you touched the query path or the interface
@@ -48,6 +48,12 @@ Two more that follow from it:
 - A permission that failed to resolve is not a permission.
   Hold the document back rather than guessing.
 - A forbidden document and a missing one must be indistinguishable to the caller, down to the response body.
+
+`api/adversary_test.go` is what holds every surface to that.
+It builds two servers over the same random corpus, one holding all of it and one holding only the documents the reader may open, and it requires the two to answer identically on every route that can return content.
+A difference between them is a channel, whatever it is made of: a facet count, a total, a suggested spelling, a silence where there was an answer.
+It runs over eight corpora on a laptop and over a hundred in CI, and `GENBA_PERMISSION_SEEDS=100 go test ./api/` is how you run the wider sweep before you push.
+A failure names the seed it happened on, which is all anyone needs to reproduce it.
 
 ## Style
 

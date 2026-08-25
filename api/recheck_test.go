@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tamnd/genba/acl"
 	"github.com/tamnd/genba/audit"
@@ -56,7 +57,7 @@ func TestEverySurfaceThatServesContentRunsTheRecheck(t *testing.T) {
 				t.Fatalf("%s serves content and this walk does not know how to make it serve some, add it to probes in recheck_test.go", pattern)
 			}
 
-			set := recheck.New()
+			set := patient()
 			set.Add("gdrive", denying())
 			_, body := ask(t, checking(t, set), rt.Method, target)
 
@@ -84,7 +85,7 @@ func TestTheSameSurfacesServeTheCorpusWhenTheSourceSaysYes(t *testing.T) {
 		t.Run(pattern, func(t *testing.T) {
 			target := probes[pattern]
 
-			set := recheck.New()
+			set := patient()
 			set.Add("gdrive", allowing())
 			code, body := ask(t, checking(t, set), rt.Method, target)
 
@@ -121,7 +122,7 @@ func corpusIn(body string) []string {
 // behaviour it had before this existed, and so does a source its neighbour is
 // checking.
 func TestASourceWithNoCheckerIsServedFromTheIndex(t *testing.T) {
-	set := recheck.New()
+	set := patient()
 	set.Add("slack", denying())
 
 	code, body := ask(t, checking(t, set), http.MethodGet, "/api/v1/documents/d1")
@@ -159,7 +160,7 @@ func TestNoRecheckIsNoQuestion(t *testing.T) {
 // Telling somebody their access was withdrawn tells them the document exists
 // and roughly what it is about, which is most of what the withdrawal was for.
 func TestADocumentTheSourceWithdrewLooksLikeOneThatIsNotThere(t *testing.T) {
-	set := recheck.New()
+	set := patient()
 	set.Add("gdrive", denying())
 	h := checking(t, set)
 
@@ -181,7 +182,7 @@ func TestADocumentTheSourceWithdrewLooksLikeOneThatIsNotThere(t *testing.T) {
 // rows this page dropped come off the total, which leaves a floor rather than a
 // recount and is the direction to be wrong in.
 func TestTheTotalComesDownWithThePage(t *testing.T) {
-	set := recheck.New()
+	set := patient()
 	set.Add("gdrive", denying())
 
 	st := corpus(t)
@@ -212,7 +213,7 @@ func TestTheTotalComesDownWithThePage(t *testing.T) {
 // nobody was shown, so the number of them has to be somewhere an operator
 // already looks.
 func TestACheckThatFailsRemovesTheRowAndSaysSoInTheMetrics(t *testing.T) {
-	set := recheck.New()
+	set := patient()
 	set.Add("gdrive", recheck.Func(func(context.Context, *acl.Principal, []string) (map[string]bool, error) {
 		return nil, errors.New("the drive is not answering")
 	}))
@@ -246,7 +247,7 @@ func TestACheckThatFailsRemovesTheRowAndSaysSoInTheMetrics(t *testing.T) {
 // somebody a result, and an operator who cannot tell them apart has one number
 // that means either.
 func TestADeniedDocumentIsCountedApartFromAFailedOne(t *testing.T) {
-	set := recheck.New()
+	set := patient()
 	set.Add("gdrive", denying())
 
 	st := corpus(t)
@@ -274,7 +275,7 @@ func TestADeniedDocumentIsCountedApartFromAFailedOne(t *testing.T) {
 // access to it had just gone, and a surface that silently answered 404 without
 // one would lose that.
 func TestAWithdrawnDocumentIsARefusalOnTheTrail(t *testing.T) {
-	set := recheck.New()
+	set := patient()
 	set.Add("gdrive", denying())
 
 	sink := &recorder{}
@@ -367,6 +368,19 @@ func scrape(t *testing.T, s *Server) string {
 	w := httptest.NewRecorder()
 	s.Metrics().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/metrics", nil))
 	return w.Body.String()
+}
+
+// patient is a recheck set whose deadline cannot run out.
+//
+// The default is twenty milliseconds, which is the right number to hold a real
+// source to and the wrong one to write a test against. Every checker in this
+// file answers out of a map and cannot be slow, so a check that misses that
+// deadline means the runner was busy, and the row it drops turns a walk over
+// the route table into a coin toss that fails once a fortnight with a message
+// about permissions. The deadline itself is covered in recheck, where a source
+// can be made slow on purpose.
+func patient() *recheck.Set {
+	return recheck.New(recheck.WithTimeout(time.Minute))
 }
 
 // denying is a source that has withdrawn everything, which is the state this

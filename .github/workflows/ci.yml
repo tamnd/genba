@@ -125,6 +125,56 @@ jobs:
       - name: test without the interface
         run: go test -tags noassets -count=1 ./...
 
+  # The permission suite, over a hundred corpora instead of the eight a laptop
+  # run uses.
+  #
+  # These tests build two servers over the same random corpus, one holding all of
+  # it and one holding only the documents the reader may open, and require every
+  # surface to answer identically. A leak is a difference between them, and the
+  # differences that are left are rare shapes: a word that appears in one
+  # document, a container with a single member, a facet with one hit behind it.
+  # Eight corpora almost never hit those, which is the whole reason for running a
+  # hundred here rather than folding the wider sweep into the test job.
+  #
+  # It runs without the race detector on purpose. The test job already runs this
+  # package under -race on two operating systems, and the detector costs enough
+  # per corpus to turn a hundred of them into an hour.
+  #
+  # The last step is there for the same reason the Postgres one is. These tests
+  # take their seeds from the environment, and a typo in the run filter would
+  # match nothing and pass, which is a green tick over a suite that never ran.
+  adversary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+      - name: attack a hundred corpora
+        shell: bash
+        env:
+          GENBA_PERMISSION_SEEDS: 100
+        run: |
+          go test -count=1 -v -timeout 40m ./api/ \
+            -run 'TestASearchIsWhatItWouldBeIfTheHiddenDocumentsWereNotThere|TestAForbiddenDocumentAnswersLikeAMissingOne|TestTheSameSurfacesAnswerForADocumentTheReaderMayRead|TestTheAnswerQuotesOnlyWhatTheReaderCouldHaveOpened|TestNoSurfaceNamesADocumentTheReaderCannotRead' \
+            | tee /tmp/adversary.log
+      - name: check the suite was not skipped
+        shell: bash
+        run: |
+          for name in TestASearchIsWhatItWouldBeIfTheHiddenDocumentsWereNotThere \
+                      TestAForbiddenDocumentAnswersLikeAMissingOne \
+                      TestTheSameSurfacesAnswerForADocumentTheReaderMayRead \
+                      TestTheAnswerQuotesOnlyWhatTheReaderCouldHaveOpened \
+                      TestNoSurfaceNamesADocumentTheReaderCannotRead; do
+            if ! grep -q -- "--- PASS: $name" /tmp/adversary.log; then
+              echo "$name did not run, so this job proved nothing."
+              exit 1
+            fi
+          done
+
   # The performance gate, in two halves.
   #
   # The counters assert work rather than wall clock: rows read, statements

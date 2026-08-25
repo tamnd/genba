@@ -107,10 +107,9 @@ type searchBody struct {
 	Total      int    `json:"total"`
 	Correction string `json:"correction"`
 	Hits       []struct {
-		ID      string  `json:"id"`
-		Title   string  `json:"title"`
-		Snippet string  `json:"snippet"`
-		Score   float64 `json:"score"`
+		ID      string `json:"id"`
+		Title   string `json:"title"`
+		Snippet string `json:"snippet"`
 	} `json:"hits"`
 	Facets map[string][]struct {
 		Value    string `json:"value"`

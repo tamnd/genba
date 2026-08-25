@@ -75,7 +75,11 @@ func TestMetricsAreOnTheirOwnAddress(t *testing.T) {
 
 	waitForHealth(t, "http://"+addr+"/healthz")
 
-	if body := get(t, "http://"+metricsAddr+"/metrics"); !strings.Contains(body, "genba_request_duration_milliseconds") {
+	// The health check is on the API address, and the two listeners bind
+	// independently, so a healthy API says nothing about whether the metrics
+	// port is open yet. Asking once and reading a refused connection as an empty
+	// body made this a test of how busy the machine is.
+	if body := waitForMetrics(t, "http://"+metricsAddr+"/metrics"); !strings.Contains(body, "genba_request_duration_milliseconds") {
 		t.Errorf("the metrics listener served:\n%s", body)
 	}
 	if body := get(t, "http://"+addr+"/metrics"); strings.Contains(body, "genba_request_duration_milliseconds") {
@@ -111,6 +115,21 @@ func TestMetricsAreOffByDefault(t *testing.T) {
 	if err == nil {
 		_ = conn.Close()
 		t.Errorf("something is listening on %s with no metrics address configured", metricsAddr)
+	}
+}
+
+// waitForMetrics reads the metrics endpoint once it is up, and returns whatever
+// it read last when it never is, so the caller reports what it got rather than
+// a timeout with nothing in it.
+func waitForMetrics(t *testing.T, url string) string {
+	t.Helper()
+	deadline := time.Now().Add(time.Minute)
+	for {
+		body := get(t, url)
+		if body != "" || !time.Now().Before(deadline) {
+			return body
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

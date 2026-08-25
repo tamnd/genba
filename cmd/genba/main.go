@@ -153,13 +153,12 @@ func (c *client) get(ctx context.Context, path string, query url.Values, out any
 type searchResponse struct {
 	Total int `json:"total"`
 	Hits  []struct {
-		ID      string  `json:"id"`
-		Title   string  `json:"title"`
-		URL     string  `json:"url"`
-		Source  string  `json:"source"`
-		Kind    string  `json:"kind"`
-		Snippet string  `json:"snippet"`
-		Score   float64 `json:"score"`
+		ID      string `json:"id"`
+		Title   string `json:"title"`
+		URL     string `json:"url"`
+		Source  string `json:"source"`
+		Kind    string `json:"kind"`
+		Snippet string `json:"snippet"`
 	} `json:"hits"`
 }
 

@@ -58,12 +58,6 @@ type reportedHit struct {
 // the past.
 func (r reportedResponse) identity() any {
 	r.At = time.Time{}
-	docs := make([]reportedHit, len(r.Documents))
-	copy(docs, r.Documents)
-	for i := range docs {
-		docs[i].Score = 0
-	}
-	r.Documents = docs
 	return r
 }
 

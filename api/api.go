@@ -501,7 +501,26 @@ type searchHit struct {
 	// marks exactly what the index matched rather than running a substring
 	// search of its own and highlighting the wrong halves of words.
 	Passages []passage `json:"passages,omitempty"`
-	Score    float64   `json:"score"`
+
+	// There is no ranking score here, and there was one until the adversarial
+	// suite in adversary_test.go went looking for numbers on this wire that
+	// depend on documents the reader cannot read.
+	//
+	// BM25 is a function of statistics over the corpus: how many documents
+	// there are, how long they are on average, and how many of them carry each
+	// term of the query. Those are counted per tenant rather than per reader,
+	// because counting them per reader is a pass over the corpus on every
+	// keystroke. So the score of a document somebody may read is partly a
+	// measurement of the documents they may not, and printing it to seventeen
+	// digits makes that an equation anybody can solve: put a rare word in a
+	// document of your own, search for it, and the score says roughly how many
+	// other documents in the company carry that word.
+	//
+	// The order is still decided that way, which is a channel too and a much
+	// narrower one, and it is what issue #199 is about. This was the wide one,
+	// and nothing outside the server was reading it: the interface draws the
+	// results in the order they arrive and the entity tag already hashed the
+	// response with the score taken out.
 
 	// Verified is who vouched for this document and until when, and is absent
 	// when nobody has. It is on the row rather than only in the preview because
@@ -614,7 +633,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Pri
 	vouched, now := s.verifications(r, p, ids), s.now()
 	for _, h := range res.Hits {
 		hit := hitOf(h.Document)
-		hit.Snippet, hit.Passages, hit.Score = h.Snippet, passages(h.Passages), h.Score
+		hit.Snippet, hit.Passages = h.Snippet, passages(h.Passages)
 		hit.Verified = verifiedOf(vouched[h.Document.ID], now)
 		out.Hits = append(out.Hits, hit)
 	}
@@ -631,23 +650,17 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Pri
 	writeConditional(w, r, http.StatusOK, out, out.identity())
 }
 
-// identity is the response without the numbers that change on every request.
+// identity is the response without the number that changes on every request,
+// which is how long the search took.
 //
-// Two of them do. How long the search took is the obvious one. The other is the
-// score, which carries a recency prior that decays against the wall clock, so
-// it is a slightly different number every time the same query is run and it
-// would make an entity tag that never matches, which is a revalidation that can
-// never succeed. What the tag has to mean is that the same documents came back
-// in the same order with the same content, and it still means exactly that:
-// scores that moved enough to matter moved the order too.
+// It used to take the score out as well, because the score carries a recency
+// prior that decays against the wall clock and is therefore a slightly
+// different number every time the same query is run, which would make an entity
+// tag that never matches. The score is no longer on the wire at all, for the
+// reason written on [searchHit], and what the tag means is unchanged: the same
+// documents in the same order with the same content.
 func (r searchResponse) identity() any {
 	r.TookMS = 0
-	hits := make([]searchHit, len(r.Hits))
-	copy(hits, r.Hits)
-	for i := range hits {
-		hits[i].Score = 0
-	}
-	r.Hits = hits
 	return r
 }
 
