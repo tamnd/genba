@@ -1,0 +1,36 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://admin.googleapis.com/admin/directory/v1/groups?maxResults=200\u0026userKey=02lwamvv4c1pzs7",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ],
+      "Authorization": [
+        "REDACTED"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "groups": [
+          {
+            "email": "engineering@acme.test",
+            "etag": "\"W88AeXDHuoUA\"",
+            "id": "01opuj5n3f8k9ac",
+            "kind": "admin#directory#group",
+            "name": "Engineering"
+          }
+        ],
+        "kind": "admin#directory#groups"
+      }
+    }
+  }
+}

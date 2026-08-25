@@ -1,0 +1,36 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://admin.googleapis.com/admin/directory/v1/groups?maxResults=2\u0026pageToken=2\u0026userKey=104325091920138142876",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ],
+      "Authorization": [
+        "REDACTED"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "groups": [
+          {
+            "email": "interviewers@acme.test",
+            "etag": "\"Y3mrPqschmaX\"",
+            "id": "05t9zc3x6n1kfdy",
+            "kind": "admin#directory#group",
+            "name": "Interviewers"
+          }
+        ],
+        "kind": "admin#directory#groups"
+      }
+    }
+  }
+}

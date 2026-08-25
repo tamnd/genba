@@ -21,6 +21,7 @@ import (
 type reply struct {
 	status int
 	header http.Header
+	body   string
 	err    error
 }
 
@@ -62,7 +63,7 @@ func (s *service) RoundTrip(req *http.Request) (*http.Response, error) {
 		StatusCode: r.status,
 		Status:     fmt.Sprintf("%d %s", r.status, http.StatusText(r.status)),
 		Header:     r.header.Clone(),
-		Body:       &countingBody{closes: &s.bodies},
+		Body:       &countingBody{Reader: strings.NewReader(r.body), closes: &s.bodies},
 		Request:    req,
 	}, nil
 }
@@ -75,9 +76,10 @@ func (s *service) calls() int {
 	return len(s.seen)
 }
 
-type countingBody struct{ closes *atomic.Int64 }
-
-func (countingBody) Read([]byte) (int, error) { return 0, io.EOF }
+type countingBody struct {
+	io.Reader
+	closes *atomic.Int64
+}
 
 func (b *countingBody) Close() error {
 	b.closes.Add(1)
@@ -549,5 +551,177 @@ func TestACancelledRequestNeverGoesOut(t *testing.T) {
 	}
 	if got := svc.calls(); got != 0 {
 		t.Errorf("the service was asked %d times, want 0", got)
+	}
+}
+
+// The two shapes a Workspace refusal comes in, which are the same status and
+// mean opposite things. One is a rate that will clear on its own in a moment and
+// the other is a permission that is not going to change today.
+const (
+	overQuota = `{"error":{"code":403,"message":"Quota exceeded for quota metric 'Queries'.",` +
+		`"errors":[{"domain":"usageLimits","reason":"userRateLimitExceeded","message":"Quota exceeded."}]}}`
+	notAllowed = `{"error":{"code":403,"message":"Not Authorized to access this resource/api",` +
+		`"errors":[{"domain":"global","reason":"forbidden","message":"Not Authorized."}]}}`
+)
+
+// quotaish is the sort of predicate a connector supplies: it looks inside the
+// refusal, and it has to put the body back because somebody else is about to
+// read it.
+func quotaish(resp *http.Response) bool {
+	return strings.Contains(string(limit.Peek(resp, 1<<16)), "RateLimitExceeded")
+}
+
+// A source that says slow down in a body rather than in a status is waited out
+// like any other throttle, which is the whole reason the hook is here.
+func TestARefusalTheServiceCallsAThrottleIsTriedAgain(t *testing.T) {
+	svc := newService(
+		reply{status: http.StatusForbidden, body: overQuota},
+		reply{status: http.StatusOK, body: `{"groups":[]}`},
+	)
+	clock := newClock()
+	tr := limit.NewTransport(limit.Limits{Rate: 1000, Burst: 1000, MinBackoff: 100 * time.Millisecond},
+		limit.WithBase(svc), limit.WithClock(clock), limit.WithJitter(fullJitter),
+		limit.WithThrottled(quotaish))
+
+	if got := status(t, tr, get(t, "/eighteen")); got != http.StatusOK {
+		t.Fatalf("status = %d, want the answer from the second attempt", got)
+	}
+	if got := svc.calls(); got != 2 {
+		t.Errorf("the service was asked %d times, want 2", got)
+	}
+	if got := tr.Stats().Retries; got != 1 {
+		t.Errorf("retries = %d, want 1", got)
+	}
+	if got := clock.sleeps(); len(got) != 1 || got[0] != 100*time.Millisecond {
+		t.Errorf("waited %v, want one wait of 100ms", got)
+	}
+}
+
+// The other half of it, and the more expensive one to get wrong. Retrying a
+// refusal about permissions hammers a source over something that is not going to
+// change, and the account really may not read that object.
+func TestARefusalThePredicateDoesNotClaimIsNotTriedAgain(t *testing.T) {
+	svc := newService(reply{status: http.StatusForbidden, body: notAllowed})
+	tr := limit.NewTransport(limit.Limits{Rate: 1000, Burst: 1000, MinBackoff: time.Millisecond},
+		limit.WithBase(svc), limit.WithClock(newClock()), limit.WithThrottled(quotaish))
+
+	if got := status(t, tr, get(t, "/nineteen")); got != http.StatusForbidden {
+		t.Fatalf("status = %d, want the refusal handed straight back", got)
+	}
+	if got := svc.calls(); got != 1 {
+		t.Errorf("the service was asked %d times, want 1", got)
+	}
+}
+
+// A healthy crawl never calls the predicate, and neither does one being
+// throttled in the ordinary way. Both matter: the first is every request a
+// connector makes, and the second would read the same body twice.
+func TestThePredicateIsOnlyAskedAboutRefusalsNobodyElseWanted(t *testing.T) {
+	var asked atomic.Int64
+	svc := newService(
+		reply{status: http.StatusOK, body: `{"groups":[]}`},
+		reply{status: http.StatusTooManyRequests, header: header("Retry-After", "1")},
+		reply{status: http.StatusOK, body: `{"groups":[]}`},
+	)
+	tr := limit.NewTransport(limit.Limits{Rate: 1000, Burst: 1000, MinBackoff: time.Millisecond},
+		limit.WithBase(svc), limit.WithClock(newClock()),
+		limit.WithThrottled(func(*http.Response) bool {
+			asked.Add(1)
+			return false
+		}))
+
+	for range 2 {
+		if got := status(t, tr, get(t, "/twenty")); got != http.StatusOK {
+			t.Fatalf("status = %d", got)
+		}
+	}
+	if got := asked.Load(); got != 0 {
+		t.Errorf("the predicate was asked %d times about answers that needed no opinion, want 0", got)
+	}
+}
+
+// What the predicate reads, the caller still gets. Without this the connector
+// above decodes an empty document and reports a failure with nothing in it.
+func TestThePredicateReadsTheRefusalAndTheCallerStillGetsAllOfIt(t *testing.T) {
+	svc := newService(reply{status: http.StatusForbidden, body: notAllowed})
+	tr := limit.NewTransport(limit.Limits{Rate: 1000, Burst: 1000},
+		limit.WithBase(svc), limit.WithClock(newClock()), limit.WithThrottled(quotaish))
+
+	resp, err := tr.RoundTrip(get(t, "/twentyone"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != notAllowed {
+		t.Errorf("the caller read %q, want the whole refusal", raw)
+	}
+}
+
+func TestPeekPutsBackWhatItTook(t *testing.T) {
+	resp := &http.Response{Body: io.NopCloser(strings.NewReader(notAllowed))}
+
+	got := limit.Peek(resp, 24)
+	if len(got) != 24 || !strings.HasPrefix(notAllowed, string(got)) {
+		t.Fatalf("peeked %q, want the first 24 bytes of the refusal", got)
+	}
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != notAllowed {
+		t.Errorf("what was left to read is %q, want the whole refusal", raw)
+	}
+}
+
+// Closing a body that was peeked at closes the one underneath it. A wrapper that
+// swallowed the close would leak a connection per refusal, which is the worst
+// possible thing to leak on the path that only runs when a source is unhappy.
+func TestClosingAPeekedBodyClosesTheRealOne(t *testing.T) {
+	var closes atomic.Int64
+	resp := &http.Response{Body: &countingBody{Reader: strings.NewReader(overQuota), closes: &closes}}
+
+	limit.Peek(resp, 16)
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := closes.Load(); got != 1 {
+		t.Errorf("the body underneath was closed %d times, want 1", got)
+	}
+}
+
+// Nothing to peek at is not a failure, and it is not a body that turns into an
+// empty one either.
+func TestPeekingAtNothingLeavesEverythingAlone(t *testing.T) {
+	if got := limit.Peek(nil, 16); got != nil {
+		t.Errorf("peeking at no response gave %q", got)
+	}
+	if got := limit.Peek(&http.Response{}, 16); got != nil {
+		t.Errorf("peeking at a response with no body gave %q", got)
+	}
+
+	body := io.NopCloser(strings.NewReader(overQuota))
+	resp := &http.Response{Body: body}
+	if got := limit.Peek(resp, 0); got != nil {
+		t.Errorf("peeking at nothing gave %q", got)
+	}
+	if resp.Body == nil {
+		t.Fatal("a peek of nothing took the body away")
+	}
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != overQuota {
+		t.Errorf("what was left to read is %q, want the whole refusal", raw)
+	}
+
+	empty := &http.Response{Body: io.NopCloser(strings.NewReader(""))}
+	if got := limit.Peek(empty, 16); got != nil {
+		t.Errorf("peeking at an empty body gave %q", got)
 	}
 }

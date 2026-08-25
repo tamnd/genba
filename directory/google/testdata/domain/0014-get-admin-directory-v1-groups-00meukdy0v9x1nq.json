@@ -1,0 +1,37 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://admin.googleapis.com/admin/directory/v1/groups/00meukdy0v9x1nq",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ],
+      "Authorization": [
+        "REDACTED"
+      ]
+    }
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "error": {
+          "code": 404,
+          "errors": [
+            {
+              "domain": "global",
+              "message": "Resource Not Found: groupKey",
+              "reason": "notFound"
+            }
+          ],
+          "message": "Resource Not Found: groupKey"
+        }
+      }
+    }
+  }
+}
