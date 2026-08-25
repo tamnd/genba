@@ -21,11 +21,20 @@
 //
 // # Incremental sync
 //
-// The cursor is the highest modification time the last run saw. A later run
-// walks the same tree and skips anything not newer, so the cost of a no change
-// sync is a stat of every file rather than a read of every file. That is the
-// honest limit of what a plain filesystem supports on its own: without a change
-// feed there is no way to avoid the walk, only the read.
+// The cursor is the highest modification time the last run saw, held back to a
+// second before that run started. A later run walks the same tree and skips
+// anything not newer, so the cost of a no change sync is a stat of every file
+// rather than a read of every file. That is the honest limit of what a plain
+// filesystem supports on its own: without a change feed there is no way to
+// avoid the walk, only the read.
+//
+// The second is not slack in the design, it is the design. A file is stamped
+// from a clock that ticks rather than from the one that runs, so a file created
+// a moment after the walk went past its directory carries the same modification
+// time as one the walk read, and a cursor sitting on that time would leave it
+// behind for good. The cost of holding back is that a file written in the
+// second before a sync is read by the next sync as well, which is a document
+// arriving twice rather than a document not arriving at all.
 //
 // A [Watcher] is how the walk goes too. The operating system already knows
 // which files were written, and a source built with [WithWatcher] asks it
@@ -397,13 +406,21 @@ func (s *Source) Close() error { return nil }
 // The returned cursor is the highest modification time seen in the whole tree,
 // including files that were skipped as unchanged, so that a run which finds
 // nothing new still moves the clock forward and a run interrupted halfway does
-// not lose the files it already passed.
+// not lose the files it already passed. It is never later than a second before
+// the sync started, for the reason in [settled].
 //
 // A source built with [WithWatcher] reads the paths the watcher recorded and
 // does not walk at all, whenever the watcher can vouch for its record. When it
 // cannot, this is what runs, which is why the two paths have to agree on which
 // files are in the corpus.
 func (s *Source) Sync(ctx context.Context, from connector.Cursor, emit func(context.Context, connector.Change) error) (connector.Cursor, error) {
+	// Read before anything is looked at, because the cursor this hands back is
+	// bounded by it. Nothing created after this moment can be vouched for by
+	// this sync, whatever modification time it happens to carry. Round drops
+	// the monotonic reading, which means nothing in a cursor that gets written
+	// down and compared against times off a filesystem.
+	started := time.Now().Round(0)
+
 	since, err := parseCursor(from)
 	if err != nil {
 		return connector.Cursor{}, err
@@ -420,7 +437,7 @@ func (s *Source) Sync(ctx context.Context, from connector.Cursor, emit func(cont
 
 	changed, gen, watching := s.watched()
 	if watching {
-		return s.syncWatched(ctx, from, since, changed, emit)
+		return s.syncWatched(ctx, from, since, started, changed, emit)
 	}
 
 	var highest time.Time
@@ -479,7 +496,51 @@ func (s *Source) Sync(ctx context.Context, from connector.Cursor, emit func(cont
 	if highest.IsZero() {
 		return from, nil
 	}
-	return connector.Cursor{Value: version(highest), Time: highest}, nil
+	return cursorAt(covered(highest, started, since)), nil
+}
+
+// settled is how far behind the moment a sync started its cursor is allowed to
+// sit, and it is the whole of what keeps a file from being left behind.
+//
+// A cursor says that everything modified at or before that time has been read,
+// and a sync that hands back the newest time it saw is saying more than it
+// knows. A file is stamped from a clock that ticks rather than from the one that
+// runs, so a file created a millisecond after the walk went past its directory
+// carries the same modification time as one the walk read. The next walk emits
+// what is strictly newer than the cursor, so that file is never read, nothing is
+// quarantined and nothing is reported. It is simply not in the index until
+// somebody writes to it again, which is the one failure this connector must not
+// have.
+//
+// One second covers both halves of that. It covers the clock a file is stamped
+// from, which ticks every few milliseconds, and it covers a filesystem that
+// keeps modification times to the second, where a file created at any point
+// during a second carries the start of it.
+//
+// What it costs is that a file written in the second before a sync is read by
+// the next sync as well, and it is paid once: the sync after that starts more
+// than a second later and the cursor moves past it.
+const settled = time.Second
+
+// covered is the newest modification time a sync that started at started can
+// honestly say it has read everything up to.
+//
+// It never goes below the cursor the sync was given, which is a claim an earlier
+// sync already made and this one has no reason to withdraw. Without that a tree
+// written moments ago would drag the cursor backwards on every run.
+func covered(highest, started, since time.Time) time.Time {
+	if safe := started.Add(-settled); safe.Before(highest) {
+		highest = safe
+	}
+	if highest.Before(since) {
+		return since
+	}
+	return highest
+}
+
+// cursorAt is the cursor for one moment.
+func cursorAt(t time.Time) connector.Cursor {
+	return connector.Cursor{Value: version(t), Time: t}
 }
 
 // watched returns the paths the watcher recorded, the generation that record
@@ -519,7 +580,7 @@ func (s *Source) watched() (changed map[string]watchOps, gen int64, ok bool) {
 // restored from a backup with its old time, which is what "cp -p" does, would
 // otherwise drag the cursor into the past and make the next walk re-read
 // everything written since then.
-func (s *Source) syncWatched(ctx context.Context, from connector.Cursor, since time.Time, changed map[string]watchOps, emit func(context.Context, connector.Change) error) (connector.Cursor, error) {
+func (s *Source) syncWatched(ctx context.Context, from connector.Cursor, since, started time.Time, changed map[string]watchOps, emit func(context.Context, connector.Change) error) (connector.Cursor, error) {
 	highest := since
 	// Sorted, so that a sync over the same set of changes does the same work in
 	// the same order twice, which is what makes a failure reproducible.
@@ -623,7 +684,7 @@ func (s *Source) syncWatched(ctx context.Context, from connector.Cursor, since t
 	if highest.IsZero() {
 		return from, nil
 	}
-	return connector.Cursor{Value: version(highest), Time: highest}, nil
+	return cursorAt(covered(highest, started, since)), nil
 }
 
 // refresh emits a permission change for a file whose content did not change but
