@@ -28,6 +28,7 @@
 package metric
 
 import (
+	"context"
 	"io"
 	"maps"
 	"math"
@@ -67,7 +68,13 @@ type family struct {
 	// write appends the series of this family. It runs at scrape time, which is
 	// what lets a counter read a structure that was already counting rather
 	// than requiring every counter in the process to be a metric.
-	write func(*encoder)
+	//
+	// It takes the scrape's context because some of what is read at scrape time
+	// is not a number in memory. A family backed by a database has to be able to
+	// give up when the scrape has, and a monitoring system that holds a
+	// connection open against a store that has stopped answering makes an
+	// incident worse rather than describing it.
+	write func(context.Context, *encoder)
 }
 
 // New returns an empty registry.
@@ -80,7 +87,7 @@ func New() *Registry {
 // A duplicate is a programming error found at startup rather than a scrape that
 // silently reports one of two meanings for the same name, which is the failure
 // that wastes an afternoon during an incident.
-func (r *Registry) register(name, help, kind string, write func(*encoder)) {
+func (r *Registry) register(name, help, kind string, write func(context.Context, *encoder)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.families[name]; ok {
@@ -121,7 +128,7 @@ func (r *Registry) NewHistogram(name, help, label string, buckets []float64) *Hi
 		series:  map[string]*bucketSet{},
 	}
 	slices.Sort(h.buckets)
-	r.register(name, help, "histogram", func(e *encoder) { h.write(e, name) })
+	r.register(name, help, "histogram", func(_ context.Context, e *encoder) { h.write(e, name) })
 	return h
 }
 
@@ -184,9 +191,14 @@ func (h *Histogram) pairs(value string, extra ...string) []string {
 //
 // kind is "counter" for anything that only goes up and "gauge" for anything
 // that can go down, which the format needs and which a reader needs more.
-func (r *Registry) Counters(name, help, label, kind string, read func() map[string]float64) {
-	r.register(name, help, kind, func(e *encoder) {
-		values := read()
+//
+// The read is given the scrape's context, and one that has to go and ask
+// something slower than a mutex should honour it. A read that returns nothing
+// publishes no series at all, which is how a family says it has no answer
+// rather than answering zero.
+func (r *Registry) Counters(name, help, label, kind string, read func(context.Context) map[string]float64) {
+	r.register(name, help, kind, func(ctx context.Context, e *encoder) {
+		values := read(ctx)
 		for _, key := range slices.Sorted(maps.Keys(values)) {
 			if label == "" {
 				e.series(name, nil, values[key])
@@ -197,8 +209,12 @@ func (r *Registry) Counters(name, help, label, kind string, read func() map[stri
 	})
 }
 
-// WriteTo writes an exposition of every family.
-func (r *Registry) WriteTo(w io.Writer) (int64, error) {
+// Collect writes an exposition of every family.
+//
+// The context belongs to the scrape that asked. It is passed to every family
+// that reads something at scrape time, so a scrape the client has given up on
+// stops costing the process anything.
+func (r *Registry) Collect(ctx context.Context, w io.Writer) (int64, error) {
 	r.mu.Lock()
 	names := slices.Clone(r.order)
 	families := maps.Clone(r.families)
@@ -209,16 +225,20 @@ func (r *Registry) WriteTo(w io.Writer) (int64, error) {
 		f := families[name]
 		e.buf.WriteString("# HELP " + name + " " + strings.NewReplacer("\\", `\\`, "\n", `\n`).Replace(f.help) + "\n")
 		e.buf.WriteString("# TYPE " + name + " " + f.kind + "\n")
-		f.write(e)
+		f.write(ctx, e)
 	}
 	n, err := io.WriteString(w, e.buf.String())
 	return int64(n), err
 }
 
-// String returns the exposition, which is what the tests read.
-func (r *Registry) String() string {
+// Text returns the exposition as a string, which is what the tests read.
+//
+// It is not called String, because a String that takes an argument is not the
+// method everything else in Go means by that name and would be called by a
+// print statement that was never meant to scrape anything.
+func (r *Registry) Text(ctx context.Context) string {
 	var sb strings.Builder
-	_, _ = r.WriteTo(&sb)
+	_, _ = r.Collect(ctx, &sb)
 	return sb.String()
 }
 

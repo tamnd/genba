@@ -21,6 +21,23 @@ type Item struct {
 	// ever compares it to the version the connector reports now, and a
 	// difference means the stored copy is behind.
 	Version string
+
+	// Held is whether the document is being held back because its permissions
+	// did not resolve.
+	//
+	// It is here because a held document is the one kind of drift the version
+	// comparison cannot see. The source and the index agree about the revision,
+	// so nothing above would think to refetch it, and yet the reason it is held
+	// is at the source: a directory that was down, a token that could not list
+	// a channel, a group that has since been created. Without this the retry
+	// would have to be a second pass over the corpus asking each document
+	// whether it resolved, which is the read of the whole corpus this interface
+	// exists to avoid.
+	//
+	// It says nothing about why. That is [Held.Reason], and it is on the
+	// capability that is allowed to say a little about a document rather than
+	// on the one that is only allowed to compare two lists.
+	Held bool
 }
 
 // Maintenance is the capability the ingestion pipeline needs and no query path
@@ -47,10 +64,10 @@ type Maintenance interface {
 	// Inventory calls fn for every document held for one tenant and source, and
 	// stops early if fn returns false. The order is unspecified.
 	//
-	// Quarantined documents are included. A document whose permissions did not
-	// resolve is still a document the source may since have deleted, and
-	// leaving it out would make reconciliation the one path that cannot clean
-	// up the very documents an operator most wants gone.
+	// Quarantined documents are included, with [Item.Held] set. A document
+	// whose permissions did not resolve is still a document the source may
+	// since have deleted, and leaving it out would make reconciliation the one
+	// path that cannot clean up the very documents an operator most wants gone.
 	Inventory(ctx context.Context, tenant, source string, fn func(Item) bool) error
 
 	// SetPermissions replaces the access control list of documents that are

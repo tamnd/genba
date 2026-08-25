@@ -77,16 +77,18 @@ func (s *Store) Quarantined(ctx context.Context, tenant string, limit int) ([]st
 
 // Inventory calls fn for every document held for one tenant and source.
 //
-// It reads two columns of one table and nothing else. A reconciliation over a
+// It reads three columns of one table and nothing else. A reconciliation over a
 // corpus of a few million documents is a few million ids, and decoding the
 // stored JSON for each of them to reach a field the comparison does not use
-// would turn a scan of an index into a read of the whole corpus.
+// would turn a scan of an index into a read of the whole corpus. The third
+// column is the flag the query path already filters on, so a held document
+// costs a boolean here rather than a second pass.
 func (s *Store) Inventory(ctx context.Context, tenant, source string, fn func(store.Item) bool) error {
 	if err := s.ready(ctx); err != nil {
 		return err
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, source_update FROM document WHERE tenant = ? AND source = ?`, tenant, source)
+		`SELECT id, source_update, queryable FROM document WHERE tenant = ? AND source = ?`, tenant, source)
 	if err != nil {
 		return fmt.Errorf("sqlitestore: inventory: %w", err)
 	}
@@ -94,13 +96,14 @@ func (s *Store) Inventory(ctx context.Context, tenant, source string, fn func(st
 
 	for rows.Next() {
 		var (
-			id      string
-			version sql.NullString
+			id        string
+			version   sql.NullString
+			queryable bool
 		)
-		if err := rows.Scan(&id, &version); err != nil {
+		if err := rows.Scan(&id, &version, &queryable); err != nil {
 			return fmt.Errorf("sqlitestore: inventory: %w", err)
 		}
-		if !fn(store.Item{ID: id, Version: version.String}) {
+		if !fn(store.Item{ID: id, Version: version.String, Held: !queryable}) {
 			return nil
 		}
 	}

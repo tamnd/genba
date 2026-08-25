@@ -92,16 +92,18 @@ func (s *Store) Quarantined(ctx context.Context, tenant string, limit int) ([]st
 
 // Inventory calls fn for every document held for one tenant and source.
 //
-// It reads two columns of one table and nothing else. A reconciliation over a
+// It reads three columns of one table and nothing else. A reconciliation over a
 // corpus of a few million documents is a few million ids, and decoding the
 // stored JSON for each of them to reach a field the comparison does not use
-// would turn an index scan into a read of the corpus.
+// would turn an index scan into a read of the corpus. The third column is the
+// flag the query path already filters on, so a held document costs a boolean
+// here rather than a second pass.
 func (s *Store) Inventory(ctx context.Context, tenant, source string, fn func(store.Item) bool) error {
 	if err := s.ready(ctx); err != nil {
 		return err
 	}
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, source_update FROM document WHERE tenant = $1 AND source = $2 ORDER BY id`, tenant, source)
+		`SELECT id, source_update, NOT queryable FROM document WHERE tenant = $1 AND source = $2 ORDER BY id`, tenant, source)
 	if err != nil {
 		return fmt.Errorf("pgstore: inventory: %w", err)
 	}
@@ -109,7 +111,7 @@ func (s *Store) Inventory(ctx context.Context, tenant, source string, fn func(st
 
 	for rows.Next() {
 		var item store.Item
-		if err := rows.Scan(&item.ID, &item.Version); err != nil {
+		if err := rows.Scan(&item.ID, &item.Version, &item.Held); err != nil {
 			return fmt.Errorf("pgstore: inventory: %w", err)
 		}
 		if !fn(item) {

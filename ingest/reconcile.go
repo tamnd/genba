@@ -64,8 +64,26 @@ type Reconciliation struct {
 	// the source and is still in the index is still being served.
 	Extra Discrepancies
 
-	// Repaired is how many were refetched and stored.
+	// Held is what the index is holding back because its permissions did not
+	// resolve. It is not drift, and that is why it is not in [Drift]: the index
+	// is right about it, it is right on purpose, and it is right until whatever
+	// failed to resolve is fixed.
+	//
+	// It is refetched anyway, because the fix is at the source. A directory that
+	// was down is up, a token that could not list a channel has been given the
+	// scope, a group that did not exist has been created, and none of those
+	// change the document's revision, so nothing else in this sweep would think
+	// to ask about it again.
+	Held Discrepancies
+
+	// Repaired is how many were refetched and stored, held documents included.
 	Repaired int
+
+	// Released is how many of the held ones came back queryable, which is the
+	// number an operator watching a fix take effect is actually looking for. A
+	// sweep that refetched forty held documents and released none of them means
+	// the cause is still there.
+	Released int
 
 	// Deleted is how many were removed from the index.
 	Deleted int
@@ -101,6 +119,16 @@ func (r Reconciliation) Drift() int {
 // sweep still reports and still deletes, and the missing documents wait for a
 // full sync.
 //
+// # Quarantined documents are retried
+//
+// A document held back because its permissions did not resolve is refetched
+// too, whatever its revision says. That is the automatic retry: the reason a
+// document is held is at the source, so a directory that has come back up, a
+// token that has been given the scope it was missing or a group that has since
+// been created releases it on the next sweep without anybody going and finding
+// the ids. A sweep on an index where nothing is held costs nothing extra, and
+// [Reconciliation.Released] says how many came back.
+//
 // # Nothing is deleted on a partial enumeration
 //
 // If the walk of the source fails halfway, this returns the error and repairs
@@ -134,40 +162,47 @@ func (p *Pipeline) Reconcile(ctx context.Context, tenant genba.TenantID, c conne
 	// million. The alternative is sorting both sides on disk and merging them,
 	// which is the right answer an order of magnitude further up and is not
 	// worth its complexity here.
-	held := make(map[string]string)
+	items := make(map[string]string)
 	if err := enum.Enumerate(ctx, func(it connector.Item) bool {
 		if it.ID != "" {
-			held[it.ID] = it.Version
+			items[it.ID] = it.Version
 		}
 		return true
 	}); err != nil {
 		return rec, fmt.Errorf("ingest: enumerate %s: %w", source, err)
 	}
-	rec.SourceItems = len(held)
+	rec.SourceItems = len(items)
 
-	// Two: what the index holds. Whatever is left in held afterwards is what
+	// Two: what the index holds. Whatever is left in items afterwards is what
 	// the index has never seen.
 	var (
-		stale []string
-		extra []string
+		stale  []string
+		extra  []string
+		quaran []string
 	)
 	if err := p.maint.Inventory(ctx, string(tenant), source, func(it store.Item) bool {
 		rec.IndexItems++
-		version, ok := held[it.ID]
+		version, ok := items[it.ID]
 		switch {
 		case !ok:
 			extra = append(extra, it.ID)
 		case version != "" && version != it.Version:
 			stale = append(stale, it.ID)
+		case it.Held:
+			// Only when the source still holds it and the revision agrees, so a
+			// held document that is also stale is refetched once as stale rather
+			// than twice, and one the source has deleted is deleted rather than
+			// fetched.
+			quaran = append(quaran, it.ID)
 		}
-		delete(held, it.ID)
+		delete(items, it.ID)
 		return true
 	}); err != nil {
 		return rec, fmt.Errorf("ingest: inventory %s: %w", source, err)
 	}
 
-	missing := make([]string, 0, len(held))
-	for id := range held {
+	missing := make([]string, 0, len(items))
+	for id := range items {
 		missing = append(missing, id)
 	}
 	// Sorted so that two sweeps over the same drift report the same sample, and
@@ -176,6 +211,7 @@ func (p *Pipeline) Reconcile(ctx context.Context, tenant genba.TenantID, c conne
 	slices.Sort(missing)
 	slices.Sort(stale)
 	slices.Sort(extra)
+	slices.Sort(quaran)
 
 	for _, id := range missing {
 		rec.Missing.add(id)
@@ -186,8 +222,11 @@ func (p *Pipeline) Reconcile(ctx context.Context, tenant genba.TenantID, c conne
 	for _, id := range extra {
 		rec.Extra.add(id)
 	}
+	for _, id := range quaran {
+		rec.Held.add(id)
+	}
 
-	if err := p.repair(ctx, string(tenant), c, &rec, missing, stale, extra); err != nil {
+	if err := p.repair(ctx, string(tenant), c, &rec, missing, stale, extra, quaran); err != nil {
 		rec.Duration = p.clock().Sub(start)
 		rec.Requests = countersOf(c).Since(before)
 		return rec, err
@@ -204,7 +243,9 @@ func (p *Pipeline) Reconcile(ctx context.Context, tenant genba.TenantID, c conne
 		"missing", rec.Missing.Count,
 		"stale", rec.Stale.Count,
 		"extra", rec.Extra.Count,
+		"held", rec.Held.Count,
 		"repaired", rec.Repaired,
+		"released", rec.Released,
 		"deleted", rec.Deleted,
 		"requests", rec.Requests.Requests(),
 		"duration", rec.Duration,
@@ -220,7 +261,7 @@ func (p *Pipeline) Reconcile(ctx context.Context, tenant genba.TenantID, c conne
 // and source stamping and the same quarantine rule as one that arrived from a
 // change feed. A document that is only correct when it comes in through one of
 // the two doors is a bug waiting for the other door.
-func (p *Pipeline) repair(ctx context.Context, tenant string, c connector.Connector, rec *Reconciliation, missing, stale, extra []string) error {
+func (p *Pipeline) repair(ctx context.Context, tenant string, c connector.Connector, rec *Reconciliation, missing, stale, extra, held []string) error {
 	r := &run{pipeline: p, tenant: tenant, source: c.Source()}
 
 	for _, id := range extra {
@@ -231,12 +272,12 @@ func (p *Pipeline) repair(ctx context.Context, tenant string, c connector.Connec
 
 	fetcher, ok := c.(connector.Fetcher)
 	if !ok {
-		if n := len(missing) + len(stale); n > 0 {
+		if n := len(missing) + len(stale) + len(held); n > 0 {
 			// Said once, loudly, rather than per document. A connector that
 			// cannot fetch by id is not broken, but an operator reading a report
 			// with a missing count in it needs to know why nothing happened
 			// about it.
-			p.log.Warn("documents are missing or stale and this connector cannot fetch by id, so they wait for a full sync",
+			p.log.Warn("documents are missing, stale or held and this connector cannot fetch by id, so they wait for a full sync",
 				"source", c.Source(), "tenant", tenant, "count", n)
 		}
 		if err := r.flush(ctx); err != nil {
@@ -246,25 +287,45 @@ func (p *Pipeline) repair(ctx context.Context, tenant string, c connector.Connec
 		return nil
 	}
 
-	for _, id := range slices.Concat(missing, stale) {
-		d, err := fetcher.Fetch(ctx, id)
-		switch {
-		case errors.Is(err, connector.ErrGone):
-			// The source changed its mind between the enumeration and now,
-			// which is normal on a corpus people are working in. It is not
-			// missing, it is deleted, and it is treated as one.
-			if err := r.emit(ctx, connector.Change{Document: docWithID(id), Deleted: true}); err != nil {
+	refetch := func(ids []string) error {
+		for _, id := range ids {
+			d, err := fetcher.Fetch(ctx, id)
+			switch {
+			case errors.Is(err, connector.ErrGone):
+				// The source changed its mind between the enumeration and now,
+				// which is normal on a corpus people are working in. It is not
+				// missing, it is deleted, and it is treated as one.
+				if err := r.emit(ctx, connector.Change{Document: docWithID(id), Deleted: true}); err != nil {
+					return err
+				}
+				continue
+			case err != nil:
+				return fmt.Errorf("ingest: fetch %s from %s: %w", id, c.Source(), err)
+			}
+			d.ID = id
+			if err := r.emit(ctx, connector.Change{Document: d}); err != nil {
 				return err
 			}
-			continue
-		case err != nil:
-			return fmt.Errorf("ingest: fetch %s from %s: %w", id, c.Source(), err)
 		}
-		d.ID = id
-		if err := r.emit(ctx, connector.Change{Document: d}); err != nil {
-			return err
-		}
+		return nil
 	}
+
+	if err := refetch(slices.Concat(missing, stale)); err != nil {
+		return err
+	}
+
+	// The held ones are fetched second and counted separately, because what
+	// they answer is a different question. Everything above is drift, and a
+	// number that mixed the two would be one an operator cannot use: a sweep
+	// that indexed forty documents says nothing about whether the directory
+	// somebody has just fixed is fixed. The counter moves in emit rather than in
+	// the flush, so this reads the line between the two without writing
+	// anything in the middle of a batch.
+	indexed := r.stats.Indexed
+	if err := refetch(held); err != nil {
+		return err
+	}
+	rec.Released = r.stats.Indexed - indexed
 
 	if err := r.flush(ctx); err != nil {
 		return err
