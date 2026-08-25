@@ -53,13 +53,20 @@ func write(t *testing.T, body string) string {
 // serving starts a server with these flags and stops it when the test ends.
 func serving(t *testing.T, args ...string) string {
 	t.Helper()
+	return servingWith(t, env(nil), args...)
+}
+
+// servingWith is the same with an environment, for the flags whose value names
+// something in one rather than carrying it.
+func servingWith(t *testing.T, getenv func(string) string, args ...string) string {
+	t.Helper()
 	addr := freeAddr(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
 		var out, errOut bytes.Buffer
-		done <- run(ctx, append([]string{"-addr", addr, "-tenant", "acme", "-log-level", "error"}, args...), env(nil), &out, &errOut)
+		done <- run(ctx, append([]string{"-addr", addr, "-tenant", "acme", "-log-level", "error"}, args...), getenv, &out, &errOut)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -217,7 +224,7 @@ func TestADirectoryThatIsNotThereStopsTheServerStarting(t *testing.T) {
 func TestRenamingTheDirectoryIsRefusedRatherThanApplied(t *testing.T) {
 	path := write(t, smallCompany)
 	held := &swap{path: path}
-	if err := held.read(); err != nil {
+	if _, err := held.reread(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -278,7 +285,7 @@ func TestOneBadFileOfTwoStopsTheServerStarting(t *testing.T) {
 // cache flush, which is what makes a twenty second ticker affordable.
 func TestARereadThatChangesNothingSaysSo(t *testing.T) {
 	held := &swap{path: write(t, smallCompany)}
-	if err := held.read(); err != nil {
+	if _, err := held.reread(); err != nil {
 		t.Fatal(err)
 	}
 	changed, err := held.reread()

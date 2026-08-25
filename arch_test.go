@@ -50,6 +50,12 @@ var allowed = map[string][]string{
 	// nothing of ours that the other two do not already have.
 	"directory/google": {"acl", "cache", "connector/limit", "directory"},
 
+	// provider sits above all three, which is the only place in the tree that
+	// does. It exists so that a deployment can name one in a file instead of
+	// importing it, so it has to know all of them and nothing else may know it
+	// except the command that reads the flag.
+	"directory/provider": {"directory", "directory/entra", "directory/google", "directory/okta"},
+
 	// cache is a map with a lock on it and imports nothing of ours, which is
 	// what lets index depend on it without the dependency meaning anything. A
 	// cache that knew about principals would be a second copy of the permission
@@ -240,7 +246,7 @@ var allowed = map[string][]string{
 	"benchcorpus/gen": {"benchcorpus", "store/sqlitestore"},
 
 	"cmd/genba":  {""},
-	"cmd/genbad": {"", "api", "config", "connector", "connector/aclmap", "connector/fssource", "connector/limit", "connector/objectsource", "directory", "index", "ingest", "store", "store/memstore", "store/pgstore", "store/sqlitestore", "web"},
+	"cmd/genbad": {"", "api", "config", "connector", "connector/aclmap", "connector/fssource", "connector/limit", "connector/objectsource", "directory", "directory/provider", "index", "ingest", "store", "store/memstore", "store/pgstore", "store/sqlitestore", "web"},
 }
 
 func TestDependencyDirection(t *testing.T) {

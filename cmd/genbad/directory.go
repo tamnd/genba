@@ -13,6 +13,7 @@ import (
 	"github.com/tamnd/genba/api"
 	"github.com/tamnd/genba/config"
 	"github.com/tamnd/genba/directory"
+	"github.com/tamnd/genba/directory/provider"
 )
 
 // authenticator is what the server authenticates with, and which of the two it
@@ -32,11 +33,17 @@ import (
 // no collisions because every group key carries the name of the directory it
 // came from.
 //
+// A file is either a directory written out in full or a description of a hosted
+// one, see [github.com/tamnd/genba/directory/provider], and a list can hold both
+// because it was always a list of files. The two are told apart by reading them,
+// rather than by a second flag, so that the deployment with forty contractors in
+// a file and an Okta organisation for everybody else is one flag value.
+//
 // There is one cache and it sits above the union, so the staleness bound is the
 // number in the configuration rather than something that emerges from a stack.
 //
 // The reload loops, if there are any, run until the context is done.
-func authenticator(ctx context.Context, cfg config.Config, log *slog.Logger) (api.Authenticator, error) {
+func authenticator(ctx context.Context, cfg config.Config, getenv func(string) string, log *slog.Logger) (api.Authenticator, error) {
 	header := api.HeaderAuth{Tenant: cfg.Tenant, Admins: cfg.Admins}
 	if len(cfg.Directories) == 0 {
 		return header, nil
@@ -47,15 +54,32 @@ func authenticator(ctx context.Context, cfg config.Config, log *slog.Logger) (ap
 		parts = make([]directory.Expander, 0, len(cfg.Directories))
 	)
 	for _, path := range cfg.Directories {
-		held := &swap{path: path}
-		if err := held.read(); err != nil {
-			return nil, err
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("directory: %w", err)
 		}
-		res, err := directory.New(held)
+
+		var d directory.Directory
+		if provider.Describes(raw) {
+			d, err = hosted(ctx, raw, getenv, log)
+		} else {
+			// The bytes already read rather than the path, because the file
+			// would otherwise be read twice and the second read is the one that
+			// gets installed.
+			held := &swap{path: path}
+			if _, err = held.install(raw); err == nil {
+				files = append(files, held)
+				d = held
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("directory %s: %w", path, err)
+		}
+
+		res, err := directory.New(d)
 		if err != nil {
 			return nil, err
 		}
-		files = append(files, held)
 		parts = append(parts, res)
 	}
 	union, err := directory.NewMulti(parts...)
@@ -81,6 +105,37 @@ func authenticator(ctx context.Context, cfg config.Config, log *slog.Logger) (ap
 	return api.Resolving{Auth: header, Resolver: cached}, nil
 }
 
+// credentialCheck is how long the one question at startup gets.
+//
+// It is generous because it is paid once and because the first request to a
+// provider is the slow one: a TLS handshake, and for two of the three a token
+// grant before the lookup it was for. It is bounded at all because a tenant that
+// accepts a connection and then says nothing would otherwise hang the server on
+// the way up, which looks exactly like a server that is running.
+const credentialCheck = 20 * time.Second
+
+// hosted builds a directory out of a description of one and asks it a question
+// before letting the server come up.
+//
+// There is no reload loop. A description names a service rather than a set of
+// people, and the people behind it change without the file changing, which is
+// what the cache above the union is for.
+func hosted(ctx context.Context, raw []byte, getenv func(string) string, log *slog.Logger) (directory.Directory, error) {
+	d, err := provider.Open(raw, getenv)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, credentialCheck)
+	defer cancel()
+	if err := provider.Reachable(ctx, d); err != nil {
+		return nil, fmt.Errorf("the credential was refused: %w", err)
+	}
+
+	log.Info("the credential for a hosted directory was accepted", "source", d.Name())
+	return d, nil
+}
+
 // swap is a directory that can be replaced under the readers.
 //
 // The pointer is read on every lookup and written by the reload, which is a
@@ -97,35 +152,37 @@ type swap struct {
 	sum atomic.Pointer[[32]byte]
 }
 
-// read parses the file and installs it, and reports whether the contents
-// differed from what was already held.
-func (s *swap) read() error {
-	_, err := s.reread()
-	return err
-}
-
+// reread reads the file and installs it.
 func (s *swap) reread() (bool, error) {
 	raw, err := os.ReadFile(s.path)
 	if err != nil {
-		return false, fmt.Errorf("directory: %w", err)
+		return false, err
 	}
+	return s.install(raw)
+}
+
+// install parses a file that has already been read and puts it in place, and
+// reports whether the contents differed from what was already held.
+//
+// It takes the bytes rather than the path because the caller at startup has
+// already read them to work out what sort of file this is, and because a file
+// that changes between one read and the next would otherwise leave the hash and
+// the parse describing different things.
+func (s *swap) install(raw []byte) (bool, error) {
 	sum := sha256.Sum256(raw)
 	if held := s.sum.Load(); held != nil && *held == sum {
 		return false, nil
 	}
 
-	// Parsed from the bytes already read rather than from the file again,
-	// because a file that changes between the hash and the parse would leave
-	// the two describing different things.
 	d, err := directory.ReadStatic(bytes.NewReader(raw))
 	if err != nil {
-		return false, fmt.Errorf("directory %s: %w", s.path, err)
+		return false, err
 	}
 	if held := s.held.Load(); held != nil && held.Name() != d.Name() {
 		// Every group key carries the directory's name, so renaming it renames
 		// every group in every rule at once. That is a different directory
 		// rather than an edit to this one, and it is a restart.
-		return false, fmt.Errorf("directory %s: the name changed from %q to %q, which renames every group", s.path, held.Name(), d.Name())
+		return false, fmt.Errorf("the name changed from %q to %q, which renames every group", held.Name(), d.Name())
 	}
 	s.held.Store(d)
 	s.sum.Store(&sum)
