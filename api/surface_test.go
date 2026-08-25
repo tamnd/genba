@@ -281,6 +281,11 @@ func corpus(t *testing.T) *memstore.Store {
 		{
 			ID: "d1", Tenant: "acme", Source: "gdrive", Kind: doc.KindPage,
 			Title: "Payments failover runbook", Body: "Fail the payments queue over to the replica.",
+			// Written by the person the walks authenticate as, which is what puts
+			// it on the screen that lists what readers have said about one's own
+			// documents. Without an author that screen is empty for everybody and
+			// a walk over it asserts nothing.
+			Author:      doc.Person{Subject: "u_mei", Name: "Mei Tan"},
 			Permissions: perm,
 		},
 		{

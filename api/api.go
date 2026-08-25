@@ -33,6 +33,7 @@ import (
 	"github.com/tamnd/genba/cache"
 	"github.com/tamnd/genba/doc"
 	"github.com/tamnd/genba/index"
+	"github.com/tamnd/genba/recheck"
 	"github.com/tamnd/genba/store"
 	"github.com/tamnd/genba/thumb"
 )
@@ -113,6 +114,12 @@ type Server struct {
 	// therefore shut it down. See [WithAudit].
 	audit    *audit.Log
 	ownAudit bool
+
+	// recheck asks the sources whether somebody may still read what is about to
+	// be shown to them. It is nil unless a deployment names a source that can
+	// answer that quickly, and a nil one means every surface shows what the index
+	// said, which is what off by default means here. See [WithRecheck].
+	recheck *recheck.Set
 
 	// thumbs holds the rendered thumbnails. It lives on the server rather than
 	// in the store because it is derived data with a cost that is measured in
@@ -561,6 +568,15 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Pri
 
 	s.metrics.observeSearch(res.Took, res.Candidates, res.Total)
 
+	// The page is checked against the sources before anything is built out of
+	// it, so a document somebody lost access to since the last sync is gone from
+	// the response, from the record of the response and from the count of what
+	// was shown. The total is left as the index reported it: it is a statement
+	// about how much matched rather than about this page, and correcting it by
+	// the rows this page dropped would be arithmetic on two different sets.
+	res.Hits = s.stillMatching(r, p, res.Hits)
+	res.Answer = onlyQuoting(res.Answer, res.Hits)
+
 	out := searchResponse{
 		Query:         r.URL.Query().Get("q"),
 		Text:          query.Text,
@@ -822,6 +838,9 @@ func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request, p *acl.Pr
 		writeConditional(w, r, http.StatusOK, out, out.identity())
 		return
 	}
+	// A title is a small thing to leak and it is still the thing this endpoint
+	// serves, so the completions are checked the way results are.
+	res.Hits = s.stillMatching(r, p, res.Hits)
 	var shown []audit.Item
 	for _, h := range res.Hits {
 		if len(out.Suggestions) >= SuggestLimit {
@@ -920,6 +939,19 @@ func (s *Server) handleDocument(w http.ResponseWriter, r *http.Request, p *acl.P
 			Documents: []audit.Item{{ID: id}},
 		})
 		writeError(w, http.StatusInternalServerError, "internal", "the document could not be read")
+		return
+	}
+	if !s.stillReadable(r, p, d) {
+		// The index said yes and the source says no, and the source is right. It
+		// is the same answer as a document that was never there, all the way out
+		// to the record, because telling somebody their access was withdrawn
+		// tells them the document exists.
+		s.accessed(r, p, audit.Record{
+			Action:    audit.Read,
+			Outcome:   audit.Refused,
+			Documents: []audit.Item{{ID: id}},
+		})
+		writeError(w, http.StatusNotFound, "not_found", "no such document")
 		return
 	}
 	// One document, so the clause that admitted them is known and worth keeping.
@@ -1062,6 +1094,18 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request, p *acl.Pr
 	// the media type both come from. The driver applies the principal again on
 	// the content read, so this is a lookup rather than the check itself.
 	d, err := s.store.Get(r.Context(), p, id)
+	if err == nil && !s.stillReadable(r, p, d) {
+		// Before the bytes are read rather than after. There is no reason to pull
+		// a file out of the store to throw it away, and the answer is the one a
+		// document that is not there gets.
+		s.accessed(r, p, audit.Record{
+			Action:    audit.Content,
+			Outcome:   audit.Refused,
+			Documents: []audit.Item{{ID: id}},
+		})
+		writeError(w, http.StatusNotFound, "not_found", "no such document")
+		return
+	}
 	if err == nil {
 		var c doc.Content
 		c, err = cs.Content(r.Context(), p, id)
@@ -1232,6 +1276,13 @@ func (s *Server) cacheStats() map[string]cache.Stats {
 		out = make(map[string]cache.Stats, 1)
 	}
 	out["thumbnail"] = s.thumbs.Stats()
+	if s.recheck != nil {
+		// The hit rate on this layer is what makes the checks affordable, so it is
+		// published beside the others rather than being folded into the recheck
+		// counters. A deployment whose sources are being asked about every row of
+		// every page can see it here.
+		out["recheck"] = s.recheck.CacheStats()
+	}
 	if reporter, ok := s.auth.(interface {
 		CacheStats() map[string]cache.Stats
 	}); ok {
