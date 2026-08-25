@@ -740,13 +740,20 @@ func (s *Source) refresh(ctx context.Context, rel string, info fs.FileInfo, sinc
 // built without one is in, and the answer is that nothing resolved, which
 // quarantines every document rather than publishing the tree.
 func (s *Source) permissions(ctx context.Context, rel string, info fs.FileInfo) (acl.Permissions, error) {
-	if s.policy == nil {
-		return connector.Unresolved(s.name, "this source was built without a permission policy, so nothing in the tree resolves"), nil
+	return permissionsOf(ctx, s.policy, s.name, rel, info)
+}
+
+// permissionsOf is the question itself, without a source to ask it, so that a
+// [Checker] over the same tree asks it the same way, including the shortcut for
+// a policy that would otherwise stat a file the caller is already holding.
+func permissionsOf(ctx context.Context, policy Policy, source, rel string, info fs.FileInfo) (acl.Permissions, error) {
+	if policy == nil {
+		return connector.Unresolved(source, "this source was built without a permission policy, so nothing in the tree resolves"), nil
 	}
-	if p, ok := s.policy.(statPolicy); ok {
+	if p, ok := policy.(statPolicy); ok {
 		return p.permissionsFor(ctx, rel, info)
 	}
-	return s.policy.Permissions(ctx, rel)
+	return policy.Permissions(ctx, rel)
 }
 
 // changedAt asks the policy when the rule governing a file last changed, and

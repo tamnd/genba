@@ -25,6 +25,7 @@ import (
 	"github.com/tamnd/genba/config"
 	"github.com/tamnd/genba/connector/limit"
 	"github.com/tamnd/genba/index"
+	"github.com/tamnd/genba/recheck"
 	"github.com/tamnd/genba/store"
 	"github.com/tamnd/genba/store/memstore"
 	"github.com/tamnd/genba/store/pgstore"
@@ -100,6 +101,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	fs.StringVar(&corpus.ACL, "corpus-acl", aclTenant, "who may read the corpus: tenant, owners or os")
 	fs.StringVar(&corpus.Identity, "corpus-identity", "unix", "identity source the account names in the tree belong to, for -corpus-acl os")
 	fs.StringVar(&corpus.Domain, "corpus-domain", "", "domain the accounts on this host belong to, for -corpus-acl os, empty for none")
+	fs.BoolVar(&corpus.Recheck, "corpus-recheck", false, "ask the tree again on every request whether the reader may still read what is about to be shown, which closes the window between a revocation and the next sync")
 	fs.DurationVar(&corpus.Refresh, "corpus-refresh", 0, "how often to reindex the directory, zero for once")
 	fs.BoolVar(&corpus.Watch, "corpus-watch", false, "ask the operating system what changed instead of walking the tree, needs -corpus-refresh")
 	fs.DurationVar(&corpus.Reconcile, "corpus-reconcile", 0, "how often to sweep the index against the directory, zero for after every sync")
@@ -213,6 +215,23 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	}
 	if h := web.Handler(); h != nil {
 		opts = append(opts, api.WithAssets(h))
+	}
+
+	// The permission question put back to the source while a response is being
+	// written, for the one source that can answer it inside a request. It is one
+	// set with one checker in it today, and the set is what the rest of the
+	// sources join when they can answer as cheaply.
+	if corpus.Recheck {
+		checker, err := corpusChecker(corpus)
+		if err != nil {
+			return err
+		}
+		set := recheck.New()
+		set.Add(corpus.Name, checker)
+		opts = append(opts, api.WithRecheck(set))
+		log.Info("checking corpus permissions again at query time",
+			"source", corpus.Name, "dir", corpus.Dir, "acl", corpus.ACL,
+			"timeout", recheck.DefaultTimeout, "ttl", recheck.DefaultTTL)
 	}
 
 	// The searcher subscribes the cache to the store's writes, so it is closed

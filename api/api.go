@@ -571,10 +571,16 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Pri
 	// The page is checked against the sources before anything is built out of
 	// it, so a document somebody lost access to since the last sync is gone from
 	// the response, from the record of the response and from the count of what
-	// was shown. The total is left as the index reported it: it is a statement
-	// about how much matched rather than about this page, and correcting it by
-	// the rows this page dropped would be arithmetic on two different sets.
-	res.Hits = s.stillMatching(r, p, res.Hits)
+	// was shown.
+	//
+	// The total comes down with it. Leaving it alone would tell somebody that
+	// something they may not read matched what they typed, and on a query
+	// specific enough to match one document the count is the answer. Only this
+	// page can be corrected, so what is left is a floor rather than a recount,
+	// which is the direction to be wrong in.
+	kept := s.stillMatching(r, p, res.Hits)
+	res.Total -= len(res.Hits) - len(kept)
+	res.Hits = kept
 	res.Answer = onlyQuoting(res.Answer, res.Hits)
 
 	out := searchResponse{
