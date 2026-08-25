@@ -47,6 +47,7 @@ var maintainCases = []maintainCase{
 	{"inventory lists one source of one tenant", testInventoryScope},
 	{"inventory reports the stored version", testInventoryVersion},
 	{"inventory includes quarantined documents", testInventoryQuarantined},
+	{"inventory says which documents are held", testInventoryReportsHeld},
 	{"inventory stops when the callback says so", testInventoryEarlyStop},
 	{"a permission change does not rewrite the document", testSetPermissionsKeepsContent},
 	{"a permission change ignores ids of another tenant", testSetPermissionsTenant},
@@ -139,6 +140,39 @@ func testInventoryQuarantined(t *testing.T, s store.Store, m store.Maintenance) 
 
 	if ids := inventoryIDs(t, m, "acme", "gdrive"); !slices.Equal(ids, []string{"d1", "d2"}) {
 		t.Fatalf("Inventory returned %v, want the quarantined document too", ids)
+	}
+}
+
+// testInventoryReportsHeld is what the automatic retry stands on. A held
+// document is the one kind of drift the version comparison cannot see, because
+// the source and the index agree about the revision and the reason it is held is
+// at the source, so a driver that reported nothing here would leave the
+// quarantine to be emptied by hand.
+func testInventoryReportsHeld(t *testing.T, s store.Store, m store.Maintenance) {
+	bad := versioned("d2", "gdrive", "v1")
+	bad.Permissions = acl.Permissions{Mode: acl.ModeUnknown, Source: "gdrive", Reason: "the directory was unreachable"}
+	mustPut(t, s, versioned("d1", "gdrive", "v1"), bad)
+
+	held := map[string]bool{}
+	for _, it := range inventory(t, m, "acme", "gdrive") {
+		held[it.ID] = it.Held
+	}
+	if held["d1"] {
+		t.Error("a queryable document was reported as held, so every sweep would refetch the whole corpus")
+	}
+	if !held["d2"] {
+		t.Error("a quarantined document was not reported as held, so nothing would ever retry it")
+	}
+
+	// And it moves. A document that resolves stops being held, which is the
+	// answer the sweep after a fixed directory has to get.
+	good := versioned("d2", "gdrive", "v1")
+	mustPut(t, s, good)
+
+	for _, it := range inventory(t, m, "acme", "gdrive") {
+		if it.ID == "d2" && it.Held {
+			t.Error("a document whose permissions resolved is still reported as held")
+		}
 	}
 }
 

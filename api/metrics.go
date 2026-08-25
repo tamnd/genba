@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -8,6 +9,15 @@ import (
 	"github.com/tamnd/genba/metric"
 	"github.com/tamnd/genba/store"
 )
+
+// statsBudget is how long a scrape may spend asking the store what it holds.
+//
+// It is a second because that is long enough for the count on any store that is
+// working and short enough that a store that is not does not hold the scrape
+// open. The endpoint that reports the same number to a person is on the request
+// path and has a far tighter budget than this, so a store slow enough to reach
+// this is one somebody already knows about.
+const statsBudget = time.Second
 
 // Metric names. They are constants because the alert in docs/alerts.yml names
 // them, and a rename that only edits the code leaves an alert that will never
@@ -22,6 +32,7 @@ const (
 	MetricCacheEvictions  = "genba_cache_evictions_total"
 	MetricCacheEntries    = "genba_cache_entries"
 	MetricGroupStaleness  = "genba_directory_staleness_seconds"
+	MetricQuarantined     = "genba_quarantined_documents"
 	MetricStoreRows       = "genba_store_rows_total"
 	MetricStoreStatements = "genba_store_statements_total"
 	MetricStoreDecodes    = "genba_store_decodes_total"
@@ -66,8 +77,8 @@ func newMetrics(s *Server) *metrics {
 	// label values come from the scrape rather than from registration. A
 	// deployment with result caching turned off publishes two layers instead of
 	// three, which is the truth and is more useful than a zero.
-	cacheStat := func(pick func(hits, misses, evictions, entries int64) int64) func() map[string]float64 {
-		return func() map[string]float64 {
+	cacheStat := func(pick func(hits, misses, evictions, entries int64) int64) func(context.Context) map[string]float64 {
+		return func(context.Context) map[string]float64 {
 			out := map[string]float64{}
 			for layer, st := range s.cacheStats() {
 				out[layer] = float64(pick(st.Hits, st.Misses, st.Evictions, int64(st.Entries)))
@@ -91,7 +102,7 @@ func newMetrics(s *Server) *metrics {
 	// here, which is the truth: there is no staleness to bound.
 	r.Counters(MetricGroupStaleness,
 		"The most out of date a resolved group set can be, which is the directory cache lifetime.",
-		"", "gauge", func() map[string]float64 {
+		"", "gauge", func(context.Context) map[string]float64 {
 			bounded, ok := s.auth.(interface{ staleness() (float64, bool) })
 			if !ok {
 				return nil
@@ -103,12 +114,42 @@ func newMetrics(s *Server) *metrics {
 			return map[string]float64{"": seconds}
 		})
 
+	// How many documents are being held back because their permissions did not
+	// resolve. It is the one number a held document produces anywhere, by
+	// design, and until now it was only on an endpoint somebody has to go and
+	// look at. A quarantine is normally empty and briefly non zero during a
+	// crawl, so what an operator wants is to be told when that stops being
+	// true, and being told requires a metric.
+	//
+	// A store that cannot answer publishes nothing rather than a zero. A zero
+	// here is the same shape as a healthy index and would silence the alert at
+	// exactly the moment the index stopped being able to say anything about
+	// itself, so the series goes missing instead, which is a thing an alert can
+	// be written against.
+	r.Counters(MetricQuarantined,
+		"Documents held back because their permissions did not resolve, which are invisible to every principal.",
+		"", "gauge", func(ctx context.Context) map[string]float64 {
+			// The scrape's context, bounded again, because a database that has
+			// stopped answering should cost the scrape a second rather than
+			// whatever the scrape timeout happens to be.
+			ctx, cancel := context.WithTimeout(ctx, statsBudget)
+			defer cancel()
+
+			st, err := s.store.Stats(ctx)
+			if err != nil {
+				return nil
+			}
+			return map[string]float64{"": float64(st.Quarantined)}
+		})
+
 	// A driver is not obliged to be measurable. One that is publishes the same
 	// numbers the CI gate asserts on, so a slow deployment can be compared with
 	// a green pull request instead of argued about.
 	if counted, ok := s.store.(store.Counted); ok {
-		single := func(pick func(store.Counters) int64) func() map[string]float64 {
-			return func() map[string]float64 { return map[string]float64{"": float64(pick(counted.Counters()))} }
+		single := func(pick func(store.Counters) int64) func(context.Context) map[string]float64 {
+			return func(context.Context) map[string]float64 {
+				return map[string]float64{"": float64(pick(counted.Counters()))}
+			}
 		}
 		r.Counters(MetricStoreRows, "Rows the storage driver has returned on read paths.", "", "counter",
 			single(func(c store.Counters) int64 { return c.Rows }))
@@ -132,7 +173,7 @@ func (s *Server) Metrics() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		_, _ = s.metrics.registry.WriteTo(w)
+		_, _ = s.metrics.registry.Collect(r.Context(), w)
 	})
 }
 

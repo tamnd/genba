@@ -38,8 +38,11 @@ groups:
 # It is a number to look at when something else is wrong rather than a reason to wake somebody, because a cold process and a busy crawl both push it down and neither is an incident.
 #
 # Quarantined documents.
-# A document whose permissions did not resolve is held back rather than served, which is the safe outcome, so a growing count is a bug report and not a page.
-# It belongs on the dashboard next to the document count.
+# genba_quarantined_documents is a gauge and it is the only trace a held document leaves anywhere, so it is worth a panel and a threshold somebody looks at during working hours.
+# It is not a page: a document whose permissions did not resolve is held back rather than served, which is the safe outcome, so a growing count is a bug report rather than a reason to wake somebody.
+# The rule to write against it is a ratchet rather than a level, because a crawl of a source with a broken role mapping puts a few thousand in there legitimately and they come back on their own.
+# Something like an increase over an hour on a deployment that is not crawling, or a count that has not fallen after a sweep, which is the retry having run and released nothing.
+# The series disappears rather than reading zero when the store cannot answer, so a rule that has to be right about this pairs the threshold with absent().
 #
 # Directory staleness.
 # genba_directory_staleness_seconds is a constant, so there is nothing in it to alert on.

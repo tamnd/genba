@@ -30,7 +30,7 @@ func (s *Store) Inventory(ctx context.Context, tenant, source string, fn func(st
 		if d.Tenant != tenant || d.Source != source {
 			continue
 		}
-		if !fn(store.Item{ID: d.ID, Version: d.SourceUpdate}) {
+		if !fn(store.Item{ID: d.ID, Version: d.SourceUpdate, Held: !d.Queryable()}) {
 			return nil
 		}
 	}

@@ -1,6 +1,9 @@
 package api_test
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -8,8 +11,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tamnd/genba/acl"
 	"github.com/tamnd/genba/api"
+	"github.com/tamnd/genba/doc"
 	"github.com/tamnd/genba/index"
+	"github.com/tamnd/genba/store"
 	"github.com/tamnd/genba/store/sqlitestore"
 )
 
@@ -155,6 +161,93 @@ func TestTheStoreCountersAreThere(t *testing.T) {
 			t.Errorf("%s is zero after a search that read the store", series)
 		}
 	}
+}
+
+// serving builds a server over a store the caller has filled, which is what the
+// quarantine tests need and the shared helper above does not give them.
+func serving(t *testing.T, st store.Store) *api.Server {
+	t.Helper()
+	searcher := index.New(st, index.WithCache(index.NewCache()))
+	t.Cleanup(func() { _ = searcher.Close() })
+	return api.New(st, searcher, api.HeaderAuth{Tenant: "acme"})
+}
+
+// withHeld returns a store holding the ordinary corpus plus n documents whose
+// permissions did not resolve.
+func withHeld(t *testing.T, n int) *sqlitestore.Store {
+	t.Helper()
+	st, err := sqlitestore.Open(t.Context(), ":memory:")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	docs := cacheCorpus()
+	for i := range n {
+		docs = append(docs, doc.Document{
+			ID: fmt.Sprintf("held-%d", i), Tenant: "acme", Source: "gdrive", Kind: doc.KindPage,
+			Title: "Board pack", Body: "The payments line for the quarter.",
+			Permissions: acl.Permissions{
+				Mode: acl.ModeUnknown, Source: "gdrive",
+				Reason: "the directory was unreachable",
+			},
+		})
+	}
+	if err := st.Put(t.Context(), docs...); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	return st
+}
+
+// TestTheQuarantineIsAGaugeAnOperatorCanAlertOn. A held document is invisible to
+// every principal by design, so this number is the only trace it leaves
+// anywhere, and until it was a metric the only way to see it was to go and look
+// at an endpoint.
+func TestTheQuarantineIsAGaugeAnOperatorCanAlertOn(t *testing.T) {
+	s := serving(t, withHeld(t, 2))
+
+	body := scrape(t, s)
+	if got := value(t, body, api.MetricQuarantined); got != 2 {
+		t.Errorf("the quarantine gauge reads %v, want 2", got)
+	}
+	if !strings.Contains(body, "# TYPE "+api.MetricQuarantined+" gauge") {
+		t.Errorf("the quarantine is not published as a gauge:\n%s", body)
+	}
+}
+
+// TestAnEmptyQuarantineStillReportsZero, because a series that only appears once
+// something has gone wrong is one nobody can write a rule against until the
+// night it matters.
+func TestAnEmptyQuarantineStillReportsZero(t *testing.T) {
+	s := serving(t, withHeld(t, 0))
+
+	if got := value(t, scrape(t, s), api.MetricQuarantined); got != 0 {
+		t.Errorf("an index holding nothing back reads %v, want 0", got)
+	}
+}
+
+// TestAStoreThatCannotSayWhatItHoldsPublishesNothing is the difference between
+// no answer and an answer of zero. A zero here is the same shape as a healthy
+// index, so publishing one would silence the alert at exactly the moment the
+// index stopped being able to describe itself.
+func TestAStoreThatCannotSayWhatItHoldsPublishesNothing(t *testing.T) {
+	s := serving(t, silentStore{withHeld(t, 2)})
+
+	body := scrape(t, s)
+	if strings.Contains(body, "\n"+api.MetricQuarantined+" ") {
+		t.Errorf("a store that cannot answer published a count anyway:\n%s", body)
+	}
+	if got := value(t, body, "genba_store_rows_total"); got < 0 {
+		t.Errorf("the rest of the exposition went missing with it: %v", got)
+	}
+}
+
+// silentStore is a store that has stopped being able to say what it holds,
+// which is a database under load rather than an exotic failure.
+type silentStore struct{ *sqlitestore.Store }
+
+func (silentStore) Stats(context.Context) (store.Stats, error) {
+	return store.Stats{}, errors.New("the database is not answering")
 }
 
 // TestAnOpenEventStreamIsNotTimed. It is open for as long as somebody is

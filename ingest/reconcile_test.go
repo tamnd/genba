@@ -103,6 +103,24 @@ func (s *listedSource) remove(id string) {
 	s.order = slices.DeleteFunc(s.order, func(x string) bool { return x == id })
 }
 
+// unresolved makes the source hand back a document whose permissions did not
+// resolve, which is the document the index stores and holds back. It leaves the
+// revision alone, because that is the whole point: nothing about the document
+// changed, only what the source could say about who may read it.
+func (s *listedSource) unresolved(id, reason string) {
+	d := s.held[id]
+	d.Permissions = connector.Unresolved(s.name, reason)
+	s.held[id] = d
+}
+
+// resolved is the fix, whatever it was: the directory came back up, the token
+// was given the scope it was missing, the group now exists.
+func (s *listedSource) resolved(id string) {
+	d := s.held[id]
+	d.Permissions = acl.Permissions{Mode: acl.ModePublicToTenant, Source: s.name}
+	s.held[id] = d
+}
+
 // corpus builds a source holding n documents at revision one.
 func corpus(name string, n int) *listedSource {
 	s := &listedSource{name: name}
@@ -176,6 +194,120 @@ func TestReconcileIsQuietWhenNothingDrifted(t *testing.T) {
 	}
 	if rec.Requests.Lists != 1 {
 		t.Fatalf("the sweep made %d enumerations, want 1", rec.Requests.Lists)
+	}
+	if rec.Held.Count != 0 || rec.Released != 0 {
+		t.Fatalf("a sweep over an index holding nothing back reported %d held and %d released", rec.Held.Count, rec.Released)
+	}
+}
+
+// TestReconcileReleasesWhatTheSourceCanNowResolve is the automatic retry. A
+// document held back because its permissions did not resolve is refetched
+// whatever its revision says, because the reason it is held is at the source and
+// the fix does not touch the document.
+func TestReconcileReleasesWhatTheSourceCanNowResolve(t *testing.T) {
+	p, st := pipelineOver(t)
+	src := corpus("test", 4)
+	src.unresolved("doc-0001", "the directory was unreachable")
+	reconcile(t, p, src)
+
+	if _, err := st.Get(t.Context(), principal(), "doc-0001"); !errors.Is(err, genba.ErrNotFound) {
+		t.Fatalf("a document whose permissions did not resolve is readable: %v", err)
+	}
+
+	src.resolved("doc-0001")
+	src.fetched = nil
+	rec := reconcile(t, p, src)
+
+	if rec.Held.Count != 1 || !slices.Equal(rec.Held.IDs, []string{"doc-0001"}) {
+		t.Fatalf("the sweep reported %d held documents, ids %v, want doc-0001", rec.Held.Count, rec.Held.IDs)
+	}
+	if rec.Drift() != 0 {
+		t.Fatalf("a held document was counted as drift: %d discrepancies", rec.Drift())
+	}
+	if rec.Released != 1 || rec.Repaired != 1 {
+		t.Fatalf("the sweep released %d and repaired %d, want 1 and 1", rec.Released, rec.Repaired)
+	}
+	if !slices.Equal(src.fetched, []string{"doc-0001"}) {
+		t.Fatalf("the sweep fetched %v, want only the held document", src.fetched)
+	}
+	if _, err := st.Get(t.Context(), principal(), "doc-0001"); err != nil {
+		t.Fatalf("a released document is still not readable: %v", err)
+	}
+}
+
+// TestReconcileKeepsHoldingWhatStillDoesNotResolve is the other half, and it is
+// the half that says the retry is safe to run every night. A refetch that comes
+// back unresolved again leaves the document exactly where it was, and the
+// released count says so.
+func TestReconcileKeepsHoldingWhatStillDoesNotResolve(t *testing.T) {
+	p, st := pipelineOver(t)
+	src := corpus("test", 3)
+	src.unresolved("doc-0002", "the group could not be listed")
+	reconcile(t, p, src)
+
+	src.fetched = nil
+	rec := reconcile(t, p, src)
+
+	if rec.Held.Count != 1 {
+		t.Fatalf("the sweep reported %d held documents, want 1", rec.Held.Count)
+	}
+	if rec.Released != 0 {
+		t.Fatalf("the sweep released %d documents whose permissions still do not resolve", rec.Released)
+	}
+	if !slices.Equal(src.fetched, []string{"doc-0002"}) {
+		t.Fatalf("the sweep fetched %v, want the held document retried", src.fetched)
+	}
+	if _, err := st.Get(t.Context(), principal(), "doc-0002"); !errors.Is(err, genba.ErrNotFound) {
+		t.Fatalf("a retry that failed made the document readable: %v", err)
+	}
+}
+
+// TestReconcileDeletesAHeldDocumentTheSourceRemoved. A document that is held and
+// has also gone from the source is not a retry, it is a deletion, and fetching
+// it would be a request that can only fail.
+func TestReconcileDeletesAHeldDocumentTheSourceRemoved(t *testing.T) {
+	p, st := pipelineOver(t)
+	src := corpus("test", 3)
+	src.unresolved("doc-0001", "the directory was unreachable")
+	reconcile(t, p, src)
+
+	src.remove("doc-0001")
+	src.fetched = nil
+	rec := reconcile(t, p, src)
+
+	if rec.Held.Count != 0 {
+		t.Fatalf("a document the source no longer holds was reported as held")
+	}
+	if rec.Extra.Count != 1 || rec.Deleted != 1 {
+		t.Fatalf("the sweep reported %d extra and deleted %d, want 1 and 1", rec.Extra.Count, rec.Deleted)
+	}
+	if len(src.fetched) != 0 {
+		t.Fatalf("the sweep fetched %v, want nothing fetched for a deleted document", src.fetched)
+	}
+	if _, err := st.Get(t.Context(), principal(), "doc-0001"); !errors.Is(err, genba.ErrNotFound) {
+		t.Fatalf("a held document deleted at the source is still in the index: %v", err)
+	}
+}
+
+// TestReconcileFetchesAHeldStaleDocumentOnce. Both reasons to refetch apply to
+// the same document, and a sweep that acted on both would spend two requests to
+// store the same bytes twice.
+func TestReconcileFetchesAHeldStaleDocumentOnce(t *testing.T) {
+	p, _ := pipelineOver(t)
+	src := corpus("test", 3)
+	src.unresolved("doc-0001", "the directory was unreachable")
+	reconcile(t, p, src)
+
+	// A new revision, which also carries permissions that resolve.
+	src.put("doc-0001", "v2", "the body, rewritten")
+	src.fetched = nil
+	rec := reconcile(t, p, src)
+
+	if rec.Stale.Count != 1 || rec.Held.Count != 0 {
+		t.Fatalf("the sweep reported %d stale and %d held, want the document counted once as stale", rec.Stale.Count, rec.Held.Count)
+	}
+	if !slices.Equal(src.fetched, []string{"doc-0001"}) {
+		t.Fatalf("the sweep fetched %v, want one fetch of doc-0001", src.fetched)
 	}
 }
 
