@@ -1,6 +1,6 @@
 # Prometheus alerting rules for genba.
 #
-# There is one alert in here, and that is on purpose.
+# There are two alerts in here, and that is on purpose.
 # An alert that nobody acts on trains everybody to ignore the ones that matter, so a rule earns its place by naming something a person would get out of bed for.
 # Everything else worth watching is on a dashboard, where a number that is drifting can be looked at during working hours.
 #
@@ -31,6 +31,23 @@ groups:
             The 95th percentile of search latency has been above 25ms for five minutes.
             Check genba_search_candidates first: a candidate count that has moved with the match count means the first phase of retrieval has stopped cutting.
             Check genba_cache_hits_total against genba_cache_misses_total next: a hit rate that has collapsed usually means something is writing to the corpus continuously and dropping the cached orderings as fast as they are built.
+
+      # A record that could not be written is an access that happened and cannot be proved.
+      # It earns the second alert because it is the only failure genba has that cannot be recovered by looking again later.
+      # A slow query can be measured again tomorrow and a held document comes back after a sweep, but the request that served a document while the disk was full is over, and nothing in the process still knows about it.
+      #
+      # The threshold is any of them at all, because the trail is either complete or it is not, and a deployment that decides a few missing records a day is acceptable has decided its trail is not evidence.
+      # Fifteen minutes, because the usual cause is a full disk or a directory that lost its permissions in a deployment, and both of those are still true fifteen minutes later.
+      - alert: AuditRecordsAreBeingLost
+        expr: increase(genba_audit_failed_total[15m]) > 0
+        for: 15m
+        labels:
+          severity: page
+        annotations:
+          summary: Content access records are not being written
+          description: >-
+            The server served content it could not record. Check the disk the audit directory is on first, then its ownership, which is the usual pair of causes.
+            Check genba_audit_queued_records next: a queue that is not draining is a sink that has started making requests wait rather than one that is dropping records, and it is the same underlying problem one step earlier.
 
 # What is deliberately not alerted on, and why.
 #

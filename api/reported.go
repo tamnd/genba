@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/tamnd/genba/acl"
+	"github.com/tamnd/genba/audit"
 )
 
 // Reported is the other half of saying a document is out of date: what somebody
@@ -86,6 +87,10 @@ func (s *Server) handleReported(w http.ResponseWriter, r *http.Request, p *acl.P
 	out := reportedResponse{Documents: []reportedHit{}, At: s.now().UTC()}
 	rep, ok := s.reporter()
 	if !ok {
+		// An empty list is still an answer about the corpus, and a deployment
+		// whose driver remembers no reports should not have a hole in its trail
+		// where this screen is.
+		s.accessed(r, p, audit.Record{Action: audit.List, Outcome: audit.Served})
 		writeConditional(w, r, http.StatusOK, out, out.identity())
 		return
 	}
@@ -93,14 +98,23 @@ func (s *Server) handleReported(w http.ResponseWriter, r *http.Request, p *acl.P
 	flagged, err := rep.Reported(r.Context(), p, limit)
 	if err != nil {
 		s.log.Error("the reported list could not be read", "error", err, "tenant", p.Tenant)
+		s.accessed(r, p, audit.Record{Action: audit.List, Outcome: audit.Failed})
 		writeError(w, http.StatusInternalServerError, "internal", "the reported list could not be read")
 		return
 	}
+	shown := make([]audit.Item, 0, len(flagged))
 	for _, f := range flagged {
 		out.Documents = append(out.Documents, reportedHit{
 			searchHit: hitOf(f.Document),
 			Stale:     staleOf(f.Stale),
 		})
+		shown = append(shown, item(f.Document))
 	}
+	s.accessed(r, p, audit.Record{
+		Action:    audit.List,
+		Outcome:   audit.Served,
+		Documents: shown,
+		Count:     len(shown),
+	})
 	writeConditional(w, r, http.StatusOK, out, out.identity())
 }

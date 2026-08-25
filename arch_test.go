@@ -140,7 +140,7 @@ var allowed = map[string][]string{
 	"index":             {"acl", "cache", "doc", "store"},
 	"config":            nil,
 	"web":               nil,
-	"api":               {"", "acl", "cache", "directory", "doc", "index", "metric", "store", "thumb"},
+	"api":               {"", "acl", "audit", "cache", "directory", "doc", "index", "metric", "store", "thumb"},
 
 	// thumb imports nothing of ours. It is handed bytes and a size and hands
 	// back a smaller picture, which means the package that decodes files a
@@ -253,7 +253,7 @@ var allowed = map[string][]string{
 	"benchcorpus/gen": {"benchcorpus", "store/sqlitestore"},
 
 	"cmd/genba":  {""},
-	"cmd/genbad": {"", "api", "config", "connector", "connector/aclmap", "connector/fssource", "connector/limit", "connector/objectsource", "directory", "directory/provider", "index", "ingest", "store", "store/memstore", "store/pgstore", "store/sqlitestore", "web"},
+	"cmd/genbad": {"", "api", "audit", "config", "connector", "connector/aclmap", "connector/fssource", "connector/limit", "connector/objectsource", "directory", "directory/provider", "index", "ingest", "store", "store/memstore", "store/pgstore", "store/sqlitestore", "web"},
 }
 
 func TestDependencyDirection(t *testing.T) {

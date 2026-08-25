@@ -110,6 +110,22 @@ type Config struct {
 	// a write alone, which is what a deployment that cannot tolerate a stale
 	// ordering asks for.
 	CacheResultExpiry time.Duration
+
+	// AuditDir is where the record of every content access is kept, one file per
+	// day. Empty writes the records to the process log instead, which is where
+	// they go on a laptop and behind a collector that is shipping the log
+	// somewhere already.
+	//
+	// What empty does not do is turn the trail off. There is no setting for
+	// that, because a deployment chooses where its records are kept and not
+	// whether any are written.
+	AuditDir string
+
+	// AuditRetention is how long a day of records is kept before its file is
+	// deleted, and zero keeps them forever. A day is deleted once the whole day
+	// it holds is outside the window, so a retention of a week never deletes a
+	// record that is six days old.
+	AuditRetention time.Duration
 }
 
 // Default returns the configuration a server starts with when nothing is set.
@@ -151,6 +167,7 @@ func Load(getenv func(string) string) (Config, error) {
 	str(getenv, "GENBA_DSN", &c.DSN)
 	str(getenv, "GENBA_TENANT", &c.Tenant)
 	str(getenv, "GENBA_LOG_LEVEL", &c.LogLevel)
+	str(getenv, "GENBA_AUDIT_DIR", &c.AuditDir)
 	if v := getenv("GENBA_DIRECTORY"); v != "" {
 		c.Directories = list(v)
 	}
@@ -168,6 +185,7 @@ func Load(getenv func(string) string) (Config, error) {
 		dur(getenv, "GENBA_CACHE_RESULT_EXPIRY", &c.CacheResultExpiry),
 		dur(getenv, "GENBA_DIRECTORY_TTL", &c.DirectoryTTL),
 		dur(getenv, "GENBA_DIRECTORY_REFRESH", &c.DirectoryRefresh),
+		dur(getenv, "GENBA_AUDIT_RETENTION", &c.AuditRetention),
 		boolean(getenv, "GENBA_CACHE", &c.Cache),
 	)
 	if err != nil {
@@ -206,6 +224,14 @@ func (c Config) Validate() error {
 	default:
 		errs = append(errs, fmt.Errorf("config: unknown log level %q", c.LogLevel))
 	}
+	// A retention with nowhere to apply it is somebody believing they have said
+	// how long their audit trail is kept. The records are going to the process
+	// log, whatever is holding that log decides how long it lives, and this
+	// setting deletes nothing. It is worth failing at startup rather than
+	// discovering at an audit.
+	if c.AuditRetention != 0 && c.AuditDir == "" {
+		errs = append(errs, errors.New("config: audit retention is set and audit dir is not, so there are no files to delete"))
+	}
 	for _, d := range []struct {
 		name  string
 		value time.Duration
@@ -216,6 +242,7 @@ func (c Config) Validate() error {
 		{"cache result expiry", c.CacheResultExpiry},
 		{"directory ttl", c.DirectoryTTL},
 		{"directory refresh", c.DirectoryRefresh},
+		{"audit retention", c.AuditRetention},
 	} {
 		if d.value < 0 {
 			errs = append(errs, fmt.Errorf("config: %s is negative", d.name))

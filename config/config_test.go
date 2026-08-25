@@ -69,6 +69,28 @@ func TestSeveralDirectoriesComeFromOneVariable(t *testing.T) {
 	}
 }
 
+// TestTheAuditTrailIsConfiguredByWhereItGoes, not by whether it happens. The
+// default has no directory and that is a destination rather than an off switch,
+// which is the one property of this setting worth a test.
+func TestTheAuditTrailIsConfiguredByWhereItGoes(t *testing.T) {
+	c, err := config.Load(env(map[string]string{
+		"GENBA_AUDIT_DIR":       "/var/lib/genba/audit",
+		"GENBA_AUDIT_RETENTION": "720h",
+	}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.AuditDir != "/var/lib/genba/audit" {
+		t.Errorf("AuditDir = %q", c.AuditDir)
+	}
+	if c.AuditRetention != 720*time.Hour {
+		t.Errorf("AuditRetention = %v", c.AuditRetention)
+	}
+	if d := config.Default(); d.AuditDir != "" || d.AuditRetention != 0 {
+		t.Errorf("the default keeps records at %q for %v, and it should say nothing", d.AuditDir, d.AuditRetention)
+	}
+}
+
 func TestLoadRejectsBadValues(t *testing.T) {
 	tests := []struct {
 		name string
@@ -81,6 +103,7 @@ func TestLoadRejectsBadValues(t *testing.T) {
 		{"unknown log level", map[string]string{"GENBA_LOG_LEVEL": "trace"}, "unknown log level"},
 		{"duration without a unit", map[string]string{"GENBA_READ_TIMEOUT": "30"}, "needs a unit"},
 		{"unparseable duration", map[string]string{"GENBA_READ_TIMEOUT": "soon"}, "GENBA_READ_TIMEOUT"},
+		{"retention with no files", map[string]string{"GENBA_AUDIT_RETENTION": "168h"}, "audit retention"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

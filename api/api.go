@@ -29,6 +29,7 @@ import (
 
 	"github.com/tamnd/genba"
 	"github.com/tamnd/genba/acl"
+	"github.com/tamnd/genba/audit"
 	"github.com/tamnd/genba/cache"
 	"github.com/tamnd/genba/doc"
 	"github.com/tamnd/genba/index"
@@ -105,6 +106,13 @@ type Server struct {
 	// recorded, because a histogram nobody scrapes costs a lock and nine
 	// comparisons, and it is only served where a caller mounts [Server.Metrics].
 	metrics *metrics
+
+	// audit is where the record of every content access goes. It is never nil,
+	// because a deployment chooses where its records are kept and not whether
+	// any are written, and ownAudit is whether this server built it and should
+	// therefore shut it down. See [WithAudit].
+	audit    *audit.Log
+	ownAudit bool
 
 	// thumbs holds the rendered thumbnails. It lives on the server rather than
 	// in the store because it is derived data with a cost that is measured in
@@ -201,6 +209,13 @@ func New(st store.Store, searcher *index.Searcher, auth Authenticator, opts ...O
 	for _, opt := range opts {
 		opt(s)
 	}
+	// After the options, because the default sink is this server's logger and
+	// an embedder may have replaced it. There is no branch here where the log
+	// ends up nil: a caller says where the records go, never whether there are
+	// any.
+	if s.audit == nil {
+		s.audit, s.ownAudit = audit.New(audit.Logging(s.log)), true
+	}
 	// After the options, because the cache layers and the storage driver are
 	// what the counters read and both arrive with the server rather than with
 	// the registry.
@@ -215,40 +230,74 @@ func New(st store.Store, searcher *index.Searcher, auth Authenticator, opts ...O
 	return s
 }
 
+// route is one entry in the router.
+//
+// The surface is a table rather than a sequence of calls to mux.Handle because
+// something other than the router has to be able to read it. Content is the
+// field that matters: it says this route can put a document in front of
+// somebody, and every route with it set has to write an audit record on every
+// path that answers. A test walks this table and holds each of those to it, so
+// a route added without a record fails the build rather than being noticed a
+// year later by somebody who needed the trail.
+type route struct {
+	Method  string
+	Pattern string
+	Handler http.Handler
+
+	// Content is whether the route can return a document, part of one, a
+	// rendering of one, or the fact that one exists.
+	Content bool
+}
+
+// routes is the whole HTTP surface.
+func (s *Server) routes() []route {
+	content := func(method, pattern string, h http.Handler) route {
+		return route{Method: method, Pattern: pattern, Handler: h, Content: true}
+	}
+	at := func(method, pattern string, h http.Handler) route {
+		return route{Method: method, Pattern: pattern, Handler: h}
+	}
+	return []route{
+		at("GET", "/healthz", http.HandlerFunc(s.handleHealth)),
+		at("GET", "/readyz", http.HandlerFunc(s.handleReady)),
+		at("GET", "/api/v1/me", s.authenticated(s.handleMe)),
+		content("GET", "/api/v1/search", s.authenticated(s.handleSearch)),
+		content("GET", "/api/v1/suggest", s.authenticated(s.handleSuggest)),
+		content("GET", "/api/v1/documents", s.authenticated(s.handleDocuments)),
+		content("GET", "/api/v1/documents/{id}", s.authenticated(s.handleDocument)),
+		at("POST", "/api/v1/documents/{id}/verify", s.authenticated(s.handleVerify)),
+		at("DELETE", "/api/v1/documents/{id}/verify", s.authenticated(s.handleUnverify)),
+		at("PUT", "/api/v1/documents/{id}/owner", s.authenticated(s.handleSetOwner)),
+		at("DELETE", "/api/v1/documents/{id}/owner", s.authenticated(s.handleClearOwner)),
+		at("POST", "/api/v1/documents/{id}/stale", s.authenticated(s.handleReport)),
+		at("DELETE", "/api/v1/documents/{id}/stale", s.authenticated(s.handleResolve)),
+		at("DELETE", "/api/v1/documents/{id}/stale/mine", s.authenticated(s.handleWithdraw)),
+		content("GET", "/api/v1/documents/{id}/content", s.authenticated(s.handleContent)),
+		content("GET", "/api/v1/documents/{id}/thumbnail", s.authenticated(s.handleThumbnail)),
+		content("GET", "/api/v1/reported", s.authenticated(s.handleReported)),
+		content("GET", "/api/v1/recent", s.authenticated(s.handleRecent)),
+		at("POST", "/api/v1/recent", s.authenticated(s.handleRecordOpen)),
+		at("GET", "/api/v1/stats", s.authenticated(s.handleStats)),
+		at("GET", "/api/v1/events", s.authenticated(s.handleEvents)),
+		at("GET", "/api/v1/admin/answers", s.admin(s.handleAnswers)),
+		at("PUT", "/api/v1/admin/answers/{id}", s.admin(s.handleCurate)),
+		at("DELETE", "/api/v1/admin/answers/{id}", s.admin(s.handleRetract)),
+		at("GET", "/api/v1/admin/operations", s.admin(s.handleAdmin)),
+		at("GET", "/api/v1/admin/access", s.admin(s.handleAccess)),
+		at("POST", "/api/v1/admin/connectors", s.admin(s.handleAddConnector)),
+		at("DELETE", "/api/v1/admin/connectors/{source}", s.admin(s.handleDropConnector)),
+		at("POST", "/api/v1/admin/connectors/{source}/start", s.admin(s.handleStartConnector)),
+		at("POST", "/api/v1/admin/connectors/{source}/stop", s.admin(s.handleStopConnector)),
+		at("POST", "/api/v1/admin/connectors/{source}/sync", s.admin(s.handleSyncConnector)),
+	}
+}
+
 // Handler returns the router.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", s.handleHealth)
-	mux.HandleFunc("GET /readyz", s.handleReady)
-	mux.Handle("GET /api/v1/me", s.authenticated(s.handleMe))
-	mux.Handle("GET /api/v1/search", s.authenticated(s.handleSearch))
-	mux.Handle("GET /api/v1/suggest", s.authenticated(s.handleSuggest))
-	mux.Handle("GET /api/v1/documents", s.authenticated(s.handleDocuments))
-	mux.Handle("GET /api/v1/documents/{id}", s.authenticated(s.handleDocument))
-	mux.Handle("POST /api/v1/documents/{id}/verify", s.authenticated(s.handleVerify))
-	mux.Handle("DELETE /api/v1/documents/{id}/verify", s.authenticated(s.handleUnverify))
-	mux.Handle("PUT /api/v1/documents/{id}/owner", s.authenticated(s.handleSetOwner))
-	mux.Handle("DELETE /api/v1/documents/{id}/owner", s.authenticated(s.handleClearOwner))
-	mux.Handle("POST /api/v1/documents/{id}/stale", s.authenticated(s.handleReport))
-	mux.Handle("DELETE /api/v1/documents/{id}/stale", s.authenticated(s.handleResolve))
-	mux.Handle("DELETE /api/v1/documents/{id}/stale/mine", s.authenticated(s.handleWithdraw))
-	mux.Handle("GET /api/v1/documents/{id}/content", s.authenticated(s.handleContent))
-	mux.Handle("GET /api/v1/documents/{id}/thumbnail", s.authenticated(s.handleThumbnail))
-	mux.Handle("GET /api/v1/reported", s.authenticated(s.handleReported))
-	mux.Handle("GET /api/v1/recent", s.authenticated(s.handleRecent))
-	mux.Handle("POST /api/v1/recent", s.authenticated(s.handleRecordOpen))
-	mux.Handle("GET /api/v1/stats", s.authenticated(s.handleStats))
-	mux.Handle("GET /api/v1/events", s.authenticated(s.handleEvents))
-	mux.Handle("GET /api/v1/admin/answers", s.admin(s.handleAnswers))
-	mux.Handle("PUT /api/v1/admin/answers/{id}", s.admin(s.handleCurate))
-	mux.Handle("DELETE /api/v1/admin/answers/{id}", s.admin(s.handleRetract))
-	mux.Handle("GET /api/v1/admin/operations", s.admin(s.handleAdmin))
-	mux.Handle("GET /api/v1/admin/access", s.admin(s.handleAccess))
-	mux.Handle("POST /api/v1/admin/connectors", s.admin(s.handleAddConnector))
-	mux.Handle("DELETE /api/v1/admin/connectors/{source}", s.admin(s.handleDropConnector))
-	mux.Handle("POST /api/v1/admin/connectors/{source}/start", s.admin(s.handleStartConnector))
-	mux.Handle("POST /api/v1/admin/connectors/{source}/stop", s.admin(s.handleStopConnector))
-	mux.Handle("POST /api/v1/admin/connectors/{source}/sync", s.admin(s.handleSyncConnector))
+	for _, rt := range s.routes() {
+		mux.Handle(rt.Method+" "+rt.Pattern, rt.Handler)
+	}
 	if s.assets != nil {
 		mux.Handle("GET /", s.assets)
 	}
@@ -497,6 +546,15 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Pri
 	res, err := s.searcher.Search(r.Context(), p, query)
 	if err != nil {
 		s.log.Error("search failed", "error", err, "tenant", p.Tenant)
+		// A search that could not be run is on the trail as well as in the log.
+		// It is not an access and it is not a refusal, and an investigation
+		// reconstructing an afternoon needs to see the gap rather than infer it
+		// from a silence.
+		s.accessed(r, p, audit.Record{
+			Action:  audit.Search,
+			Outcome: audit.Failed,
+			Query:   r.URL.Query().Get("q"),
+		})
 		writeError(w, http.StatusInternalServerError, "internal", "the search could not be run")
 		return
 	}
@@ -538,6 +596,16 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, p *acl.Pri
 		hit.Verified = verifiedOf(vouched[h.Document.ID], now)
 		out.Hits = append(out.Hits, hit)
 	}
+	// The page that was shown and the size of what it matched, which are two
+	// different numbers and both belong on the record: what somebody saw, and
+	// how much there was to see.
+	s.accessed(r, p, audit.Record{
+		Action:    audit.Search,
+		Outcome:   audit.Served,
+		Query:     out.Query,
+		Documents: hitItems(res.Hits),
+		Count:     res.Total,
+	})
 	writeConditional(w, r, http.StatusOK, out, out.identity())
 }
 
@@ -750,9 +818,11 @@ func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request, p *acl.Pr
 	res, err := s.searcher.Search(r.Context(), p, q)
 	if err != nil {
 		s.log.Warn("suggest failed", "error", err, "tenant", p.Tenant)
+		s.accessed(r, p, audit.Record{Action: audit.Suggest, Outcome: audit.Failed, Query: raw})
 		writeConditional(w, r, http.StatusOK, out, out.identity())
 		return
 	}
+	var shown []audit.Item
 	for _, h := range res.Hits {
 		if len(out.Suggestions) >= SuggestLimit {
 			break
@@ -764,7 +834,19 @@ func (s *Server) handleSuggest(w http.ResponseWriter, r *http.Request, p *acl.Pr
 			ID:   h.Document.ID,
 			URL:  h.Document.URL,
 		})
+		shown = append(shown, item(h.Document))
 	}
+	// The titles of these went in front of somebody, which is the whole reason
+	// the typeahead is audited like a search rather than treated as a keystroke.
+	// The operator completions are left off the record: they are the same six
+	// words for everybody and say nothing about the corpus.
+	s.accessed(r, p, audit.Record{
+		Action:    audit.Suggest,
+		Outcome:   audit.Served,
+		Query:     raw,
+		Documents: shown,
+		Count:     len(shown),
+	})
 	out.TookMS = float64(time.Since(start).Microseconds()) / 1000
 	writeConditional(w, r, http.StatusOK, out, out.identity())
 }
@@ -816,18 +898,39 @@ func facetValues(in []index.Facet) []facet {
 }
 
 func (s *Server) handleDocument(w http.ResponseWriter, r *http.Request, p *acl.Principal) {
-	d, err := s.store.Get(r.Context(), p, r.PathValue("id"))
+	id := r.PathValue("id")
+	d, err := s.store.Get(r.Context(), p, id)
 	switch {
 	case errors.Is(err, genba.ErrNotFound):
 		// A document the caller may not read and a document that does not exist
-		// produce the same response, all the way out to the status code.
+		// produce the same response, all the way out to the status code, and
+		// they are one outcome on the record for the same reason.
+		s.accessed(r, p, audit.Record{
+			Action:    audit.Read,
+			Outcome:   audit.Refused,
+			Documents: []audit.Item{{ID: id}},
+		})
 		writeError(w, http.StatusNotFound, "not_found", "no such document")
 		return
 	case err != nil:
 		s.log.Error("document lookup failed", "error", err)
+		s.accessed(r, p, audit.Record{
+			Action:    audit.Read,
+			Outcome:   audit.Failed,
+			Documents: []audit.Item{{ID: id}},
+		})
 		writeError(w, http.StatusInternalServerError, "internal", "the document could not be read")
 		return
 	}
+	// One document, so the clause that admitted them is known and worth keeping.
+	// It is the clause and never the reference it matched. See [ruleOf].
+	s.accessed(r, p, audit.Record{
+		Action:    audit.Read,
+		Outcome:   audit.Served,
+		Documents: []audit.Item{item(d)},
+		Count:     1,
+		Rule:      ruleOf(p, d),
+	})
 	body := documentResponse(d)
 	// The preview is where somebody decides whether to trust what they are
 	// reading, so it carries the claim and whether this reader is one of the
@@ -941,15 +1044,20 @@ var inlineTypes = map[string]bool{
 }
 
 func (s *Server) handleContent(w http.ResponseWriter, r *http.Request, p *acl.Principal) {
+	id := r.PathValue("id")
 	cs, ok := s.store.(store.ContentStore)
 	if !ok {
 		// A deployment on a driver that holds no bytes has no content to serve,
 		// and says so the same way it would for a document that is not there.
+		s.accessed(r, p, audit.Record{
+			Action:    audit.Content,
+			Outcome:   audit.Refused,
+			Documents: []audit.Item{{ID: id}},
+		})
 		writeError(w, http.StatusNotFound, "not_found", "no such document")
 		return
 	}
 
-	id := r.PathValue("id")
 	// The document is read first because it is where the permission decision and
 	// the media type both come from. The driver applies the principal again on
 	// the content read, so this is a lookup rather than the check itself.
@@ -958,15 +1066,37 @@ func (s *Server) handleContent(w http.ResponseWriter, r *http.Request, p *acl.Pr
 		var c doc.Content
 		c, err = cs.Content(r.Context(), p, id)
 		if err == nil {
+			// The bytes are counted before they are written, and a conditional
+			// request that comes back 304 still records the access. What is being
+			// recorded is that this person was given this document, and a browser
+			// that already had a copy was given it earlier.
+			s.accessed(r, p, audit.Record{
+				Action:    audit.Content,
+				Outcome:   audit.Served,
+				Documents: []audit.Item{item(d)},
+				Count:     1,
+				Rule:      ruleOf(p, d),
+				Bytes:     int64(len(c.Bytes)),
+			})
 			s.writeContent(w, r, d, c)
 			return
 		}
 	}
 	switch {
 	case errors.Is(err, genba.ErrNotFound):
+		s.accessed(r, p, audit.Record{
+			Action:    audit.Content,
+			Outcome:   audit.Refused,
+			Documents: []audit.Item{{ID: id}},
+		})
 		writeError(w, http.StatusNotFound, "not_found", "no such document")
 	default:
 		s.log.Error("content lookup failed", "error", err)
+		s.accessed(r, p, audit.Record{
+			Action:    audit.Content,
+			Outcome:   audit.Failed,
+			Documents: []audit.Item{{ID: id}},
+		})
 		writeError(w, http.StatusInternalServerError, "internal", "the document could not be read")
 	}
 }

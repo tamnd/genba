@@ -174,9 +174,16 @@ func waitForIndex(t *testing.T, base string) {
 	t.Fatal("the server was still indexing after thirty seconds")
 }
 
+// waitForHealth waits for the listener to answer.
+//
+// The deadline is long because the interface is compressed before the listener
+// binds, once per process, and both encoders are asked for their best. That is
+// a fraction of a second in an ordinary build and it is over a minute in a race
+// build on a small machine, so a shorter deadline here fails on the slowest
+// machine anybody runs the suite on rather than on a server that is broken.
 func waitForHealth(t *testing.T, url string) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(2 * time.Minute)
 	for time.Now().Before(deadline) {
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)
 		if err != nil {

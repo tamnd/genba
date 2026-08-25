@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/tamnd/genba/acl"
+	"github.com/tamnd/genba/audit"
 	"github.com/tamnd/genba/doc"
 	"github.com/tamnd/genba/store"
 )
@@ -88,6 +89,10 @@ func (s *Server) handleRecent(w http.ResponseWriter, r *http.Request, p *acl.Pri
 		Changed: []searchHit{},
 		At:      s.now().UTC(),
 	}
+	// Both halves land on one record, because they are one screen and a trail
+	// that split them would say somebody looked at two things when they looked
+	// at a home page once.
+	var shown []audit.Item
 
 	// A driver that cannot remember an open serves the other half rather than an
 	// error. The interface is built for that: a deployment on a store with no
@@ -102,18 +107,27 @@ func (s *Server) handleRecent(w http.ResponseWriter, r *http.Request, p *acl.Pri
 		}
 		for _, o := range opens {
 			out.Opened = append(out.Opened, openedHit{searchHit: hitOf(o.Document), At: o.At.UTC()})
+			shown = append(shown, item(o.Document))
 		}
 	}
 
 	changed, err := s.searcher.Recent(r.Context(), p, limit)
 	if err != nil {
 		s.log.Error("recent failed", "error", err, "tenant", p.Tenant)
+		s.accessed(r, p, audit.Record{Action: audit.List, Outcome: audit.Failed})
 		writeError(w, http.StatusInternalServerError, "internal", "the recent list could not be read")
 		return
 	}
 	for _, d := range changed {
 		out.Changed = append(out.Changed, hitOf(d))
+		shown = append(shown, item(d))
 	}
+	s.accessed(r, p, audit.Record{
+		Action:    audit.List,
+		Outcome:   audit.Served,
+		Documents: shown,
+		Count:     len(shown),
+	})
 
 	// One question for both halves, because they are one screen. A badge that
 	// showed up in results and not here would read as a bug in the badge rather
