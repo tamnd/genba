@@ -347,6 +347,30 @@ Errors are never held.
 A directory that was unreachable for a moment is not a fact about a subject, and remembering it would turn a blip into a minute of refusals.
 A refusal the directory meant, a subject it does not hold or has deactivated, still refuses on every request, because that one is an answer rather than a failure.
 
+## Naming a provider in a file
+
+All three adapters are reachable from Go and that is fine while there is one of them and it is being written.
+It is not fine once there are three, because a deployment that wants its groups from Okta should not have to import a package and build its own binary.
+
+`-directory` keeps its spelling exactly, because it already means a comma separated list of files unioned by `Multi`.
+A file is either a directory written out in full or a description of a hosted one, and the two are told apart by reading them.
+That is what makes a mixed list work: a company with an Okta organisation and forty contractors in a JSON file gets one flag value, and it works because it was always a list of files rather than because anything was added for the case.
+
+The alternative was a spelling on the flag itself, `okta:acme.okta.com`, and it loses twice.
+A credential cannot go in it, since argv is readable by every process on the machine, so the secret would have to arrive from an environment variable named after the source and now there are two places to look.
+And a national cloud, a page size or a second organisation turns one flag value into a query string nobody can read.
+
+The description never carries the credential.
+`credential_file` is a path whose contents are the credential and `credential_env` names an environment variable holding it, and a description that carries one inline is refused with a message saying which of the two to use.
+That last part is a field that exists only to be refused, because it is the mistake somebody is going to make and `unknown field` is not an answer to it.
+
+A description is checked at startup by asking the provider about a subject who does not exist.
+The answer that means everything is working is that they do not exist, which is the cheapest lookup any of these APIs has, and anything a provider will answer at all took a credential it accepted.
+A credential the provider refuses stops the server coming up, because a server that starts and then refuses every sign in looks like an outage in the search engine rather than a token somebody forgot to rotate.
+
+There is no reload loop on a description, unlike a file.
+It names a service rather than a set of people, and the people behind it change without it changing, which is what the cache above the union is for.
+
 ## What is not here yet
 
 Serving a stale answer through a directory outage.
@@ -356,8 +380,6 @@ It is a real choice with a real cost on the other side, so it should be a config
 The rest of the hosted providers.
 Okta, Entra ID and Google Workspace are done, and LDAP is the one that is not.
 
-A way to configure an adapter without writing Go.
-`-directory` takes files, and an organisation is not a file.
-All three providers want the same three things, an endpoint, a credential and a name, so the flag should grow one spelling that covers them rather than one per provider.
-Entra ID wants a fourth, since a client credentials grant is a tenant, an application and a secret rather than one token, and a secret is the one thing that must not arrive on a command line.
-Google Workspace wants the same treatment for a different shape, since a service account is a key file and the administrator to act for, and the key belongs in the file it arrived in rather than in a flag.
+A description that names more than one thing.
+One file is one provider, so a company with two Okta organisations writes two files, which is fine, and a provider that wanted a list of domains rather than one would not fit at all.
+Nothing wants that yet and the shape it should take depends on which provider asks for it first.

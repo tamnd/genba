@@ -78,8 +78,10 @@ type Config struct {
 	// which is the property that makes a cache safe to have in the first place.
 	Cache bool
 
-	// Directories are the files of subjects and groups to resolve group
-	// membership from, and it is empty by default. A deployment with one
+	// Directories are the files to resolve group membership from, and it is
+	// empty by default. Each is either subjects and groups written out in full
+	// or a description of a hosted provider, and which one it is comes from
+	// reading it rather than from a second flag. A deployment with one
 	// resolves the groups on every request out of it and throws away whatever
 	// the request claimed. A deployment without one believes the groups it is
 	// given, which is right for a laptop and behind a proxy that is doing the

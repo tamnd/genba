@@ -78,7 +78,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	// More than one is a company that acquired another company. The group sets
 	// are unioned, and a file that cannot be read refuses the request rather
 	// than serving half of somebody's groups.
-	directories := fs.String("directory", strings.Join(cfg.Directories, ","), "files of subjects and groups to resolve group membership from, comma separated, empty to believe the request")
+	directories := fs.String("directory", strings.Join(cfg.Directories, ","), "files to resolve group membership from, each either subjects and groups written out or a description of a hosted provider, comma separated, empty to believe the request")
 	fs.DurationVar(&cfg.DirectoryTTL, "directory-ttl", cfg.DirectoryTTL, "how long a resolved group set is held, which is the longest a membership change takes to have any effect")
 	fs.DurationVar(&cfg.DirectoryRefresh, "directory-refresh", cfg.DirectoryRefresh, "how often the directory file is read again, zero for never")
 	// A string rather than a repeated flag, because it is a list of a handful of
@@ -200,7 +200,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	// listens for the store's writes and the first sync is a write like any
 	// other. Building it afterwards left it reporting that nothing had been
 	// indexed since it came up while sitting on a corpus it had just loaded.
-	auth, err := authenticator(ctx, cfg, log)
+	auth, err := authenticator(ctx, cfg, getenv, log)
 	if err != nil {
 		return err
 	}

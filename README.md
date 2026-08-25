@@ -210,7 +210,7 @@ The environment variable is the flag in upper case with a `GENBA_` prefix, and a
 | `GENBA_TENANT` | empty | tenant served by a single tenant deployment |
 | `GENBA_ADMINS` | empty | subjects that hold the administrator role, comma separated |
 | `GENBA_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
-| `GENBA_DIRECTORY` | empty | files of subjects and groups to resolve group membership from, comma separated, empty to believe the request |
+| `GENBA_DIRECTORY` | empty | files to resolve group membership from, each either subjects and groups written out or a description of a hosted provider, comma separated, empty to believe the request |
 | `GENBA_DIRECTORY_TTL` | `1m` | how long a resolved group set is held |
 | `GENBA_DIRECTORY_REFRESH` | `30s` | how often the file is read again, zero for never |
 | `GENBA_READ_TIMEOUT` | `30s` | request read timeout |
@@ -346,7 +346,61 @@ A company with an identity provider gets an adapter instead, and an adapter answ
 Okta groups do not contain groups, so an expansion there is one level deep, and the group listing that answers the subject lookup already carries every group object the level below is about to ask for.
 Entra ID groups do nest and Microsoft Graph will do the nesting for you, so a person eight levels down a tree is one request rather than eight rounds of them, and the expansion is still one level deep for a different reason.
 Google Workspace groups nest and the Admin SDK will not walk the nesting, so that one is the ordinary case the resolver was written for: one collection answers both lookups, because the endpoint that says which groups a person is in takes a group just as happily as a person.
-`-directory` does not take an organisation yet, so an adapter is wired up in Go for now, and the flag grows a spelling for all three at once.
+### Pointing a deployment at an identity provider
+
+`-directory` still takes files, and a file is now either a directory written out in full or a description of a hosted one.
+The two are told apart by reading them, so a mixed list works the way two files already do: the forty contractors somebody keeps in a JSON file and everybody else in an Okta organisation is one flag value and one search box.
+
+```json
+{
+  "provider": "okta",
+  "name": "acme",
+  "endpoint": "https://acme.okta.com",
+  "credential_file": "/etc/genba/okta-token"
+}
+```
+
+`name` is the identity source the group keys carry, so `mei` above resolves to `acme:engineering` whether that group came from a file or from the organisation.
+It has no default for the same reason it has none in a directory file: it is what a rule is written against.
+`endpoint` for Okta is the organisation URL, and the credential is an API token.
+
+```json
+{
+  "provider": "entra",
+  "name": "acme",
+  "tenant": "8f7c1a2b-3d4e-4f50-9a6b-1c2d3e4f5a60",
+  "client_id": "c3d4e5f6-0718-4923-a4b5-6c7d8e9f0a12",
+  "credential_env": "ACME_ENTRA_SECRET"
+}
+```
+
+`tenant` is the directory id and `client_id` is the application registration this signs in as, and the credential is that application's client secret.
+The registration needs `GroupMember.Read.All` and `User.Read.All` as application permissions, granted by an administrator, since there is nobody signing in to consent to them.
+`authority` moves the token endpoint, which a national cloud needs.
+
+```json
+{
+  "provider": "google",
+  "name": "acme",
+  "subject": "admin@acme.test",
+  "credential_file": "/etc/genba/service-account.json"
+}
+```
+
+For Google Workspace the credential is the whole service account key file the console hands over, rather than one field out of it, so the file that arrived is the file that gets mounted and nobody has to copy a private key from one place to another.
+`subject` is the administrator the service account acts as, and domain wide delegation has to be configured for the account's client id with `admin.directory.group.readonly` and `admin.directory.user.readonly`.
+Without that the grant is refused with a message saying so, which is worth knowing because the failure is otherwise a bad request that names none of the four things that can be wrong.
+
+The credential is never in the description itself.
+A file like the ones above is the sort of thing that gets pasted into a ticket and committed to a repository of manifests, and none of that is true of the file it names.
+`credential_file` is a path whose contents are the credential, which is what a mounted secret looks like, and `credential_env` names an environment variable instead, which is what a container that was handed one looks like.
+It is not a flag either, because argv is readable by every process on the machine.
+A description that carries the credential inline is refused with a message saying which of the two to use.
+
+The server asks each provider one question on the way up, about somebody who does not exist, and a credential the provider will not accept stops it starting.
+A server that comes up and then refuses every sign in looks like an outage in the search engine rather than a token somebody forgot to rotate, and it is worth one request to tell those apart.
+There is no reload loop on a description, because it names a service rather than a set of people, and the people behind it change without the file changing.
+`-directory-ttl` is what bounds that, exactly as it does for a file.
 
 ## Metrics
 
@@ -430,6 +484,7 @@ func main() {
 | `acl` | principals, groups, permission descriptors, visibility bitmaps |
 | `directory` | a person resolved into the groups they are in, with cycle detection, a version, a union over several providers and one cache layer, [docs/identity.md](docs/identity.md) |
 | `directory/directorytest` | the conformance suite that defines what a directory adapter is |
+| `directory/provider` | a hosted directory built from a description of one, so a deployment names a provider in a file instead of importing it |
 | `directory/okta` | group membership from an Okta organisation, over the Users and Groups API |
 | `directory/entra` | group membership from a Microsoft Entra ID tenant, over the Graph, with the closure resolved by the provider |
 | `directory/google` | group membership from a Google Workspace domain, over the Admin SDK, signed in as a service account acting for an administrator |
