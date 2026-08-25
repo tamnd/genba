@@ -1,0 +1,30 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/groups/99999999-9999-4999-8999-999999999999?%24select=id%2CdisplayName",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ],
+      "Authorization": [
+        "REDACTED"
+      ]
+    }
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "error": {
+          "code": "Request_ResourceNotFound",
+          "message": "Resource '99999999-9999-4999-8999-999999999999' does not exist or one of its queried reference-property objects are not present."
+        }
+      }
+    }
+  }
+}

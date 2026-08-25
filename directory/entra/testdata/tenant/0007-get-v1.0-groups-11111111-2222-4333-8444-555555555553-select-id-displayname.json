@@ -1,0 +1,28 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/groups/11111111-2222-4333-8444-555555555553?%24select=id%2CdisplayName",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ],
+      "Authorization": [
+        "REDACTED"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "displayName": "Storage",
+        "id": "11111111-2222-4333-8444-555555555553"
+      }
+    }
+  }
+}

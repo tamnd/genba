@@ -1,0 +1,32 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/users/8f7c1a2b-3d4e-4f50-9a6b-1c2d3e4f5a60?%24select=id%2CdisplayName%2Cmail%2CuserPrincipalName%2CotherMails%2CaccountEnabled",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ],
+      "Authorization": [
+        "REDACTED"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "accountEnabled": true,
+        "displayName": "Mei Tanaka",
+        "id": "8f7c1a2b-3d4e-4f50-9a6b-1c2d3e4f5a60",
+        "mail": "mei@acme.test",
+        "otherMails": [],
+        "userPrincipalName": "mei@acme.test"
+      }
+    }
+  }
+}

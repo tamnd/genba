@@ -342,10 +342,11 @@ A directory that cannot answer refuses the request rather than serving half of s
 This is the deployment with forty people and six groups in it.
 
 A company with an identity provider gets an adapter instead, and an adapter answers the same two lookups the file does.
-`directory/okta` is the first one, over the Users and Groups API, and it passes the same conformance suite.
+`directory/okta` and `directory/entra` are the two that exist, and both pass the same conformance suite the file does.
 Okta groups do not contain groups, so an expansion there is one level deep, and the group listing that answers the subject lookup already carries every group object the level below is about to ask for.
+Entra ID groups do nest and Microsoft Graph will do the nesting for you, so a person eight levels down a tree is one request rather than eight rounds of them, and the expansion is still one level deep for a different reason.
 `-directory` does not take an organisation yet, so an adapter is wired up in Go for now.
-Entra ID and Google Workspace are next, and the flag grows a spelling for all three at once.
+Google Workspace is next, and the flag grows a spelling for all three at once.
 
 ## Metrics
 
@@ -430,6 +431,7 @@ func main() {
 | `directory` | a person resolved into the groups they are in, with cycle detection, a version, a union over several providers and one cache layer, [docs/identity.md](docs/identity.md) |
 | `directory/directorytest` | the conformance suite that defines what a directory adapter is |
 | `directory/okta` | group membership from an Okta organisation, over the Users and Groups API |
+| `directory/entra` | group membership from a Microsoft Entra ID tenant, over the Graph, with the closure resolved by the provider |
 | `doc` | the canonical document model every connector normalises into |
 | `store` | the storage interface, plus `storetest`, the conformance suite |
 | `store/memstore` | the reference in memory driver |

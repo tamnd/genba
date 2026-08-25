@@ -137,11 +137,13 @@ func TestConformance(t *testing.T) {
 }
 ```
 
-Two things about a fixture are not the same for every provider and the suite asks rather than assumes.
+Three things about a fixture are not the same for every provider and the suite asks rather than assumes.
 
 `Flat` says the provider's groups cannot contain groups, which skips the cases about walking a graph and takes a level off the arithmetic in the two that count lookups.
+`Transitive` says the opposite thing, that the provider nests and hands over the whole closure itself, which runs every case and changes one number: a nest of any depth is walked one level.
+That number is asserted rather than tolerated, because a provider claiming to expand transitively and then costing three levels on a three level nest is one that is not doing what it says.
 `Identity` says which identity the provider can actually be made to hold, because a directory answers in its own vocabulary and no amount of putting a Slack id on an Okta user will make one come out.
-Both default to the shape `directory.Static` has, so nothing that already passes the suite has to say anything, and what the cases are about survives either way.
+All three default to the shape `directory.Static` has, so nothing that already passes the suite has to say anything, and what the cases are about survives either way.
 
 `directory.Static` is the reference implementation the suite runs against, and it is also the directory a small deployment actually uses.
 A company with forty people and six groups has the whole thing in a file, and making them stand up an identity provider to try a search engine is how a search engine does not get tried.
@@ -201,6 +203,44 @@ Rate limits are the transport's job rather than the adapter's.
 `connector/limit` is the same one every connector uses, and Okta publishes its numbers on every response.
 It spells the headers `X-Rate-Limit-Remaining` and `X-Rate-Limit-Reset`, with the hyphen in a different place from everybody else, which canonicalises to a different header name entirely.
 A transport that read only the other three spellings would see an organisation sending its numbers on every single response as one sending none at all, and would find the edge of the quota by hitting it.
+
+## Entra ID
+
+`directory/entra` is the second adapter, and it is the interesting one because the provider does half the work.
+
+Entra groups nest, and unlike most providers Microsoft Graph will walk the nesting for you.
+The `transitiveMemberOf` collection is every group a person is in however deeply that membership is inherited, so somebody eight levels down a tree is one request rather than eight rounds of them.
+That is why the conformance fixture sets `Transitive` and why `Group` answers with an empty membership.
+It is not that a group here is a member of nothing, it is that whatever it is a member of already came back with the subject, and returning the parents again would have the resolver walk a graph it has already been handed.
+
+The cast on the end of the path is load bearing.
+Without `microsoft.graph.group` the collection also returns directory roles and administrative units, which are directory objects a person belongs to and are not groups.
+Their ids would land in the group set beside the real ones, and a rule naming one would then allow everybody who holds that role.
+The cast asks the service for groups only rather than filtering after the fact, so the ids that arrive are the ids that belong there.
+
+Every property the adapter reads is named in a `$select`, and one of them is the reason.
+Graph answers a user lookup with a default set of properties and `accountEnabled` is not in it.
+An adapter that reads the answer without having asked for that field gets the zero value, which is false, or gets nothing at all and calls it true, depending on how it is written.
+The first refuses everybody in the tenant and the second keeps resolving the groups of people who were deactivated months ago, and neither looks like a bug in the place it happens.
+The fake next to the adapter fails the test when a user lookup arrives without that field named, so the whole suite enforces it rather than one case.
+
+The version is where this provider differs from Okta most.
+The v1.0 Graph exposes no last modified time on a user or on a group, so there is no revision to copy.
+The group version is empty, and here that is complete rather than a gap: a version on a group exists to catch a change that alters somebody's group set without altering the ids in it, which for a nesting provider means a group being moved under another one, and that move arrives as a different closure because the closure is what the provider returns.
+Hashing the display name in instead would invalidate every member's cached group set for a rename that alters no answer.
+The subject version is a hash of exactly the fields the adapter reports about the person, because those are the ones the closure does not cover: a new alias has to reach the principal and the group ids do not move when one is added.
+
+Two smaller decisions.
+A guest's principal name is their address with the at sign replaced and the host tenant stuck on the end, which looks enough like an address to be mistaken for one and is nobody's mailbox, so it is not an email identity and their `mail` is.
+And a lookup for something that is neither an id nor a principal name is refused with a bad request rather than a not found, so both are read as a person the tenant does not hold, since treating the first as a failure would turn one bad row in a store into an expansion that never succeeds.
+
+Rate limits work the other way round from Okta.
+Graph says nothing about what is left until it refuses, and then answers a 429 or a 503 with a `Retry-After`.
+So the transport can only hold back after a refusal rather than before one, and the circuit breaker matters more for the same reason: a tenant that has started refusing wants to be left alone for a while, and the only way to learn that is to have been told once and remember it.
+
+Signing in is part of the adapter because a Graph token lives about an hour.
+`entra.Token` is a string somebody else keeps fresh and `entra.NewApplication` is the client credentials grant, which holds a token until five minutes before it expires and then replaces it.
+It acquires one at a time on purpose: an expansion looks a level up in parallel, so the moment a token expires is the moment several goroutines notice at once, and letting each of them go and get their own would turn every expiry into a small burst against the endpoint most likely to throttle.
 
 ## More than one directory
 
@@ -266,9 +306,9 @@ The cache refuses once an entry has expired and the directory cannot be reached,
 It is a real choice with a real cost on the other side, so it should be a configured window with its own metric rather than a default.
 
 The rest of the hosted providers.
-Okta is done, and Entra ID and Google Workspace are the two that are not.
-Entra ID expands transitively already, which the walk handles without a special case: it returns the closure it was given and the level above it is empty.
+Okta and Entra ID are done, and Google Workspace is the one that is not.
 
 A way to configure an adapter without writing Go.
 `-directory` takes files, and an organisation is not a file.
 All three providers want the same three things, an endpoint, a credential and a name, so the flag should grow one spelling that covers them rather than one per provider.
+Entra ID wants a fourth, since a client credentials grant is a tenant, an application and a secret rather than one token, and a secret is the one thing that must not arrive on a command line.

@@ -34,6 +34,16 @@
 // their arithmetic count a level fewer. Everything else still runs, because
 // nothing else about what an answer means changes.
 //
+// # Providers that have already walked it
+//
+// The other direction is a provider that nests and hands over the closure
+// itself. Entra ID is the one this was written for: transitiveMemberOf answers
+// with every group a person is in however deeply nested, so the graph arrives
+// walked. A fixture that sets [Fixture.Transitive] runs every case, because the
+// answer is the same set and the lookups are the same count. The one thing that
+// changes is the depth of a nest, which becomes one level, and the suite
+// asserts that rather than allowing it.
+//
 // # Usage
 //
 //	func TestConformance(t *testing.T) {
@@ -110,6 +120,27 @@ type Fixture struct {
 	//
 	// The default is false, so a provider that does nest runs everything.
 	Flat bool
+
+	// Transitive says the provider answers a subject lookup with the whole
+	// closure rather than with the memberships one level up.
+	//
+	// Entra ID is the example: transitiveMemberOf returns every group a person
+	// is in however deeply nested, so the graph arrives already walked. The
+	// answer is the same set as a provider that nests, and every count is the
+	// same too, because the resolver still looks each of those groups up to
+	// learn its name and its version. The one number that differs is the depth,
+	// which is one level for any nest at all.
+	//
+	// That number is asserted rather than tolerated. A provider claiming to
+	// expand transitively and then costing three levels on a three level nest
+	// is one that is not doing what it says, and the difference is the whole
+	// reason to prefer it: a person in a deep directory is one round trip
+	// instead of one per level.
+	//
+	// Flat and Transitive are not the same thing and a provider is at most one
+	// of them. A flat provider has no nesting to expand. A transitive one has
+	// nesting and does the expanding itself.
+	Transitive bool
 }
 
 // above is the membership to give a group the cases nest, which is nothing at
@@ -119,6 +150,16 @@ func (f Fixture) above(groups ...string) []string {
 		return nil
 	}
 	return groups
+}
+
+// levels is how deep a nest of n levels is walked, which is all of them for a
+// provider the resolver has to walk and one for a provider that arrives already
+// walked.
+func (f Fixture) levels(n int) int {
+	if f.Transitive {
+		return 1
+	}
+	return n
 }
 
 // nesting skips a case that is about walking a group graph, on a provider that
@@ -209,8 +250,12 @@ func testNested(t *testing.T, f Fixture) {
 	if !slices.Equal(got.Groups.Members, want) {
 		t.Fatalf("a three level nest resolved to %v, want %v", got.Groups.Members, want)
 	}
-	if got.Depth != 3 {
-		t.Errorf("a three level nest was walked %d levels deep", got.Depth)
+	// A provider that expands transitively hands the whole nest over at once,
+	// so the same three groups cost one level instead of three. That is the
+	// point of such a provider and it is worth failing when it stops being
+	// true.
+	if want := f.levels(3); got.Depth != want {
+		t.Errorf("a three level nest was walked %d levels deep, want %d", got.Depth, want)
 	}
 }
 

@@ -1,0 +1,33 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://graph.microsoft.com/v1.0/users/8f7c1a2b-3d4e-4f50-9a6b-1c2d3e4f5a60/transitiveMemberOf/microsoft.graph.group?%24select=id%2CdisplayName\u0026%24skiptoken=2\u0026%24top=2",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ],
+      "Authorization": [
+        "REDACTED"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "value": [
+          {
+            "@odata.type": "#microsoft.graph.group",
+            "displayName": "Storage",
+            "id": "11111111-2222-4333-8444-555555555553"
+          }
+        ]
+      }
+    }
+  }
+}
