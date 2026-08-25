@@ -1,0 +1,42 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://admin.googleapis.com/admin/directory/v1/users/112938475610293847561",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ],
+      "Authorization": [
+        "REDACTED"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "aliases": [],
+        "archived": false,
+        "emails": [
+          {
+            "address": "lee@acme.test",
+            "primary": true
+          }
+        ],
+        "etag": "\"DOa79gRU7LvA\"",
+        "id": "112938475610293847561",
+        "kind": "admin#directory#user",
+        "name": {
+          "fullName": "Lee Byrne"
+        },
+        "primaryEmail": "lee@acme.test",
+        "suspended": true
+      }
+    }
+  }
+}

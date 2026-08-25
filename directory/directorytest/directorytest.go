@@ -477,9 +477,7 @@ func testWide(t *testing.T, f Fixture) {
 		t.Skip("the wide case is about latency and there is nothing to learn from it in a short run")
 	}
 	// The budget in the issue this was written for is a person in a thousand
-	// groups. The number below is not a benchmark, it is a bound: an adapter
-	// that walks the level serially against a fake that answers instantly still
-	// passes, and one that is accidentally quadratic does not.
+	// groups, and what the case costs is next to budget.
 	const n = 1000
 	in := make([]string, 0, n)
 	for i := range n {
@@ -506,7 +504,7 @@ func testWide(t *testing.T, f Fixture) {
 	if got.Lookups != lookups {
 		t.Errorf("a subject in %d groups cost %d lookups, want %d", n, got.Lookups, lookups)
 	}
-	if took > 10*time.Second {
+	if took > budget {
 		t.Errorf("a subject in %d groups took %s", n, took.Round(time.Millisecond))
 	}
 	t.Logf("%d groups in %s over %d lookups", len(got.Groups.Members), took.Round(time.Millisecond), got.Lookups)

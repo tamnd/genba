@@ -1,0 +1,31 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://admin.googleapis.com/admin/directory/v1/groups/02lwamvv4c1pzs7",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ],
+      "Authorization": [
+        "REDACTED"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "email": "storage@acme.test",
+        "etag": "\"iYhpv-_o4LQX\"",
+        "id": "02lwamvv4c1pzs7",
+        "kind": "admin#directory#group",
+        "name": "Storage"
+      }
+    }
+  }
+}

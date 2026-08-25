@@ -1,8 +1,10 @@
 package limit
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
@@ -27,12 +29,13 @@ var ErrOpen = errors.New("limit: the circuit is open, the source has been refusi
 // that talks to one service with one set of credentials, because that is the
 // scope a quota has.
 type Transport struct {
-	base    http.RoundTripper
-	limits  Limits
-	limiter *Limiter
-	clock   Clock
-	log     *slog.Logger
-	jitter  func(time.Duration) time.Duration
+	base     http.RoundTripper
+	limits   Limits
+	limiter  *Limiter
+	clock    Clock
+	log      *slog.Logger
+	jitter   func(time.Duration) time.Duration
+	throttle func(*http.Response) bool
 
 	mu        sync.Mutex
 	failures  int
@@ -97,6 +100,30 @@ func WithJitter(f func(time.Duration) time.Duration) Option {
 			t.jitter = f
 		}
 	}
+}
+
+// WithThrottled names the answers from one service that mean "you are going too
+// fast" without arriving as a 429.
+//
+// Most services refuse a request that is over the quota with too many requests,
+// which is what [Transport] retries by default and what nothing needs to be
+// told about. A few say the same thing in a status the specification reserves
+// for something else entirely, and the Admin SDK is the one this was written
+// for: it refuses a caller who is over the rate with a forbidden, and the only
+// thing separating that from an account which genuinely may not read the
+// directory is a reason string in the body.
+//
+// Getting that wrong is expensive in both directions. Retrying every forbidden
+// would hammer a service over permissions that are not going to change, and
+// retrying none of them turns a throttle that would have cleared in two seconds
+// into a sync that failed.
+//
+// The predicate is given the response before anything has read it and may read
+// the body with [Peek], which puts the bytes back for whoever reads it next. It
+// is only consulted for an answer that was refused and is not already worth
+// retrying, so a healthy crawl never calls it.
+func WithThrottled(f func(*http.Response) bool) Option {
+	return func(t *Transport) { t.throttle = f }
 }
 
 // NewTransport returns a transport enforcing l.
@@ -200,7 +227,7 @@ func (t *Transport) verdict(req *http.Request, resp *http.Response, err error, a
 		// and it means nothing at all about the document being read.
 		return t.backoff(attempt, 0), true
 	}
-	if !worthRetrying(resp.StatusCode) {
+	if !worthRetrying(resp.StatusCode) && !t.throttled(resp) {
 		return 0, false
 	}
 	// What the source said beats what we would have guessed. A service that
@@ -312,6 +339,49 @@ func (t *Transport) Stats() TransportStats {
 	return s
 }
 
+// throttled asks the service's own predicate whether a refusal was about the
+// rate rather than about the request.
+//
+// Only a refusal, so that the body of a successful answer is never touched, and
+// only one that is not already being retried, so that a service which sends both
+// shapes pays for the second reading once rather than on every 429.
+func (t *Transport) throttled(resp *http.Response) bool {
+	if t.throttle == nil || resp == nil || resp.StatusCode < 400 {
+		return false
+	}
+	return t.throttle(resp)
+}
+
+// Peek reads up to n bytes of a response body and puts them back.
+//
+// It is here for a [WithThrottled] predicate, which has to look inside a refusal
+// to find out what kind it is and is looking at a response somebody else is
+// about to read. A predicate that consumed the body would leave the connector
+// above it decoding an empty answer, and the failure would be an error message
+// with nothing in it rather than anything that pointed here.
+//
+// The bytes are held in memory, so n is a bound rather than a hint. A refusal is
+// a few hundred bytes and anything claiming to be one and running to megabytes
+// is not something to buffer on the strength of its own say so.
+func Peek(resp *http.Response, n int64) []byte {
+	if resp == nil || resp.Body == nil || n <= 0 {
+		return nil
+	}
+	body := resp.Body
+	raw, err := io.ReadAll(io.LimitReader(body, n))
+	if len(raw) == 0 {
+		// Nothing was taken, so there is nothing to put back. Rewrapping here
+		// would hide the read error from the caller behind an empty body.
+		_ = err
+		return nil
+	}
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(raw), body), body}
+	return raw
+}
+
 // worthRetrying reports whether a status is one where the same request might
 // work in a moment.
 //
@@ -320,7 +390,8 @@ func (t *Transport) Stats() TransportStats {
 // on one document says nothing about the next attempt at the same document. A
 // four hundred is not here: a request the service considers malformed is
 // malformed on every attempt, and retrying it burns quota to arrive at the same
-// answer more slowly.
+// answer more slowly. A service that means something else by one of them says so
+// with [WithThrottled].
 func worthRetrying(status int) bool {
 	switch status {
 	case http.StatusTooManyRequests,

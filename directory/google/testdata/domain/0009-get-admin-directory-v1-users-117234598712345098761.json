@@ -1,0 +1,42 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://admin.googleapis.com/admin/directory/v1/users/117234598712345098761",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ],
+      "Authorization": [
+        "REDACTED"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "aliases": [],
+        "archived": false,
+        "emails": [
+          {
+            "address": "jo@acme.test",
+            "primary": true
+          }
+        ],
+        "etag": "\"edkSaAZO5Ddc\"",
+        "id": "117234598712345098761",
+        "kind": "admin#directory#user",
+        "name": {
+          "fullName": "Jo Okafor"
+        },
+        "primaryEmail": "jo@acme.test",
+        "suspended": false
+      }
+    }
+  }
+}

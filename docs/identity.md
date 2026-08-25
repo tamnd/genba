@@ -242,6 +242,54 @@ Signing in is part of the adapter because a Graph token lives about an hour.
 `entra.Token` is a string somebody else keeps fresh and `entra.NewApplication` is the client credentials grant, which holds a token until five minutes before it expires and then replaces it.
 It acquires one at a time on purpose: an expansion looks a level up in parallel, so the moment a token expires is the moment several goroutines notice at once, and letting each of them go and get their own would turn every expiry into a small burst against the endpoint most likely to throttle.
 
+## Google Workspace
+
+`directory/google` is the third adapter, and it is the first one where the provider does none of the walking.
+
+Google groups nest and the Admin SDK will not expand the nesting, so this is the ordinary case the resolver was written for: the adapter answers what one key is directly a member of and the resolver goes up a level at a time.
+That is why the conformance fixture here sets neither `Flat` nor `Transitive`, which the other two adapters each set one of.
+
+One collection answers both lookups.
+`GET /groups?userKey=` returns the groups a key is directly in, and the key is allowed to be a group as well as a person, which is the fact the whole adapter is built on.
+Without it a nesting provider would need a second collection with different paging and different failure modes to answer the group lookup, and the two would disagree about something eventually.
+
+The other direction was the obvious way to do it and it is the wrong one.
+The members collection takes `includeDerivedMembership` and will happily hand back the closure, but it answers from a group towards its people rather than from a person towards their groups.
+Expanding one person that way means reading the membership of every group they might be in, so a company wide group turns one sign in into a walk over every employee.
+
+The buffer holds less here than it does in the other two adapters, and it is worth being precise about what it holds.
+A listing carries the full group objects, so the group lookups that are about to arrive for those ids are already answered and cost nothing.
+It says nothing about what those groups are inside, which is exactly the thing the next level of the walk needs, so a person in twenty groups is one listing plus twenty listings and not one plus forty requests.
+Two tests state that in both directions, with the buffer on and with it off.
+
+The version is a hash of the etag and of the fields the adapter reports, and both halves are load bearing.
+Google has been dropping etags across its APIs, and an adapter that hashed only the etag would go quiet on a domain that stopped sending them, which is a version that never moves and a cache above it that never invalidates.
+The group version also folds in the ids of the groups that group is inside, because the etag on a group does not move when somebody puts it under another one, and for a nesting provider that move changes the group set of everybody underneath it.
+
+Deactivation has two spellings.
+A suspended account is the obvious one and an archived account is the one that is easy to miss, since archiving is what an administrator reaches for when somebody leaves and the licence is being reclaimed.
+Either one refuses, and a refused subject is refused before their groups are read rather than after.
+
+Identities are the id, the primary address, the aliases and every address in `emails`.
+`nonEditableAliases` is deliberately not among them: those are the automatic ones the domain generates, they are addresses nobody was given, and a rule written against one would be a rule about the domain's naming rather than about a person.
+
+A key the service will not even look at comes back as a bad request with a reason of `invalid`, and that is read as nobody rather than as a failure, for the same reason it is in the Entra adapter.
+One malformed row in a store should cost that row and not the whole expansion.
+
+Rate limits are the one place this provider made the shared transport grow something.
+The Admin SDK refuses a caller who is over the rate with a 403 rather than a 429, and the only thing separating that from an account which genuinely may not read the directory is a reason string in the body.
+Retrying every 403 would hammer a service over permissions that are not going to change, and retrying none of them turns a throttle that would have cleared in two seconds into a sync that failed.
+So `connector/limit` gained `WithThrottled`, a predicate the transport consults only for a refusal it was not already going to retry, and `limit.Peek`, which reads the first few kilobytes of a body and puts them back so the connector above still gets the whole answer.
+The adapter treats `quotaExceeded`, `rateLimitExceeded` and `userRateLimitExceeded` as throttles.
+`dailyLimitExceeded` is not among them, because the window that clears it is tomorrow and no backoff this transport is willing to wait is going to reach it.
+
+Signing in is a service account acting for an administrator.
+The account has no directory of its own, so on its own it resolves nothing, and what makes it work is domain wide delegation: an administrator grants the account's client id a list of scopes, and the account then asks for a token on behalf of a named person.
+That name is the `sub` claim in the signed assertion and it is the whole of the delegation as far as this process is concerned.
+`NewServiceAccount` refuses an empty one at construction rather than defaulting it, because the failure it produces otherwise is an `unauthorized_client` from the token endpoint, which is the same answer an ungranted scope gives and is not guessable from the status.
+The private key is parsed at construction for the same reason, so a truncated or encrypted key file stops a deployment from starting instead of becoming a directory outage the first time somebody searches.
+`CredentialsFromJSON` reads the key file the console hands over, and it exists so that the key stays in a file, since a private key is the one thing here that must not arrive on a command line where it is in the process listing for everybody on the host.
+
 ## More than one directory
 
 `directory.Multi` unions several of them into one group set, and `genbad -directory` takes a list of files.
@@ -306,9 +354,10 @@ The cache refuses once an entry has expired and the directory cannot be reached,
 It is a real choice with a real cost on the other side, so it should be a configured window with its own metric rather than a default.
 
 The rest of the hosted providers.
-Okta and Entra ID are done, and Google Workspace is the one that is not.
+Okta, Entra ID and Google Workspace are done, and LDAP is the one that is not.
 
 A way to configure an adapter without writing Go.
 `-directory` takes files, and an organisation is not a file.
 All three providers want the same three things, an endpoint, a credential and a name, so the flag should grow one spelling that covers them rather than one per provider.
 Entra ID wants a fourth, since a client credentials grant is a tenant, an application and a secret rather than one token, and a secret is the one thing that must not arrive on a command line.
+Google Workspace wants the same treatment for a different shape, since a service account is a key file and the administrator to act for, and the key belongs in the file it arrived in rather than in a flag.

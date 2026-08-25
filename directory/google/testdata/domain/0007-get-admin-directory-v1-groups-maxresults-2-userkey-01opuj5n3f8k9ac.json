@@ -1,0 +1,36 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://admin.googleapis.com/admin/directory/v1/groups?maxResults=2\u0026userKey=01opuj5n3f8k9ac",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ],
+      "Authorization": [
+        "REDACTED"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "groups": [
+          {
+            "email": "everyone@acme.test",
+            "etag": "\"aBAZnlujjMhm\"",
+            "id": "03dy6vkm2gh4kso",
+            "kind": "admin#directory#group",
+            "name": "Everyone"
+          }
+        ],
+        "kind": "admin#directory#groups"
+      }
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://admin.googleapis.com/admin/directory/v1/users/104325091920138142876",
+    "headers": {
+      "Accept": [
+        "application/json"
+      ],
+      "Authorization": [
+        "REDACTED"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "body": {
+      "json": {
+        "aliases": [
+          "m.tanaka@acme.test"
+        ],
+        "archived": false,
+        "emails": [
+          {
+            "address": "mei@acme.test",
+            "primary": true
+          }
+        ],
+        "etag": "\"cp6A8mtJj2ET\"",
+        "id": "104325091920138142876",
+        "kind": "admin#directory#user",
+        "name": {
+          "fullName": "Mei Tanaka"
+        },
+        "primaryEmail": "mei@acme.test",
+        "suspended": false
+      }
+    }
+  }
+}

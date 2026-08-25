@@ -46,6 +46,10 @@ var allowed = map[string][]string{
 	// The same place in the layering, for the same reasons.
 	"directory/entra": {"acl", "cache", "connector/limit", "directory"},
 
+	// And again. This one signs its own grant, so it reaches for crypto and
+	// nothing of ours that the other two do not already have.
+	"directory/google": {"acl", "cache", "connector/limit", "directory"},
+
 	// cache is a map with a lock on it and imports nothing of ours, which is
 	// what lets index depend on it without the dependency meaning anything. A
 	// cache that knew about principals would be a second copy of the permission
