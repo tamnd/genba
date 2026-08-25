@@ -424,6 +424,7 @@ The deployment that gets this right binds it somewhere the outside cannot reach,
 | `genba_cache_hits_total` | per layer, alongside misses, evictions and the entry count |
 | `genba_store_rows_total` | rows the driver returned, alongside statements and decodes |
 | `genba_directory_staleness_seconds` | the longest a membership change can take to have any effect, on a deployment with a directory |
+| `genba_recheck_checked_total` | per source, documents put to the source at query time, alongside the ones it denied and the checks that failed |
 
 The buckets are 1, 2, 5, 10, 25, 50, 100, 250 and 500 milliseconds, which are tighter at the bottom than a default histogram because the question here is what fraction of requests came back in under ten milliseconds.
 
@@ -499,6 +500,7 @@ func main() {
 | `store/graph` | the entities and relationships of a segment and the walk over them, [docs/graph.md](docs/graph.md) |
 | `store/segdir` | the directory of segments, the manifest and the crash recovery, [docs/durability.md](docs/durability.md) |
 | `index` | query parsing, retrieval and ranking |
+| `recheck` | the permission question put back to a source while a response is being written, so a revocation lands before the next sync does, [docs/permissions.md](docs/permissions.md) |
 | `connector` | the ingestion contract, cursors and checkpoints |
 | `connector/connectortest` | the conformance suite that defines what a connector is |
 | `connector/fssource` | the reference connector, a directory tree with OWNERS files, walked or watched |

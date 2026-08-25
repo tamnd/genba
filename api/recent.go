@@ -97,17 +97,15 @@ func (s *Server) handleRecent(w http.ResponseWriter, r *http.Request, p *acl.Pri
 	// A driver that cannot remember an open serves the other half rather than an
 	// error. The interface is built for that: a deployment on a store with no
 	// history still has a home screen, it just has one list on it.
+	var opens []store.Open
 	if log, ok := s.store.(store.OpenLog); ok {
-		opens, err := log.Opens(r.Context(), p, limit)
+		var err error
+		opens, err = log.Opens(r.Context(), p, limit)
 		if err != nil {
 			// The same reasoning one level up. A history that could not be read is
 			// a degraded home screen, and failing the whole request over it would
 			// take the corpus half down with it.
 			s.log.Warn("reading the open history failed", "error", err, "tenant", p.Tenant)
-		}
-		for _, o := range opens {
-			out.Opened = append(out.Opened, openedHit{searchHit: hitOf(o.Document), At: o.At.UTC()})
-			shown = append(shown, item(o.Document))
 		}
 	}
 
@@ -118,7 +116,23 @@ func (s *Server) handleRecent(w http.ResponseWriter, r *http.Request, p *acl.Pri
 		writeError(w, http.StatusInternalServerError, "internal", "the recent list could not be read")
 		return
 	}
+
+	// One recheck for both halves, for the reason both halves are on one record.
+	// The history is the half that needs it most: something somebody opened last
+	// week is exactly the kind of document a share gets withdrawn on, and the
+	// home screen is where they would find out it is still listed.
+	keep := s.keep(r.Context(), p, recheckItems(recentDocuments(opens, changed)))
+	for _, o := range opens {
+		if !keep(o.Document.ID) {
+			continue
+		}
+		out.Opened = append(out.Opened, openedHit{searchHit: hitOf(o.Document), At: o.At.UTC()})
+		shown = append(shown, item(o.Document))
+	}
 	for _, d := range changed {
+		if !keep(d.ID) {
+			continue
+		}
 		out.Changed = append(out.Changed, hitOf(d))
 		shown = append(shown, item(d))
 	}
@@ -170,6 +184,17 @@ func (s *Server) handleRecordOpen(w http.ResponseWriter, r *http.Request, p *acl
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// recentDocuments is both halves of the screen before either has been drawn,
+// which is what the recheck is asked about. A document in both halves is in
+// here twice and is asked about once, because the check deduplicates.
+func recentDocuments(opens []store.Open, changed []doc.Document) []doc.Document {
+	out := make([]doc.Document, 0, len(opens)+len(changed))
+	for _, o := range opens {
+		out = append(out, o.Document)
+	}
+	return append(out, changed...)
 }
 
 // recentIDs is every document on the screen, in one slice.

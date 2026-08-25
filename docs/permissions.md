@@ -249,6 +249,71 @@ The part that catches people out is issue security.
 A project can carry security levels that narrow an individual issue to a subset of the people who can browse the project, and an issue with a security level set is not readable by the project's list at all.
 A connector must report the security level's members and nothing else for such an issue, because reporting both would widen it straight back to the project.
 
+## Asking again while the response is written
+
+Everything above happens during a sync, and what it produces is a copy of somebody else's answer.
+Between two syncs the copy can go wrong in the direction that matters: a person is taken off a page on Monday morning and the index still says they may read it until the crawler comes round again.
+On a large tree that is hours, and the symptom is a document turning up in search for somebody it was taken away from.
+
+The `recheck` package closes that window by putting the question back to the source while the response is being written.
+
+```go
+set := recheck.New(recheck.WithTimeout(20 * time.Millisecond))
+set.Add("wiki", recheck.Func(func(ctx context.Context, p *acl.Principal, ids []string) (map[string]bool, error) {
+	return wiki.MayRead(ctx, p.Subject, ids)
+}))
+
+srv := api.New(st, searcher, auth, api.WithRecheck(set))
+```
+
+It is off unless a deployment passes a set, and a set decides one source at a time, because whether a source can answer a permission question in a few milliseconds is a fact about that source.
+A source nobody registered a checker for is served from the index exactly as it was before, which is what makes this safe to turn on for one connector and leave off for the rest.
+
+A checker is handed a principal and a list of ids and nothing else.
+It is not handed the document, because a check that could read the row it is checking would be reading the stale answer this exists to go around.
+
+### What it costs and what happens when it does not come back
+
+One question covers a whole page, the sources are asked in parallel, and they share a single deadline of 20 milliseconds.
+Answers are held for 10 seconds, per person and per document, so a reader paging through results asks each source once.
+That is the staleness this leaves behind, and it is a number a deployment sets rather than one that emerges from a stack of caches.
+
+Every way this can go wrong removes the row.
+
+| What happened | What the reader sees |
+| --- | --- |
+| the source said no | the document is not on the page |
+| the source returned an error | the document is not on the page |
+| the deadline passed | the document is not on the page |
+| the source answered without mentioning the id | the document is not on the page |
+
+The last row is the one worth stating out loud.
+An id a source left out of its answer is a source that did not answer, and reading silence as a yes would turn a partial reply into a leak.
+None of the four are cached, so a source having a bad thirty seconds costs those thirty seconds and not the next ten minutes.
+
+### Where it runs
+
+Every surface that puts a document in front of somebody: search, suggestions, one document, its content, its thumbnail, the recent list, the reported list and the curated lists.
+That is the same set of handlers the audit trail covers, and for the same reason.
+A rule that holds on the search page and not on the preview panel is not a rule.
+
+The quotes in a written answer are filtered with the page they were built from.
+A quote is a sentence out of a document, so an answer that kept quoting one the source has just withdrawn would be serving its content under a different field name.
+
+A document that does not survive the check is answered the way a document that does not exist is answered, because the alternative confirms it exists.
+The access is still written to the audit trail, as a refusal.
+
+Three counters say what the checks are doing, labelled by source.
+
+| Metric | What it is |
+| --- | --- |
+| `genba_recheck_checked_total` | documents put to that source |
+| `genba_recheck_denied_total` | documents it said no to |
+| `genba_recheck_failed_total` | checks that errored or ran out of time |
+
+Denied climbing is the feature working.
+Failed climbing is a source that is slow or down, and while it is climbing that source's documents are disappearing from search, which is the safe failure and still an incident.
+
 ## Adding a source
 
 Write a preset in `sources.go` with the source's own role names and a comment saying where they came from.

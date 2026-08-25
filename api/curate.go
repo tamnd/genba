@@ -198,6 +198,12 @@ func (s *Server) curatedFor(r *http.Request, p *acl.Principal, query string) *cu
 // to something this reader may not open is not an error, it is a citation that
 // is not drawn, and the reader is never told the difference between a document
 // they cannot see and one that was deleted.
+//
+// A citation the source has since withdrawn is dropped here too, which is why
+// the recheck is in this helper rather than in the two handlers that use it: a
+// cited document and a listed one are the same document, and the answer card
+// above a page of results is the surface most likely to be quoting something
+// from a fortnight ago.
 func (s *Server) documents(r *http.Request, p *acl.Principal, ids []string) []doc.Document {
 	if len(ids) == 0 {
 		return nil
@@ -221,7 +227,7 @@ func (s *Server) documents(r *http.Request, p *acl.Principal, ids []string) []do
 				out = append(out, d)
 			}
 		}
-		return out
+		return s.stillVisible(r, p, out)
 	}
 	for _, id := range ids {
 		d, err := s.store.Get(r.Context(), p, id)
@@ -230,7 +236,7 @@ func (s *Server) documents(r *http.Request, p *acl.Principal, ids []string) []do
 		}
 		out = append(out, d)
 	}
-	return out
+	return s.stillVisible(r, p, out)
 }
 
 // handleAnswers lists the answers this tenant has written down.

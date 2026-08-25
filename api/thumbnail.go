@@ -94,6 +94,14 @@ func (s *Server) handleThumbnail(w http.ResponseWriter, r *http.Request, p *acl.
 		return
 	}
 
+	// The source is asked before anything is decoded, so a document somebody has
+	// lost access to costs a lookup rather than a render, and a picture of it is
+	// never put in the cache on their behalf either.
+	if !s.stillReadable(r, p, d) {
+		refused()
+		return
+	}
+
 	// Concurrent requests for the same thumbnail render it once and all get what
 	// that one produced, which matters here because the first paint of a grid
 	// asks for twenty four of these at once and a browser will happily open six

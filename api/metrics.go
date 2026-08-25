@@ -8,6 +8,7 @@ import (
 
 	"github.com/tamnd/genba/audit"
 	"github.com/tamnd/genba/metric"
+	"github.com/tamnd/genba/recheck"
 	"github.com/tamnd/genba/store"
 )
 
@@ -37,6 +38,9 @@ const (
 	MetricAuditRecords    = "genba_audit_records_total"
 	MetricAuditFailed     = "genba_audit_failed_total"
 	MetricAuditQueued     = "genba_audit_queued_records"
+	MetricRecheckChecked  = "genba_recheck_checked_total"
+	MetricRecheckDenied   = "genba_recheck_denied_total"
+	MetricRecheckFailed   = "genba_recheck_failed_total"
 	MetricStoreRows       = "genba_store_rows_total"
 	MetricStoreStatements = "genba_store_statements_total"
 	MetricStoreDecodes    = "genba_store_decodes_total"
@@ -165,6 +169,35 @@ func newMetrics(s *Server) *metrics {
 		audited(func(st audit.Stats) float64 { return float64(st.Failed) }))
 	r.Counters(MetricAuditQueued, "Content access records waiting to be written.", "", "gauge",
 		audited(func(st audit.Stats) float64 { return float64(st.Queued) }))
+
+	// What the late binding permission checks are doing, per source.
+	//
+	// Denied and failed are two different stories and they are counted apart on
+	// purpose. Denied going up is the feature working: the index was out of date
+	// and somebody was not shown a document they can no longer read. Failed going
+	// up is the feature costing somebody a result they are entitled to, because a
+	// check that did not come back removes the row, and a source whose failures
+	// are not near zero is a source that is too slow to be asked on the request
+	// path. A deployment with none of this configured publishes nothing here
+	// rather than three zeroes.
+	rechecked := func(pick func(recheck.Stats) float64) func(context.Context) map[string]float64 {
+		return func(context.Context) map[string]float64 {
+			if s.recheck == nil {
+				return nil
+			}
+			out := map[string]float64{}
+			for source, st := range s.recheck.Stats() {
+				out[source] = pick(st)
+			}
+			return out
+		}
+	}
+	r.Counters(MetricRecheckChecked, "Documents whose permissions were checked against the source before being shown, per source.", "source", "counter",
+		rechecked(func(st recheck.Stats) float64 { return float64(st.Checked) }))
+	r.Counters(MetricRecheckDenied, "Documents the source said may no longer be read, which were removed from the response, per source.", "source", "counter",
+		rechecked(func(st recheck.Stats) float64 { return float64(st.Denied) }))
+	r.Counters(MetricRecheckFailed, "Checks that did not come back in time, whose documents were removed anyway, per source.", "source", "counter",
+		rechecked(func(st recheck.Stats) float64 { return float64(st.Failed) }))
 
 	// A driver is not obliged to be measurable. One that is publishes the same
 	// numbers the CI gate asserts on, so a slow deployment can be compared with

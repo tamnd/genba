@@ -6,6 +6,8 @@ import (
 
 	"github.com/tamnd/genba/acl"
 	"github.com/tamnd/genba/audit"
+	"github.com/tamnd/genba/recheck"
+	"github.com/tamnd/genba/store"
 )
 
 // Reported is the other half of saying a document is out of date: what somebody
@@ -102,8 +104,16 @@ func (s *Server) handleReported(w http.ResponseWriter, r *http.Request, p *acl.P
 		writeError(w, http.StatusInternalServerError, "internal", "the reported list could not be read")
 		return
 	}
+	// This list is somebody's own documents and the rows still go through the
+	// recheck, because ownership in the index is as much of a snapshot as
+	// readership is and a document that moved out from under somebody is one they
+	// should stop being shown reports about.
+	keep := s.keep(r.Context(), p, reportedItems(flagged))
 	shown := make([]audit.Item, 0, len(flagged))
 	for _, f := range flagged {
+		if !keep(f.Document.ID) {
+			continue
+		}
 		out.Documents = append(out.Documents, reportedHit{
 			searchHit: hitOf(f.Document),
 			Stale:     staleOf(f.Stale),
@@ -117,4 +127,13 @@ func (s *Server) handleReported(w http.ResponseWriter, r *http.Request, p *acl.P
 		Count:     len(shown),
 	})
 	writeConditional(w, r, http.StatusOK, out, out.identity())
+}
+
+// reportedItems is the flagged documents as the recheck is asked about them.
+func reportedItems(flagged []store.Flagged) []recheck.Item {
+	out := make([]recheck.Item, 0, len(flagged))
+	for _, f := range flagged {
+		out = append(out, recheck.Item{ID: f.Document.ID, Source: f.Document.Source})
+	}
+	return out
 }

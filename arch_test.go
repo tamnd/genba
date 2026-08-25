@@ -75,6 +75,16 @@ var allowed = map[string][]string{
 	// a record is the job of the package that already has one.
 	"audit": nil,
 
+	// recheck asks a source whether somebody may still read a document, so it
+	// needs the principal it is asking about and the cache the answers live in,
+	// and it deliberately needs nothing else. It has never heard of a document,
+	// an index or a store: it is handed ids and hands back which of them survive.
+	// An edge to store would let a check read the row it is checking, which is
+	// the stale answer it exists to go around, and an edge to index would make
+	// the query path and the permission recheck one thing to reason about
+	// instead of two.
+	"recheck": {"acl", "cache"},
+
 	"store": {"acl", "doc"},
 
 	// segment is the on disk format and imports nothing of ours, not even doc.
@@ -140,7 +150,7 @@ var allowed = map[string][]string{
 	"index":             {"acl", "cache", "doc", "store"},
 	"config":            nil,
 	"web":               nil,
-	"api":               {"", "acl", "audit", "cache", "directory", "doc", "index", "metric", "store", "thumb"},
+	"api":               {"", "acl", "audit", "cache", "directory", "doc", "index", "metric", "recheck", "store", "thumb"},
 
 	// thumb imports nothing of ours. It is handed bytes and a size and hands
 	// back a smaller picture, which means the package that decodes files a
