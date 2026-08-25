@@ -86,6 +86,13 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	// administrator, which is the right default for a deployment that has not
 	// said who operates it.
 	admins := fs.String("admins", strings.Join(cfg.Admins, ","), "subjects that hold the administrator role, comma separated")
+	// Where the record of every content access is kept. There is no flag that
+	// turns this off: the choice is a directory or the process log, and both of
+	// them are a trail. A deployment that has to answer who read what puts it on
+	// a disk, because a log line lives as long as whatever is collecting the log
+	// and that is usually days rather than years.
+	fs.StringVar(&cfg.AuditDir, "audit-dir", cfg.AuditDir, "directory to keep the content access records in, one file per day, empty to write them to the log")
+	fs.DurationVar(&cfg.AuditRetention, "audit-retention", cfg.AuditRetention, "how long a day of records is kept, zero to keep them forever")
 
 	var corpus corpusOptions
 	fs.StringVar(&corpus.Dir, "corpus", "", "directory to index at startup")
@@ -146,6 +153,22 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 
 	log := newLogger(stderr, cfg.LogLevel)
 
+	// Before the store, because a process that cannot write its audit trail
+	// should fail before it has opened a database and started answering
+	// questions about the corpus in it.
+	trail, err := openAudit(cfg, log)
+	if err != nil {
+		return err
+	}
+	// Deferred first and therefore closed last, after the listeners have stopped
+	// and after the store has, so the last record a request produced is on the
+	// disk before the process leaves.
+	defer func() {
+		if err := trail.Close(); err != nil {
+			log.Error("closing the audit trail", "error", err)
+		}
+	}()
+
 	st, err := openStore(ctx, cfg)
 	if err != nil {
 		return err
@@ -171,6 +194,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		api.WithDriver(string(cfg.Store)),
 		api.WithIndexing(track.State),
 		api.WithOperations(ops.State),
+		api.WithAudit(trail),
 	}
 
 	// A connector can be added from the interface only where the driver can
@@ -276,6 +300,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		"interface", web.Enabled(),
 		"cache", cfg.Cache,
 		"directories", len(cfg.Directories),
+		"audit", auditDestination(cfg),
 	)
 
 	errc := make(chan error, len(servers))

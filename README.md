@@ -512,6 +512,7 @@ func main() {
 | `connector/recorded` | HTTP exchanges captured from a real service and replayed from a directory, so tests need no account |
 | `extract` | text and structure out of PDF, Word, PowerPoint, Excel, HTML and Markdown, [docs/extraction.md](docs/extraction.md) |
 | `ingest` | the pipeline that runs a connector into a store |
+| `audit` | the record of every content access, kept on disk or written to the log, [docs/audit.md](docs/audit.md) |
 | `config` | runtime configuration and the rules for loading it |
 | `api` | the HTTP surface |
 | `web` | the browser interface, compiled into the binary |
@@ -619,6 +620,13 @@ A directory that cannot be reached refuses the request rather than resolving som
 Expanding on every request is not affordable, so there is a cache, and there is exactly one layer of it: caching the group edges as well would mean an answer built out of edges that were themselves already old, and a worst case age that is the sum of two lifetimes is a number nobody can state without drawing a diagram.
 One layer means the maximum staleness of any group set is the lifetime, which is configured in one place and published as a metric.
 [docs/identity.md](docs/identity.md) is the whole of it.
+
+The other half of a permission is being able to say afterwards what it let through.
+Every request that puts a document in front of somebody writes a record, and so does every request that was refused one, because a trail holding only the successes answers the easy half of every question anybody asks it.
+That is enforced by a test that walks the route table rather than by a convention: a route that serves content and writes no record fails the build, and a new endpoint that has said nothing about which it is fails it too.
+The record carries who, when, through which route, which document ids and how many bytes left, and it deliberately carries no title, no body and no group name, because an audit trail is kept for years and read by more people than the corpus is.
+There is no setting that turns it off, only one that says where it goes, and a deployment that points it at a directory gets one file per day, a retention it can state, and an export in the format it is stored in.
+[docs/audit.md](docs/audit.md) has the record shape, the reading and the retention rule.
 
 A connector hands the pipeline a body, and for the PDF attached to a ticket or the deck a quarter was reviewed from, the bytes are not it.
 `extract` turns those into text using the standard library and nothing else: no office suite, no headless browser and nothing to install alongside the binary.

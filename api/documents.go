@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/tamnd/genba/acl"
+	"github.com/tamnd/genba/audit"
 )
 
 // DocumentsMax is how many documents one lookup may name.
@@ -58,8 +59,19 @@ func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request, p *acl.
 	}
 
 	out := documentsResponse{Documents: []searchHit{}}
-	for _, d := range s.documents(r, p, ids) {
+	found := s.documents(r, p, ids)
+	for _, d := range found {
 		out.Documents = append(out.Documents, hitOf(d))
 	}
+	// What came back rather than what was asked for. An id the caller may not
+	// read is not on the record as a refusal, because this endpoint is handed a
+	// list somebody already holds and half of it not resolving is the normal
+	// case rather than an event.
+	s.accessed(r, p, audit.Record{
+		Action:    audit.List,
+		Outcome:   audit.Served,
+		Documents: items(found),
+		Count:     len(found),
+	})
 	writeConditional(w, r, http.StatusOK, out, nil)
 }

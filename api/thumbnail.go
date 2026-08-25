@@ -11,6 +11,7 @@ import (
 
 	"github.com/tamnd/genba"
 	"github.com/tamnd/genba/acl"
+	"github.com/tamnd/genba/audit"
 	"github.com/tamnd/genba/cache"
 	"github.com/tamnd/genba/doc"
 	"github.com/tamnd/genba/store"
@@ -58,21 +59,38 @@ func (s *Server) handleThumbnail(w http.ResponseWriter, r *http.Request, p *acl.
 		return
 	}
 
+	id := r.PathValue("id")
+	// A thumbnail is a rendering of the document and it is enough of one to read
+	// a page over somebody's shoulder, so every answer this endpoint gives is on
+	// the trail, including the ones that give nothing.
+	refused := func() {
+		s.accessed(r, p, audit.Record{
+			Action:    audit.Thumbnail,
+			Outcome:   audit.Refused,
+			Documents: []audit.Item{{ID: id}},
+		})
+		notThere(w)
+	}
+
 	cs, ok := s.store.(store.ContentStore)
 	if !ok {
-		notThere(w)
+		refused()
 		return
 	}
 
-	id := r.PathValue("id")
 	d, err := s.store.Get(r.Context(), p, id)
 	if err != nil {
 		if !errors.Is(err, genba.ErrNotFound) {
 			s.log.Error("thumbnail lookup failed", "error", err)
+			s.accessed(r, p, audit.Record{
+				Action:    audit.Thumbnail,
+				Outcome:   audit.Failed,
+				Documents: []audit.Item{{ID: id}},
+			})
 			writeError(w, http.StatusInternalServerError, "internal", "the document could not be read")
 			return
 		}
-		notThere(w)
+		refused()
 		return
 	}
 
@@ -93,9 +111,18 @@ func (s *Server) handleThumbnail(w http.ResponseWriter, r *http.Request, p *acl.
 		// file that is not an image at all are the same answer, and it is the
 		// same answer a document that does not exist gets. The interface falls
 		// back to the icon for the kind, which is what it draws anyway.
-		notThere(w)
+		refused()
 		return
 	}
+
+	s.accessed(r, p, audit.Record{
+		Action:    audit.Thumbnail,
+		Outcome:   audit.Served,
+		Documents: []audit.Item{item(d)},
+		Count:     1,
+		Rule:      ruleOf(p, d),
+		Bytes:     int64(len(got.Bytes)),
+	})
 
 	sum := sha256.Sum256(got.Bytes)
 	h := w.Header()

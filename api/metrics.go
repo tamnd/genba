@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tamnd/genba/audit"
 	"github.com/tamnd/genba/metric"
 	"github.com/tamnd/genba/store"
 )
@@ -33,6 +34,9 @@ const (
 	MetricCacheEntries    = "genba_cache_entries"
 	MetricGroupStaleness  = "genba_directory_staleness_seconds"
 	MetricQuarantined     = "genba_quarantined_documents"
+	MetricAuditRecords    = "genba_audit_records_total"
+	MetricAuditFailed     = "genba_audit_failed_total"
+	MetricAuditQueued     = "genba_audit_queued_records"
 	MetricStoreRows       = "genba_store_rows_total"
 	MetricStoreStatements = "genba_store_statements_total"
 	MetricStoreDecodes    = "genba_store_decodes_total"
@@ -141,6 +145,26 @@ func newMetrics(s *Server) *metrics {
 			}
 			return map[string]float64{"": float64(st.Quarantined)}
 		})
+
+	// What the audit trail has done with itself.
+	//
+	// Failed is the one to alert on and it should be flat at zero: a record that
+	// could not be written is an access that happened and cannot be proved, and
+	// the deployment finding that out at the end of a quarter is the failure
+	// this metric exists to prevent. Queued is the other half of the story,
+	// because a queue that is not draining is a sink that is about to start
+	// making a request wait.
+	audited := func(pick func(audit.Stats) float64) func(context.Context) map[string]float64 {
+		return func(context.Context) map[string]float64 {
+			return map[string]float64{"": pick(s.audit.Stats())}
+		}
+	}
+	r.Counters(MetricAuditRecords, "Content access records written.", "", "counter",
+		audited(func(st audit.Stats) float64 { return float64(st.Written) }))
+	r.Counters(MetricAuditFailed, "Content access records that could not be written, which should be zero.", "", "counter",
+		audited(func(st audit.Stats) float64 { return float64(st.Failed) }))
+	r.Counters(MetricAuditQueued, "Content access records waiting to be written.", "", "gauge",
+		audited(func(st audit.Stats) float64 { return float64(st.Queued) }))
 
 	// A driver is not obliged to be measurable. One that is publishes the same
 	// numbers the CI gate asserts on, so a slow deployment can be compared with
