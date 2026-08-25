@@ -248,8 +248,12 @@ func TestCacheNeverCrossesVisibility(t *testing.T) {
 	if slices.Contains(theirs, "d1") || slices.Contains(theirs, "d2") {
 		t.Fatalf("the seller was handed the engineer's documents: %v", theirs)
 	}
-	if ranks, _, _ := st.counts(); ranks != 2 {
-		t.Errorf("the driver ranked %d times for two different askers, want 2", ranks)
+	// Three rather than two. The seller found nothing, and a search that found
+	// nothing asks whether the words in it are words the asker has a document
+	// for, which is one more cut of a single row. It is what keeps the "did you
+	// mean" from being decided by a count over the whole tenant.
+	if ranks, _, _ := st.counts(); ranks != 3 {
+		t.Errorf("the driver ranked %d times for two different askers, want 3", ranks)
 	}
 
 	// And going back to the first asker still gets the first answer, rather than
@@ -326,8 +330,11 @@ func TestGroupChangeMakesPreviousEntriesUnreachable(t *testing.T) {
 	if got := ids(search(t, s, after, index.Query{Text: "payments"})); len(got) != 0 {
 		t.Fatalf("a principal whose group was taken away still saw %v", got)
 	}
-	if ranks, _, _ := st.counts(); ranks != 2 {
-		t.Errorf("the driver ranked %d times either side of a group change, want 2", ranks)
+	// Three rather than two, for the reason in TestCacheNeverCrossesVisibility:
+	// the search after the change found nothing, and the correction asks what
+	// this person's own documents carry before it offers anything.
+	if ranks, _, _ := st.counts(); ranks != 3 {
+		t.Errorf("the driver ranked %d times either side of a group change, want 3", ranks)
 	}
 }
 

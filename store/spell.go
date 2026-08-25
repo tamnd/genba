@@ -31,6 +31,11 @@ import (
 // is what keeps a correction from telling somebody that a word appears in a
 // document they cannot read. [index.Searcher] does exactly this, and a caller
 // that skips it has built an oracle for the contents of the corpus.
+//
+// Deciding not to call Near is the same rule with the answers swapped, and it
+// is easier to get wrong because nothing is shown. A caller that stays quiet
+// because a count over the tenant says the word exists has told the asker that
+// the word exists, once per search, for a word at a time.
 type Speller interface {
 	// Near returns terms in the principal's tenant that are close to the given
 	// term, nearest first and commonest among equals, and at most limit of
