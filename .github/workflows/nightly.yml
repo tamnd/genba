@@ -36,7 +36,7 @@ jobs:
           check-latest: true
           cache: true
       - name: cache the benchmark corpus
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: testdata
           key: benchcorpus-${{ hashFiles('benchcorpus/*.go', 'benchcorpus/gen/**', 'benchcorpus/queries.txt') }}
@@ -74,7 +74,7 @@ jobs:
       # ratchet that only turns one way.
       - name: keep the numbers
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-bench
           path: |
@@ -117,7 +117,7 @@ jobs:
           go-version-file: go.mod
           check-latest: true
           cache: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: ui gate
@@ -157,7 +157,7 @@ jobs:
           check-latest: true
           cache: true
       - name: cache the engine build
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             third_party/kura-src/target
@@ -173,7 +173,7 @@ jobs:
             -fuzz FuzzPostingsSurvivesAnything -fuzztime 10m ./store/kura/
       - name: keep the crasher
         if: steps.fuzz.outcome == 'failure'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-crashers
           path: store/kura/testdata/fuzz/
